@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: msa
+      POSTGRES_PASSWORD: msa
+      POSTGRES_DB: msa
+    # Its own instance on its own port, not a second database inside QC
+    # Sentinel's container. The two systems are deliberately independent: a
+    # stranger must be able to clone this repo alone and `docker compose up`,
+    # and sharing a container would make one system's `docker compose down -v`
+    # destroy the other's data. 5432-5434 are taken on the development machine
+    # (interactive-planner, francais, QC Sentinel), hence 5435.
+    ports: ["5435:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U msa"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:

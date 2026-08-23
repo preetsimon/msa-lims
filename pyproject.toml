@@ -1,0 +1,106 @@
+[project]
+name = "msa-lims"
+version = "0.1.0"
+description = "Laboratory information management for fire assay and geochemical analysis."
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    "python-multipart>=0.0.17",
+    "httpx>=0.27",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+# Certificates of Analysis. Optional because the sample lifecycle — receipt,
+# prep, batching, results — is complete and testable without ever rendering a
+# document, and a checkout that only runs the API should not need a PDF stack.
+pdf = ["reportlab>=4.2"]
+oidc = ["pyjwt[crypto]>=2.9"]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pytest-asyncio>=0.24",
+    "hypothesis>=6.119",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------
+# Lint / format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "RUF",
+]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+# Characters ruff calls "ambiguous" that are simply correct here. An assay lab
+# writes microns as µm and tolerances as ±; spelling those in ASCII would make
+# the domain language wrong to read.
+allowed-confusables = ["σ", "×", "–", "±", "≥", "≤", "µ", "−"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "RUF012"]
+# A CHECK constraint is one SQL expression. Wrapping it to fit the column would
+# split a string literal the database reads as a unit, making it harder to
+# compare against what is actually installed.
+"migrations/versions/*" = ["E501"]
+
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["reportlab.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "integration: requires Postgres (docker compose up -d)",
+]
+
+[tool.coverage.run]
+source = ["src/msa_lims"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

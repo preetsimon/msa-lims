@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: msa
+          POSTGRES_PASSWORD: msa
+          POSTGRES_DB: msa
+        ports: ["5435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U msa"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MSA_ENV: ci
+      MSA_DATABASE_URL: postgresql+psycopg://msa_app:msa_app@localhost:5435/msa
+      MSA_MIGRATION_DATABASE_URL: postgresql+psycopg://msa:msa@localhost:5435/msa
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev,pdf,oidc]"
+
+      - name: Lint
+        run: |
+          ruff check src tests migrations
+          ruff format --check src tests migrations
+
+      - name: Typecheck
+        run: mypy src
+
+      # From empty, every time. A migration that only works against a database
+      # someone already had is not a migration.
+      - name: Migrate from empty
+        run: alembic upgrade head
+
+      # Proves the revisions are reversible, and catches a downgrade nobody
+      # wrote. Then forward again so the tests have a schema.
+      - name: Migrations are reversible
+        run: |
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Test
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build

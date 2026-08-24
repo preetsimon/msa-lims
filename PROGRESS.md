@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-24 · **Phase:** 1 in progress (auth landed; the spine is next)
+**Updated:** 2026-08-24 · **Phase:** 1 in progress (auth + submission intake done; results next)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,18 +12,17 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **In progress** — OIDC + dev-header auth done; submission → result → certificate next |
+| 1 · The spine | wk 2–4 | **In progress** — auth done, submission intake done; result entry → certificate next |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 166 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 192 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty · frontend builds and typechecks · verified live through the
 browser: Vite → proxy → FastAPI → Postgres, with the degraded path exercised;
-auth verified live against the running server in both dev-header and refusal
-paths.
+auth and submission intake both verified live against the running server.
 
 ---
 
@@ -86,6 +85,40 @@ paths.
 - `GET /api/me` — the cheapest possible thing that exercises `ActorDep`, so a
   developer or a curl script can find out who the system thinks they are before
   trusting any write path built on the same dependency.
+- **`current_lab_user`** (`web/deps.py`) resolves the open "`Actor` vs.
+  `LabUser`" question from Phase 0: a `LabUser` row is looked up — or
+  provisioned on first sight — keyed on `Actor.subject`, never on name or
+  email, both of which people change. `LabUser.role` is kept in sync as a
+  courtesy for joins; **no authorisation check ever reads it** — every check
+  reads `Actor.role` fresh from the current request, so a stored role can never
+  outlive what the identity provider currently grants.
+
+### Submission intake — `src/msa_lims/submissions/`
+- **`service.py`** — the first write path, and the first thing to exercise a
+  `domain/lifecycle.py` role check through HTTP. Only `BENCH_ROLES` may
+  receive a submission; `CLIENT` is refused with **403**.
+- **Validates the whole batch before writing anything.** Unreadable labels,
+  duplicate labels within the batch, labels already received in an earlier
+  submission, drill samples naming no project, drill samples against an
+  unregistered hole, and overlapping depth intervals (checked against both the
+  new batch and everything already on record for that hole) are all collected
+  and reported together — mirrors Sentinel's ingestion validation and
+  `domain.sample_id.find_overlaps`, both of which report every problem in one
+  pass rather than failing on the first.
+- **Unregistered drill holes are refused, never invented.** A drill sample
+  references its hole by the label's parsed `hole_id`; if no `DrillHole` row
+  matches under the named project, the sample is rejected with the remedy
+  named in the message, rather than the service silently creating a hole with
+  null coordinates (mirrors Sentinel's FR-5: unregistered reference data
+  quarantines, it is never auto-created).
+- **Submission numbering is provisional and says so in its own docstring** —
+  `SUB-2026-0841`-shaped, correct only under the single-writer assumption
+  already documented for this schema (see `db/base.py`'s `IdPk` comment), not
+  safe against two concurrent front-desk submissions racing for the same
+  number. The real convention is still an open question.
+- One `AuditEvent` per row created — one for the submission, one per sample —
+  not one summarising event for the whole batch, matching `table_name`/
+  `record_id` being a per-record grain everywhere else in the schema.
 
 ### Database — `src/msa_lims/db/`
 - 8 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
@@ -108,10 +141,11 @@ paths.
   states.
 - Domain refusals mapped to distinct status codes: **403** find someone with
   authority, **409** the sample moved under you, **422** the request is wrong.
-- **Auth is implemented** (see above) and every write endpoint from here on
-  depends on `ActorDep`. Still open: no endpoint yet actually performs a write,
-  so the role checks in `domain/lifecycle.py` have not been exercised through
-  HTTP end to end — that happens with the first submission/result endpoints.
+- **Auth is implemented** (see above) and every write endpoint depends on
+  `ActorDep`. `POST /api/submissions` is the first to exist, and the first to
+  exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
+  success, 403 for `client`, 404 for an unknown client, 422 with every
+  validation problem in one list.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -122,19 +156,21 @@ paths.
   with `formatMeasured` so a non-detect cannot be rendered as its null value.
 - One screen so far: system status, which exists to prove the whole path.
 
-### Tests — 166
-- **Unit** (125): units and dimensions, censored values, assay arithmetic,
+### Tests — 192
+- **Unit** (139): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals, the state machine, OIDC token verification
   against a real self-signed keypair, the auth dependency exercised through a
   real FastAPI app (`TestClient`) across dev-header and OIDC modes.
-- **Property** (21, Hypothesis): conversion round-trips within working
+- **Property** (17, Hypothesis): conversion round-trips within working
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (10, real Postgres): the append-only grants proven against the
-  actual application role — UPDATE, DELETE and TRUNCATE all refused, the
-  migration version unmovable, ordinary tables still mutable, and the
-  amendment-reason CHECK enforced by the database.
+- **Integration** (36, real Postgres): the append-only grants proven against the
+  actual application role; submission intake against the service directly (16
+  tests — happy paths, every validation refusal, the audit trail); submission
+  intake through the real HTTP app with `dependency_overrides` isolating each
+  test inside a rolled-back transaction (10 tests — status codes, role
+  enforcement, `LabUser` provisioning and reuse across requests).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -146,6 +182,13 @@ Auth verified live against the running server: `GET /api/me` with no headers
 returns `{"name": "dev@localhost", "role": "analyst"}`; with `X-Actor` and
 `X-Actor-Role: lab_manager` it returns that identity; an unknown role is
 refused with **400** naming the valid list.
+
+Submission intake verified live: `POST /api/submissions` as `analyst` with two
+soil samples returns **201** with `submission_number: "SUB-2026-0001"` and both
+samples `status: "received"`; the same request as `client` returns **403**; a
+sample labelled `"garbage"` returns **422** with the parser's own message
+naming both accepted label shapes; `SELECT * FROM lab_user` afterward shows the
+actor provisioned by subject, with the role from the request headers.
 
 ---
 
@@ -162,6 +205,9 @@ refused with **400** naming the valid list.
 | 2026-08-22 | Depth intervals are **half-open** (`from` inclusive, `to` exclusive) | Contiguous sampling is the normal case. Under a closed convention every contiguous run in the database would trip the overlap check, and the fix would be a tolerance fudge. |
 | 2026-08-24 | Auth ported and wired **before any write endpoint**, not alongside the first one | Retrofitting auth onto endpoints already shipped without it is how a dependency gets skipped on one route and nobody notices. Every write endpoint from Phase 1 onward is required to depend on `ActorDep` from the moment it is written. |
 | 2026-08-24 | `CLIENT` placed at the **bottom** of the OIDC privilege order, not left unordered | Sentinel's `AUDITOR` sits at the bottom of its own privilege list for the same reason: a person who happens to hold both an external and an internal group must never be resolved to the more privileged role by accident of ordering. |
+| 2026-08-24 | `LabUser` rows are **provisioned on first sight**, keyed on `Actor.subject`, rather than requiring a separate admin-creates-user step first | An OIDC-fronted system's whole point is that the provider is the source of truth for identity; refusing a genuinely authenticated person's first write until an admin pre-creates a row would fight that. `LabUser.role` is a courtesy mirror only — authorisation never reads it. |
+| 2026-08-24 | Every write endpoint validates the **entire request before writing anything** — no partial submission on a mixed-quality batch | Matches Sentinel's ingestion posture and `find_overlaps`'s own "report every conflict, not the first" design. A test asserts directly that a batch with one bad label among good ones leaves zero rows behind. |
+| 2026-08-24 | An unregistered drill hole **refuses** the sample rather than auto-creating a stub `DrillHole` | Mirrors Sentinel's FR-5 (unregistered CRM lots quarantine, never get invented). A hole created from a sample label alone would have null coordinates, null depth, null dip — geological context the system would then be lying about having. |
 
 ---
 
@@ -170,15 +216,20 @@ refused with **400** naming the valid list.
 1. ~~**Authentication before the first write endpoint.**~~ **Done 2026-08-24** —
    OIDC verification and the dev-header shim both land, wired through
    `ActorDep`, verified live.
-2. `submission` creation with sample rows, running the parsed-label checks:
-   unreadable labels refused, overlapping intervals within a hole reported as a
-   list rather than one at a time. This is the first endpoint to actually
-   exercise `ActorDep` against a role check.
-3. Fire assay result entry against `domain/assay.py`, stored append-only with
+2. ~~**Submission creation with sample rows.**~~ **Done 2026-08-24** —
+   `POST /api/submissions`, full-batch validation, drill-hole resolution,
+   overlap checking against both the new batch and prior samples, `LabUser`
+   provisioning, one audit event per row. 26 new tests, verified live.
+3. A `POST /api/drill-holes` (or similar) registration endpoint. Submission
+   intake currently *requires* a hole to pre-exist and there is still no way
+   to create one through the API — only through a direct DB insert, which is
+   what the tests and the live verification above did. This blocks any real
+   demo of drill-sample intake.
+4. Fire assay result entry against `domain/assay.py`, stored append-only with
    supersession, writing an `audit_event` per change.
-4. Certificate of analysis: versioned row, byte-deterministic PDF, amended
+5. Certificate of analysis: versioned row, byte-deterministic PDF, amended
    never overwritten.
-5. Sample list and detail screens in React over those endpoints.
+6. Sample list and detail screens in React over those endpoints.
 
 ## Open questions
 
@@ -192,10 +243,13 @@ refused with **400** naming the valid list.
 - **Does a sample ever move between submissions?** Currently `submission_id` is
   NOT NULL with no history. If re-submission happens, that is a chain, not an
   update.
-- **`Actor` (the OIDC subject) vs. `LabUser` (the FK an `audit_event` needs) are
-  not yet connected.** `AuditEvent.actor_id` points at `lab_user.id`, but
-  nothing yet resolves a verified OIDC subject to a `LabUser` row. This has to
-  land with the first write endpoint — probably a lookup-or-provision-on-first-
-  sight keyed on `LabUser.subject`, mirroring how the provider is the source of
-  truth for identity but this database is the source of truth for what a
-  `LabUser` may reference.
+- ~~**`Actor` vs. `LabUser`.**~~ **Resolved 2026-08-24** — see
+  `current_lab_user` in `web/deps.py` and the decision log above.
+- **No endpoint registers a `DrillHole` yet.** Submission intake requires one
+  to already exist; the tests seed it by inserting the row directly. The next
+  action above tracks closing this gap.
+- **Project number** and **client onboarding** have the same problem as drill
+  holes: there is no `POST /api/clients` or `POST /api/projects` either. Every
+  integration test and the live verification above seeded these by direct
+  insert. A real demo of the spine end to end needs at least a minimal client
+  and project registration path before Phase 1 can be called done.

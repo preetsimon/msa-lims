@@ -15,7 +15,8 @@ from msa_lims.domain.lifecycle import (
 from msa_lims.domain.sample_id import DepthIntervalError, SampleIdError
 from msa_lims.domain.units import UnitError
 from msa_lims.domain.values import ValueParseError
-from msa_lims.web.routes import health, whoami
+from msa_lims.submissions.service import ClientNotFoundError, SubmissionValidationError
+from msa_lims.web.routes import health, submissions, whoami
 
 DESCRIPTION = """
 Laboratory information management for fire assay and geochemical analysis:
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.include_router(health.router)
     app.include_router(whoami.router)
+    app.include_router(submissions.router)
     _register_error_handlers(app)
     return app
 
@@ -58,6 +60,8 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     ValueParseError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnitError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     AssayCalculationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    ClientNotFoundError: status.HTTP_404_NOT_FOUND,
+    SubmissionValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 
 

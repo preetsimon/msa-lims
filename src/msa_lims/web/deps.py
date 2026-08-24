@@ -8,6 +8,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from msa_lims.auth.oidc import (
@@ -17,6 +18,7 @@ from msa_lims.auth.oidc import (
     parse_role_map,
 )
 from msa_lims.config import Settings, get_settings
+from msa_lims.db.models import LabUser
 from msa_lims.db.session import get_session_factory
 from msa_lims.domain.enums import Role
 
@@ -25,12 +27,15 @@ from msa_lims.domain.enums import Role
 class Actor:
     """Who is acting, and with what authority.
 
-    The one thing every write path needs and nothing else does: not an ORM
-    row, not a session — just enough to pass to
-    :func:`msa_lims.domain.lifecycle.check_transition` and to attribute an
-    :class:`~msa_lims.db.models.AuditEvent`.
+    Just enough to pass to
+    :func:`msa_lims.domain.lifecycle.check_transition` and to resolve the
+    :class:`~msa_lims.db.models.LabUser` row an
+    :class:`~msa_lims.db.models.AuditEvent` references. ``subject`` is the
+    identity provider's stable identifier (or, in dev-header mode, the header
+    value standing in for one) — never the display name, which people change.
     """
 
+    subject: str
     name: str
     role: Role
 
@@ -133,7 +138,8 @@ def current_actor(
             detail=f"unknown role {x_actor_role!r}; expected one of: {permitted}",
         ) from None
 
-    return Actor(name=x_actor or "dev@localhost", role=role)
+    name = x_actor or "dev@localhost"
+    return Actor(subject=name, name=name, role=role)
 
 
 def _actor_from_token(request: Request, authorization: str | None) -> Actor:
@@ -165,9 +171,47 @@ def _actor_from_token(request: Request, authorization: str | None) -> Actor:
     except AuthorisationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
-    return Actor(name=identity.name, role=identity.role)
+    return Actor(subject=identity.subject, name=identity.name, role=identity.role)
+
+
+def current_lab_user(
+    actor: Annotated[Actor, Depends(current_actor)], session: SessionDep
+) -> LabUser:
+    """The row an audit event's ``actor_id`` can reference, provisioned on first sight.
+
+    The identity provider (or the dev-header shim standing in for one) is
+    authoritative for who someone is and what role they currently hold — every
+    authorisation check reads :attr:`Actor.role` fresh from the request, never
+    this row's. ``LabUser`` exists only so a foreign key has something durable
+    to point at across requests; its ``full_name`` and ``role`` are kept in
+    sync as a courtesy so a report joining through it is not stale, not because
+    anything is entitled to trust them over the actor making the current call.
+
+    Looked up by ``subject`` — the provider's stable identifier — never by
+    name or email, both of which people change.
+    """
+    user = session.scalar(select(LabUser).where(LabUser.subject == actor.subject))
+    if user is None:
+        user = LabUser(
+            subject=actor.subject,
+            # A dev-header actor's name is rarely a real address; the fallback
+            # keeps the column's uniqueness meaningful without pretending a
+            # non-email string is one.
+            email=actor.name if "@" in actor.name else f"{actor.subject}@unknown.invalid",
+            full_name=actor.name,
+            role=actor.role,
+        )
+        session.add(user)
+        session.flush()
+        return user
+
+    if user.full_name != actor.name or user.role is not actor.role:
+        user.full_name = actor.name
+        user.role = actor.role
+    return user
 
 
 SessionDep = Annotated[Session, Depends(get_db)]
 ActorDep = Annotated[Actor, Depends(current_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+LabUserDep = Annotated[LabUser, Depends(current_lab_user)]

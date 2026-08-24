@@ -15,7 +15,7 @@ from msa_lims.domain.lifecycle import (
 from msa_lims.domain.sample_id import DepthIntervalError, SampleIdError
 from msa_lims.domain.units import UnitError
 from msa_lims.domain.values import ValueParseError
-from msa_lims.web.routes import health
+from msa_lims.web.routes import health, whoami
 
 DESCRIPTION = """
 Laboratory information management for fire assay and geochemical analysis:
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     )
     app.state.settings = settings
     app.include_router(health.router)
+    app.include_router(whoami.router)
     _register_error_handlers(app)
     return app
 

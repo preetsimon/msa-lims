@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-24 · **Phase:** 1 in progress (auth + submission intake done; results next)
+**Updated:** 2026-08-24 · **Phase:** 1 in progress (auth, client/project/submission intake done; results next)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,17 +12,19 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **In progress** — auth done, submission intake done; result entry → certificate next |
+| 1 · The spine | wk 2–4 | **In progress** — auth, client/project registration, submission intake done; result entry → certificate next |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 192 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 213 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty · frontend builds and typechecks · verified live through the
 browser: Vite → proxy → FastAPI → Postgres, with the degraded path exercised;
-auth and submission intake both verified live against the running server.
+auth, client/project registration, and submission intake all verified live
+against the running server — a client and project registered through the API
+now feed a submission with no direct DB insert required.
 
 ---
 
@@ -120,6 +122,30 @@ auth and submission intake both verified live against the running server.
   not one summarising event for the whole batch, matching `table_name`/
   `record_id` being a per-record grain everywhere else in the schema.
 
+### Client and project registration — `src/msa_lims/clients/`
+- **`service.py`** — `POST /api/clients` and `POST /api/projects`, thinner than
+  submission intake (no label parsing, no interval checking) but the same two
+  disciplines: check every constraint before writing anything, and audit every
+  row created. Restricted to `MAY_MANAGE_ACCOUNTS` (`supervisor`, `lab_manager`)
+  — a new tier in `domain/enums.py`, deliberately narrower than `BENCH_ROLES`:
+  a prep technician or analyst works material through the lab but does not set
+  up billing relationships or drilling programs.
+- **Uniqueness is checked before insert, not left to a raw `IntegrityError`.**
+  Client `code` and `name` are each globally unique; a project `name` is unique
+  within its client, so the same program name is fine for two different
+  clients. All three are checked with a `SELECT` before the `INSERT`, so a
+  re-submitted form comes back with a clear reason at 422 instead of an
+  unhandled 500.
+- **`ClientNotFoundError` was hoisted out of `submissions/service.py`** into
+  this module — both features ask "does this client exist?", and a caller
+  catching one must not be able to miss the other because two unrelated
+  classes happened to share a name. `submissions/service.py` now imports and
+  re-exports it, so nothing downstream had to change.
+- Flat request bodies, not nested REST (`POST /api/projects` with `client_id`
+  in the body, not `/api/clients/{id}/projects`) — matches how
+  `SubmissionCreate` already names its own parent, so there is one convention
+  for "how does a resource point at its parent" rather than two that disagree.
+
 ### Database — `src/msa_lims/db/`
 - 8 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`.
@@ -156,7 +182,7 @@ auth and submission intake both verified live against the running server.
   with `formatMeasured` so a non-detect cannot be rendered as its null value.
 - One screen so far: system status, which exists to prove the whole path.
 
-### Tests — 192
+### Tests — 213
 - **Unit** (139): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals, the state machine, OIDC token verification
   against a real self-signed keypair, the auth dependency exercised through a
@@ -165,12 +191,15 @@ auth and submission intake both verified live against the running server.
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (36, real Postgres): the append-only grants proven against the
-  actual application role; submission intake against the service directly (16
-  tests — happy paths, every validation refusal, the audit trail); submission
-  intake through the real HTTP app with `dependency_overrides` isolating each
-  test inside a rolled-back transaction (10 tests — status codes, role
-  enforcement, `LabUser` provisioning and reuse across requests).
+- **Integration** (57, real Postgres): the append-only grants proven against the
+  actual application role; submission intake against the service directly and
+  through the real HTTP app (26 tests — happy paths, every validation refusal,
+  the audit trail, role enforcement, `LabUser` provisioning); client and
+  project registration against the service directly and through HTTP (21
+  tests — duplicate code/name/project-name refusals, cross-client isolation,
+  role enforcement, audit trail, and one test that registers a client and
+  project purely through the API and then submits a sample against them, with
+  no direct DB insert anywhere in the chain).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -190,6 +219,15 @@ sample labelled `"garbage"` returns **422** with the parser's own message
 naming both accepted label shapes; `SELECT * FROM lab_user` afterward shows the
 actor provisioned by subject, with the role from the request headers.
 
+Client and project registration verified live, chained end to end: a
+`lab_manager` registers a client (`201`, code normalised to `"MSA"`), the same
+manager registers a project under it (`201`), an `analyst` attempting to
+register a client is refused (`403`), re-registering the same code returns
+**422** naming the conflict directly (`"client code 'MSA' is already in use"`),
+and a submission posted against the freshly registered `client_id`/`project_id`
+succeeds with **201** — the first time the whole spine has been driven purely
+through HTTP with no direct database insert anywhere in the chain.
+
 ---
 
 ## Decision log
@@ -208,6 +246,9 @@ actor provisioned by subject, with the role from the request headers.
 | 2026-08-24 | `LabUser` rows are **provisioned on first sight**, keyed on `Actor.subject`, rather than requiring a separate admin-creates-user step first | An OIDC-fronted system's whole point is that the provider is the source of truth for identity; refusing a genuinely authenticated person's first write until an admin pre-creates a row would fight that. `LabUser.role` is a courtesy mirror only — authorisation never reads it. |
 | 2026-08-24 | Every write endpoint validates the **entire request before writing anything** — no partial submission on a mixed-quality batch | Matches Sentinel's ingestion posture and `find_overlaps`'s own "report every conflict, not the first" design. A test asserts directly that a batch with one bad label among good ones leaves zero rows behind. |
 | 2026-08-24 | An unregistered drill hole **refuses** the sample rather than auto-creating a stub `DrillHole` | Mirrors Sentinel's FR-5 (unregistered CRM lots quarantine, never get invented). A hole created from a sample label alone would have null coordinates, null depth, null dip — geological context the system would then be lying about having. |
+| 2026-08-24 | Client/project registration restricted to a **new, narrower** role tier (`MAY_MANAGE_ACCOUNTS` = supervisor, lab_manager) rather than reusing `BENCH_ROLES` | Receiving physical material at the door and setting up a billing relationship or a drilling program are different kinds of authority. Reusing `BENCH_ROLES` would let a prep technician onboard a client, which nothing about "prep technician" implies. |
+| 2026-08-24 | `ClientNotFoundError` **hoisted** out of `submissions/service.py` into the new `clients/service.py`, re-exported for backward compatibility | Both submission intake and project registration ask "does this client exist?" Two separately defined classes with the same name is a real bug source — a caller catching one type would silently miss the other. |
+| 2026-08-24 | Uniqueness (client code, client name, project name within a client) checked with a `SELECT` **before** the `INSERT`, not left to the database's UNIQUE indexes | There is no global `IntegrityError` handler yet. Without the pre-check, a duplicate registration would surface as an unhandled 500 instead of a clear 422 naming the conflict. |
 
 ---
 
@@ -220,16 +261,20 @@ actor provisioned by subject, with the role from the request headers.
    `POST /api/submissions`, full-batch validation, drill-hole resolution,
    overlap checking against both the new batch and prior samples, `LabUser`
    provisioning, one audit event per row. 26 new tests, verified live.
-3. A `POST /api/drill-holes` (or similar) registration endpoint. Submission
-   intake currently *requires* a hole to pre-exist and there is still no way
-   to create one through the API — only through a direct DB insert, which is
-   what the tests and the live verification above did. This blocks any real
-   demo of drill-sample intake.
-4. Fire assay result entry against `domain/assay.py`, stored append-only with
+3. ~~**Client and project registration endpoints.**~~ **Done 2026-08-24** —
+   `POST /api/clients`, `POST /api/projects`, both restricted to
+   `MAY_MANAGE_ACCOUNTS`. 21 new tests; verified live end to end with a
+   submission posted against a freshly registered client and project.
+4. A `POST /api/drill-holes` (or similar) registration endpoint. Submission
+   intake still *requires* a hole to pre-exist and there is still no way to
+   create one through the API — only through a direct DB insert, which is
+   what the tests do. This is now the **only** remaining gap blocking a real
+   demo of drill-sample intake purely through HTTP.
+5. Fire assay result entry against `domain/assay.py`, stored append-only with
    supersession, writing an `audit_event` per change.
-5. Certificate of analysis: versioned row, byte-deterministic PDF, amended
+6. Certificate of analysis: versioned row, byte-deterministic PDF, amended
    never overwritten.
-6. Sample list and detail screens in React over those endpoints.
+7. Sample list and detail screens in React over those endpoints.
 
 ## Open questions
 
@@ -245,11 +290,12 @@ actor provisioned by subject, with the role from the request headers.
   update.
 - ~~**`Actor` vs. `LabUser`.**~~ **Resolved 2026-08-24** — see
   `current_lab_user` in `web/deps.py` and the decision log above.
+- ~~**Client onboarding and project registration.**~~ **Resolved 2026-08-24** —
+  see the Client and project registration section above.
 - **No endpoint registers a `DrillHole` yet.** Submission intake requires one
-  to already exist; the tests seed it by inserting the row directly. The next
-  action above tracks closing this gap.
-- **Project number** and **client onboarding** have the same problem as drill
-  holes: there is no `POST /api/clients` or `POST /api/projects` either. Every
-  integration test and the live verification above seeded these by direct
-  insert. A real demo of the spine end to end needs at least a minimal client
-  and project registration path before Phase 1 can be called done.
+  to already exist; the tests seed it by inserting the row directly. This is
+  now the last piece of reference-data registration missing before a real
+  demo of the spine can run entirely through HTTP.
+- **No endpoint deactivates a client** (`Client.is_active`) or amends one
+  already registered. Out of scope for now — nothing downstream reads
+  `is_active` yet, so there is nothing to demonstrate it changing.

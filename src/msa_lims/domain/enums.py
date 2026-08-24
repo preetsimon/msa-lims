@@ -167,3 +167,9 @@ class Role(Enum):
 #: number the lab's public statement.
 MAY_ENTER_RESULTS: frozenset[Role] = frozenset({Role.ANALYST, Role.SUPERVISOR, Role.LAB_MANAGER})
 MAY_SIGN_CERTIFICATE: frozenset[Role] = frozenset({Role.LAB_MANAGER})
+
+#: Roles that may register or amend the lab's client and project accounts.
+#: Deliberately narrower than the sample-lifecycle's bench roles: a prep
+#: technician or analyst works material through the lab but does not set up
+#: billing relationships or drilling programs.
+MAY_MANAGE_ACCOUNTS: frozenset[Role] = frozenset({Role.SUPERVISOR, Role.LAB_MANAGER})

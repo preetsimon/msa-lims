@@ -22,6 +22,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from msa_lims.clients.service import ClientNotFoundError
 from msa_lims.db.models import AuditEvent, Client, DrillHole, LabUser, Project, Sample, Submission
 from msa_lims.domain.enums import Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
@@ -33,9 +34,13 @@ from msa_lims.domain.sample_id import (
     parse_sample_id,
 )
 
-
-class ClientNotFoundError(ValueError):
-    """No client with this id exists."""
+__all__ = [
+    "ClientNotFoundError",
+    "SampleInput",
+    "SubmissionInput",
+    "SubmissionService",
+    "SubmissionValidationError",
+]
 
 
 class SubmissionValidationError(ValueError):

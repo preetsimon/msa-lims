@@ -8,13 +8,77 @@ outside the database should depend on.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from msa_lims.db.models import Sample, Submission
+from msa_lims.db.models import Client, Project, Sample, Submission
 from msa_lims.domain.enums import SampleType
+
+
+class ClientCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=12, description="e.g. 'MSA'")
+    name: str = Field(min_length=1, max_length=200)
+    contact_person: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    billing_address: str | None = None
+
+
+class ClientOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    contact_person: str | None
+    email: str | None
+    phone: str | None
+    billing_address: str | None
+    is_active: bool
+
+    @classmethod
+    def from_model(cls, client: Client) -> ClientOut:
+        return cls(
+            id=client.id,
+            code=client.code,
+            name=client.name,
+            contact_person=client.contact_person,
+            email=client.email,
+            phone=client.phone,
+            billing_address=client.billing_address,
+            is_active=client.is_active,
+        )
+
+
+class ProjectCreate(BaseModel):
+    client_id: int
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+    location: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+class ProjectOut(BaseModel):
+    id: int
+    client_id: int
+    name: str
+    description: str | None
+    location: str | None
+    start_date: date | None
+    end_date: date | None
+
+    @classmethod
+    def from_model(cls, project: Project) -> ProjectOut:
+        return cls(
+            id=project.id,
+            client_id=project.client_id,
+            name=project.name,
+            description=project.description,
+            location=project.location,
+            start_date=project.start_date,
+            end_date=project.end_date,
+        )
 
 
 class SampleCreate(BaseModel):

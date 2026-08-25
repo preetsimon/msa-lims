@@ -380,6 +380,11 @@ class FireAssayResult(Base, TimestampMixin):
     full vocabulary because AAS and ICP-MS are real methods this schema
     already names, even though nothing writes them yet.
 
+    ``crucible_id`` is nullable on purpose: direct entry remains a real path
+    (externally assayed pulp arrives with no crucible this system charged),
+    and a result naming one has its portion weight derived from the crucible's
+    recorded charge rather than re-typed — see the service module docstring.
+
     ``analysed_at`` is instrument/bench wall-clock time, distinct from
     ``created_at`` — see the ``TimestampMixin`` docstring in ``db/base.py``
     for why the two are never conflated.
@@ -414,6 +419,14 @@ class FireAssayResult(Base, TimestampMixin):
 
     analyst_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
     analysed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    #: The crucible this assay came from, when the sample was charged into a
+    #: batch. Null for direct entry. When set, ``sample_weight_g`` is copied
+    #: from that crucible's recorded charge at write time — see
+    #: ``fire_assay_results/service.py``.
+    crucible_id: Mapped[int | None] = mapped_column(
+        ForeignKey("crucible.id"), index=True, nullable=True
+    )
 
     supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("fire_assay_result.id"))
     superseded_reason: Mapped[str | None] = mapped_column(Text)

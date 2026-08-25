@@ -84,6 +84,12 @@ export function SampleDetail() {
                 <dd>{sample.current_result.gold_bead_mg} mg</dd>
                 <dt>Portion</dt>
                 <dd>{sample.current_result.sample_weight_g} g</dd>
+                {sample.current_result.crucible_id !== null && (
+                  <>
+                    <dt>Crucible</dt>
+                    <dd className="muted">#{sample.current_result.crucible_id}</dd>
+                  </>
+                )}
                 <dt>Analysed</dt>
                 <dd className="muted">{sample.current_result.analysed_at}</dd>
               </dl>

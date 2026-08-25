@@ -35,6 +35,7 @@ from msa_lims.domain.units import UnitError
 from msa_lims.domain.values import ValueParseError
 from msa_lims.drill_holes.service import DrillHoleValidationError
 from msa_lims.fire_assay_results.service import (
+    CrucibleNotFoundError,
     FireAssayResultValidationError,
     SampleNotFoundError,
 )
@@ -108,6 +109,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     ProjectValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     DrillHoleValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SampleNotFoundError: status.HTTP_404_NOT_FOUND,
+    CrucibleNotFoundError: status.HTTP_404_NOT_FOUND,
     FireAssayResultValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SubmissionValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     CertificateNotFoundError: status.HTTP_404_NOT_FOUND,

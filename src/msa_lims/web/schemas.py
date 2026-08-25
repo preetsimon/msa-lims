@@ -270,7 +270,15 @@ class MeasuredValueOut(BaseModel):
 class FireAssayResultCreate(BaseModel):
     sample_id: int
     gold_bead_mg: Decimal = Field(ge=0, description="Bead weight after parting — gold alone.")
-    sample_weight_g: Decimal = Field(gt=0)
+    sample_weight_g: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The portion assayed. Required unless crucible_id names the crucible the "
+            "sample was charged into — then its recorded charge is used and this must "
+            "be left unset."
+        ),
+    )
     balance_sensitivity_mg: Decimal | None = Field(default=None, gt=0)
     analysed_at: datetime = Field(
         description="When the weighing happened, not when it was entered."
@@ -281,6 +289,13 @@ class FireAssayResultCreate(BaseModel):
     )
     superseded_reason: str | None = Field(
         default=None, description="Required when supersedes_id is set."
+    )
+    crucible_id: int | None = Field(
+        default=None,
+        description=(
+            "The crucible this assay came from; its recorded charge is derived as the "
+            "portion weight."
+        ),
     )
 
 
@@ -296,6 +311,7 @@ class FireAssayResultOut(BaseModel):
     supersedes_id: int | None
     superseded_reason: str | None
     notes: str | None
+    crucible_id: int | None
 
     @classmethod
     def from_model(cls, result: FireAssayResult) -> FireAssayResultOut:
@@ -318,6 +334,7 @@ class FireAssayResultOut(BaseModel):
             supersedes_id=result.supersedes_id,
             superseded_reason=result.superseded_reason,
             notes=result.notes,
+            crucible_id=result.crucible_id,
         )
 
 

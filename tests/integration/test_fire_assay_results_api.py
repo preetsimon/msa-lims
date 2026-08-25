@@ -207,3 +207,95 @@ class TestTheSampleAdvancesThroughTheSpine:
         sample = session.get(Sample, sample_id)
         assert sample is not None
         assert sample.status is SampleStatus.ASSAYED
+
+
+def charge_a_crucible(client: TestClient, sample_id: int, *, weight: str = "45") -> int:
+    """A crucible charged with this sample and fired to ``CUPELLED``, entirely
+    through the real endpoints -- the same walk the live verification does."""
+    recipe = client.post(
+        "/api/flux-recipes",
+        json={
+            "name": f"Crucible Wiring {sample_id}",
+            "matrix_type": "silicate",
+            "nominal_portion_g": "30",
+            "litharge_g": "60",
+            "soda_ash_g": "90",
+            "borax_g": "30",
+            "silica_g": "15",
+            "flour_g": "3",
+            "nitre_g": "0",
+        },
+        headers=MANAGER,
+    ).json()
+    batch = client.post(
+        "/api/batches", json={"opened_at": "2026-08-25T08:00:00Z"}, headers=ANALYST
+    ).json()
+    client.patch(f"/api/batches/{batch['id']}/status", json={"status": "charging"}, headers=ANALYST)
+    crucible = client.post(
+        f"/api/batches/{batch['id']}/crucibles",
+        json={
+            "sample_id": sample_id,
+            "flux_recipe_id": recipe["id"],
+            "position_row": 2,
+            "position_col": 3,
+            "sample_weight_g": weight,
+            "charged_at": "2026-08-25T09:00:00Z",
+        },
+        headers=ANALYST,
+    ).json()
+    for stage in ("in_fusion", "fused", "in_cupellation", "cupelled"):
+        client.patch(f"/api/batches/{batch['id']}/status", json={"status": stage}, headers=ANALYST)
+    return int(crucible["id"])
+
+
+class TestWiringAResultToItsCrucible:
+    def test_the_portion_is_derived_from_the_recorded_charge(
+        self, client: TestClient, sample_id: int
+    ) -> None:
+        crucible_id = charge_a_crucible(client, sample_id)
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(
+                sample_id=sample_id,
+                gold_bead_mg="0.225",
+                sample_weight_g=None,
+                crucible_id=crucible_id,
+            ),
+            headers=ANALYST,
+        )
+        assert response.status_code == 201
+        body = response.json()
+        # The stored portion is the 45 g charge, not anything re-typed here.
+        assert body["crucible_id"] == crucible_id
+        assert body["sample_weight_g"] == "45"
+        # 0.225 mg from exactly 45 g is exactly 5 g/t.
+        assert body["au"]["value"] == "5.000"
+
+    def test_retyping_the_portion_alongside_a_crucible_is_422(
+        self, client: TestClient, sample_id: int
+    ) -> None:
+        crucible_id = charge_a_crucible(client, sample_id)
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(sample_id=sample_id, sample_weight_g="30", crucible_id=crucible_id),
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+        assert "not both" in response.json()["detail"]
+
+    def test_no_weight_and_no_crucible_is_422(self, client: TestClient, sample_id: int) -> None:
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(sample_id=sample_id, sample_weight_g=None),
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+        assert "required unless" in response.json()["detail"]
+
+    def test_an_unknown_crucible_is_404(self, client: TestClient, sample_id: int) -> None:
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(sample_id=sample_id, sample_weight_g=None, crucible_id=999_999),
+            headers=ANALYST,
+        )
+        assert response.status_code == 404

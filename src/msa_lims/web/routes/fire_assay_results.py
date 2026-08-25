@@ -34,6 +34,7 @@ def create_fire_assay_result(
             notes=body.notes,
             supersedes_id=body.supersedes_id,
             superseded_reason=body.superseded_reason,
+            crucible_id=body.crucible_id,
         ),
         analyst=analyst,
         actor_role=actor.role,

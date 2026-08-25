@@ -15,8 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, Client, LabUser, Sample, Submission
-from msa_lims.domain.enums import Role, SampleStatus, SampleType
+from msa_lims.db.models import AuditEvent, Client, Crucible, LabUser, Sample, Submission
+from msa_lims.domain.enums import CrucibleStatus, Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import InsufficientRoleError
 from msa_lims.fire_assay_results.service import (
     FireAssayResultInput,
@@ -453,3 +453,302 @@ class TestCurrentResultQuery:
         current = current_result(app_session, a_sample.id)
         assert current is not None
         assert current.id == third.id
+
+
+class CupelledChain:
+    """Shared setup for crucible wiring: a sample charged into a real batch
+    through ``BatchService`` and walked to ``CUPELLED``, at a 45 g portion —
+    deliberately not the recipe's 30 g nominal, so a derived weight is
+    distinguishable from a re-typed one."""
+
+    @staticmethod
+    def make(app_session: Session, analyst: LabUser) -> tuple[Sample, Crucible]:
+        from msa_lims.batches.service import BatchInput, BatchService, CrucibleChargeInput
+        from msa_lims.db.models import Client, FluxRecipe, Submission
+        from msa_lims.domain.enums import BatchStatus, MatrixType
+
+        client = Client(code="MSA-CRUC", name="MSA Crucible Test Mining Co")
+        app_session.add(client)
+        app_session.flush()
+        submission = Submission(
+            submission_number="SUB-2026-9500",
+            client_id=client.id,
+            received_at=datetime(2026, 8, 24, tzinfo=UTC),
+        )
+        app_session.add(submission)
+        app_session.flush()
+        sample = Sample(
+            sample_id="MSA-24-SO-00500",
+            submission_id=submission.id,
+            sample_type=SampleType.SOIL,
+            status=SampleStatus.RECEIVED,
+        )
+        app_session.add(sample)
+
+        recipe = FluxRecipe(
+            name="Standard Silicate",
+            matrix_type=MatrixType.SILICATE,
+            nominal_portion_g=Decimal("30"),
+            litharge_g=Decimal("60"),
+            soda_ash_g=Decimal("90"),
+            borax_g=Decimal("30"),
+            silica_g=Decimal("15"),
+            flour_g=Decimal("3"),
+            nitre_g=Decimal("0"),
+        )
+        app_session.add(recipe)
+        app_session.flush()
+
+        batches = BatchService(app_session, furnace_rows=6, furnace_columns=6)
+        batch = batches.create_batch(
+            BatchInput(opened_at=datetime(2026, 8, 25, 8, 0, tzinfo=UTC)),
+            opened_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        batches.advance_status(
+            batch.id,
+            target=BatchStatus.CHARGING,
+            advanced_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        crucible = batches.charge_crucible(
+            CrucibleChargeInput(
+                batch_id=batch.id,
+                sample_id=sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=2,
+                position_col=3,
+                sample_weight_g=Decimal("45"),
+                charged_at=datetime(2026, 8, 25, 9, 0, tzinfo=UTC),
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        for target in (
+            BatchStatus.IN_FUSION,
+            BatchStatus.FUSED,
+            BatchStatus.IN_CUPELLATION,
+            BatchStatus.CUPELLED,
+        ):
+            batches.advance_status(
+                batch.id, target=target, advanced_by=analyst, actor_role=Role.ANALYST
+            )
+        app_session.flush()
+        return sample, crucible
+
+    @staticmethod
+    def walk_to(
+        app_session: Session, analyst: LabUser, crucible: Crucible, status: CrucibleStatus
+    ) -> None:
+        """Force a charged crucible to an arbitrary status for refusal tests."""
+        crucible.status = status
+        app_session.flush()
+
+
+class TestWiringAResultToItsCrucible:
+    def test_a_named_crucible_derives_the_portion_from_its_recorded_charge(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        result = service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=Decimal("0.225"),
+                sample_weight_g=None,
+                crucible_id=crucible.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        # The stored portion is the charge as weighed (45 g), not anything
+        # typed into this request -- and 0.225 mg from 45 g is exactly 5 g/t.
+        assert result.sample_weight_g == Decimal("45")
+        assert result.au_value == Decimal("5")
+        assert result.crucible_id == crucible.id
+
+    def test_naming_a_crucible_and_retyping_its_portion_is_refused(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="not both"):
+            service.create(
+                result_input(
+                    sample_id=sample.id,
+                    sample_weight_g=Decimal("30"),
+                    crucible_id=crucible.id,
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_result_with_neither_a_crucible_nor_a_weight_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        with pytest.raises(
+            FireAssayResultValidationError, match="sample_weight_g is required unless"
+        ):
+            service.create(
+                result_input(sample_id=a_sample.id, sample_weight_g=None),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_an_unknown_crucible_is_refused_as_missing(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        from msa_lims.fire_assay_results.service import CrucibleNotFoundError
+
+        service = FireAssayResultService(app_session)
+        with pytest.raises(CrucibleNotFoundError, match="no crucible with id 999999"):
+            service.create(
+                result_input(
+                    sample_id=a_sample.id,
+                    sample_weight_g=None,
+                    crucible_id=999_999,
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_crucible_charged_with_another_sample_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        _charged_sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="charged with sample"):
+            service.create(
+                result_input(
+                    sample_id=a_sample.id,
+                    sample_weight_g=None,
+                    crucible_id=crucible.id,
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    @pytest.mark.parametrize("early", [CrucibleStatus.CHARGED, CrucibleStatus.FUSED])
+    def test_a_crucible_that_has_not_been_cupelled_produces_no_bead(
+        self, app_session: Session, analyst: LabUser, early: CrucibleStatus
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        CupelledChain.walk_to(app_session, analyst, crucible, early)
+        service = FireAssayResultService(app_session)
+        with pytest.raises(
+            FireAssayResultValidationError, match="a bead exists only after cupellation"
+        ):
+            service.create(
+                result_input(
+                    sample_id=sample.id,
+                    gold_bead_mg=Decimal("0.225"),
+                    sample_weight_g=None,
+                    crucible_id=crucible.id,
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_rejected_crucible_produces_no_bead(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        CupelledChain.walk_to(app_session, analyst, crucible, CrucibleStatus.REJECTED)
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="a bead exists only after"):
+            service.create(
+                result_input(
+                    sample_id=sample.id,
+                    gold_bead_mg=Decimal("0.225"),
+                    sample_weight_g=None,
+                    crucible_id=crucible.id,
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_the_audit_event_names_the_crucible(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        result = service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=Decimal("0.225"),
+                sample_weight_g=None,
+                crucible_id=crucible.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        event = app_session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.table_name == "fire_assay_result", AuditEvent.record_id == result.id
+            )
+        )
+        assert event is not None
+        assert event.after["crucible_id"] == crucible.id
+
+    def test_superseding_restates_the_same_crucible_and_rederives_the_portion(
+        self, app_session: Session, analyst: LabUser, supervisor: LabUser
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        first = service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=Decimal("0.225"),
+                sample_weight_g=None,
+                crucible_id=crucible.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        second = service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=Decimal("0.230"),
+                sample_weight_g=None,
+                balance_sensitivity_mg=None,
+                analysed_at=datetime(2026, 8, 24, 9, 0, tzinfo=UTC),
+                supersedes_id=first.id,
+                superseded_reason="transcription error at the balance",
+                crucible_id=crucible.id,
+            ),
+            analyst=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        app_session.flush()
+
+        assert second.sample_weight_g == Decimal("45")
+        assert second.crucible_id == crucible.id
+        current = current_result(app_session, sample.id)
+        assert current is not None and current.id == second.id
+
+    def test_entering_against_a_crucible_does_not_advance_its_status(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        """Parting and weighing are per-crucible measurements with their own
+        future write path; typing a bead in must not silently invent them."""
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=Decimal("0.225"),
+                sample_weight_g=None,
+                crucible_id=crucible.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        app_session.refresh(crucible)
+        assert crucible.status is CrucibleStatus.CUPELLED

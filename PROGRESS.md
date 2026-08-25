@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 2 in progress — furnace batching (batches, crucibles, flux recipes) is built and verified live; QC insertion policy and wiring a result to the crucible it came from remain
+**Updated:** 2026-08-25 · **Phase:** 2 in progress — furnace batching is built, verified live, and now wired to its outputs: a fire assay result can name the crucible it came from and derives its portion from the recorded charge. QC insertion policy and per-crucible weighing remain
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -13,26 +13,28 @@ first — it explains the decisions this document only tracks.
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
-| 2 · Fire assay batching | wk 5–7 | **In progress** — batches, crucibles (position-constrained), and flux recipes (matrix-scaled) built and verified live; QC insertion policy and crucible↔result wiring still open |
+| 2 · Fire assay batching | wk 5–7 | **In progress** — batches, crucibles (position-constrained), and flux recipes (matrix-scaled) built and verified live; results now wired to the crucible they came from; QC insertion policy and per-crucible weighing still open |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 392 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (including the two new furnace-batching
-migrations, checked with a full `downgrade base` / `upgrade head` round trip)
+**Health:** 407 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible (the crucible-link migration was checked
+with a full `downgrade base` / `upgrade head` round trip)
 · frontend builds and typechecks clean (TypeScript `strict` +
 `noUncheckedIndexedAccess`) · verified live through curl end to end: register
 a client, submission, and flux recipe; open a batch; charge a crucible with
 scaled reagent amounts; fire the batch through every furnace stage to
 `completed`, watching crucible status bulk-advance; and enter a fire assay
-result against the now-`in_assay` sample, proving Phase 1 and Phase 2 compose
-without a seam. A post-Phase-1 audit (see its own section below) found six
-defects, all fixed and tested; a five-item hardening pass followed it.
+result that names its crucible — the portion coming back as the recorded
+45 g charge, not anything re-typed — with every provenance refusal (re-typed
+portion, foreign sample, pre-cupellation crucible, unknown id) demonstrated
+as a real status code. A post-Phase-1 audit (see its own section below) found
+six defects, all fixed and tested; a five-item hardening pass followed it.
 **Phase 1 — the thinnest complete thread the original roadmap called
-for — is done. Phase 2's core batching flow is done; QC insertion policy
-and crucible↔result wiring remain.**
+for — is done. Phase 2's core batching flow and the result↔crucible link
+are done; QC insertion policy and per-crucible weighing remain.**
 
 ---
 
@@ -516,6 +518,45 @@ existing suite (which was already green: the findings below are all things
   `Instrument.name` already used, just not one this session's first draft
   followed.
 
+### Result↔crucible wiring — `fire_assay_results/service.py`, `db/models.py`
+- **A result may now name the crucible it came from** (`crucible_id`, new
+  nullable FK + index, migration `cfef85e840d4`) — closing the gap named in
+  open questions since batching landed: the portion weight entered at result
+  time was not provably the same one recorded when the crucible was charged.
+- **When a crucible is named, the portion is derived, not re-entered.** The
+  request carries *either* a crucible *or* a `sample_weight_g` — never both,
+  and not neither. A crucible's charge was physically weighed when it was
+  charged (that is what `Crucible.sample_weight_g` records); trusting a
+  second, freshly-typed number would let a result contradict its own
+  provenance. The stored row keeps showing both paths honestly: direct entry
+  stores the caller's weight; a wired entry stores the crucible's recorded
+  charge.
+- **Provenance is validated, not assumed.** A named crucible must belong to
+  the same sample the result is for (a result naming another sample's
+  crucible is refused, naming both ids), and must have reached at least
+  cupellation (`CUPELLED`/`PARTED`/`WEIGHED`) — a bead does not exist before
+  cupellation, and a `REJECTED` fusion produces no bead ever. An unknown
+  crucible id is a 404, like an unknown sample id: there is no interpretation
+  to offer.
+- **Result entry still does not advance the crucible's status.**
+  `PARTED`/`WEIGHED` remain unreachable until their own per-crucible
+  measurement path exists (see next actions) — typing a bead weight in must
+  not silently invent measurements nothing took.
+- **Superseding restates the crucible under the identical rule** — no magic
+  inheritance from the superseded row, and equally no requirement that a
+  correction name one (a correction may legitimately drop a wrong link by
+  entering raw weights). Whatever is supplied is validated identically; the
+  audit event's `after` payload names the `crucible_id` when there is one.
+- **`CrucibleNotFoundError` lives here, not in `batches/service.py`** — same
+  cycle-driven reasoning as `SampleNotFoundError`: batches already imports
+  from this module, so importing the error back would close a loop for no
+  benefit the one-way dependency doesn't already give (decision log).
+- **The migration is deliberately schema-only, with no grants companion** —
+  Postgres grants are table-level, so `msa_app`'s existing SELECT/INSERT on
+  the append-only table already cover the new column. Contrast `b1d0c4e77a10`'s
+  rule for new *tables*, where the mutability decision genuinely must be made;
+  a column on an already-decided table is not that decision.
+
 ### Database — `src/msa_lims/db/`
 - 14 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
@@ -535,6 +576,9 @@ existing suite (which was already green: the findings below are all things
   tables and their **mutable** grants (`SELECT, INSERT, UPDATE, DELETE`,
   matching the `MUTABLE_TABLES` tier `b1d0c4e77a10` already defined), same
   schema/mutability split, first use of that tier since Phase 0.
+- `cfef85e840d4` — `fire_assay_result.crucible_id` (nullable FK + index),
+  schema-only: table-level grants already cover the column, so no grants
+  migration accompanies it (see the result↔crucible wiring section above).
 - Enums stored as VARCHAR with a CHECK rather than Postgres native enums, so
   removing a vocabulary value is not a table rewrite.
 - `submission.declared_sample_count` records what the client's paperwork claimed
@@ -590,7 +634,10 @@ existing suite (which was already green: the findings below are all things
   `/api/certificates/{id}/pdf` download link. A 404 from the API is
   distinguished from any other failure (`ApiError.status`) and shown as "No
   sample with id N," not a generic error — the one place this frontend reads
-  an HTTP status code rather than just success/failure.
+  an HTTP status code rather than just success/failure. When the current
+  result names its crucible (new this phase), the provenance shows as
+  `Crucible: #id` alongside bead and portion; `types.ts`'s `FireAssayResult`
+  mirrors the wire format's `crucible_id`.
 - **`StatusPill` was extracted** from `App.tsx` into `components/StatusPill.tsx`
   and reused for both health-check statuses and sample statuses — the same
   three-tier colour system (`--ok`/`--warn`/`--bad`) now covers both
@@ -609,7 +656,7 @@ existing suite (which was already green: the findings below are all things
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 392
+### Tests — 407
 - **Unit** (184): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -635,7 +682,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (191, real Postgres): the append-only grants proven against
+- **Integration** (206, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -643,11 +690,19 @@ existing suite (which was already green: the findings below are all things
   skipped by the savepoint retry); client and
   project registration (21 tests); drill hole registration (16 tests,
   including the hole-canonicalisation-matches-a-drill-sample proof); fire
-  assay result entry (27 tests — the computed grade, the ASSAYED transition,
-  every supersession refusal including anti-branching, `current_result`
-  answering correctly over a three-link supersession chain as an anti-join,
-  and a direct proof that Postgres refuses `UPDATE`/`DELETE` against
-  `fire_assay_result`);
+  assay result entry (42 tests across the service and HTTP layers — the
+  computed grade, the ASSAYED transition, every supersession refusal including
+  anti-branching, `current_result` answering correctly over a three-link
+  supersession chain as an anti-join, and a direct proof that Postgres refuses
+  `UPDATE`/`DELETE` against `fire_assay_result`; plus, new this increment, the
+  crucible wiring — a named crucible deriving its recorded 45 g charge as the
+  stored   portion, re-typing alongside a crucible refused, neither weight nor
+  crucible refused, an unknown crucible refused as missing (404), a crucible
+  charged with another sample refused naming both ids, pre-cupellation and
+  rejected crucibles refused ("a bead exists only after cupellation"), the
+  audit event carrying `crucible_id`, a superseding result restating and
+  re-deriving from the same crucible, and entry leaving the crucible's own
+  status untouched);
   Certificate of Analysis issuance (26 tests — issuance, the
   ASSAYED→REPORTED transition, every validation refusal including
   cross-client isolation and anti-branching on the amendment chain, a
@@ -805,12 +860,29 @@ itself produce a result). A `prep_tech` was then confirmed able to open a
 batch (**201** — bench work, same tier as charging), while an `analyst`
 attempting to register a flux recipe was refused with **403** naming
 `lab_manager, supervisor` — proving `MAY_CONFIGURE_LAB` is enforced as its
-own, narrower gate. Finally, `POST /api/fire-assay-results` was called
-against the now-`in_assay` sample with a `0.220` mg bead from the actual `45`
-g charged portion: it succeeded (**201**), computed a real grade, and moved
-the sample to `assayed` — proving Phase 1's result-entry path and Phase 2's
-batching path compose cleanly, with no conflict over who owns the sample's
-status. Demo data was truncated from the dev database afterward.
+own, narrower gate. Demo data was truncated from the dev database afterward.
+
+Result↔crucible wiring verified live over the same kind of curl chain, with
+the furnace walk driven for real first: a client, submission, and recipe were
+registered; a batch was opened, opened for charging, charged with a `45` g
+portion at position `2-3`, and walked to `cupelled`. Entering a result that
+named only the crucible (`crucible_id`, **no** `sample_weight_g` in the body)
+returned **201** with `sample_weight_g: "45"` — derived from the recorded
+charge, not typed anywhere in the request — and `au.value` exactly `"5.000"`
+(0.225 mg from exactly 45 g). Every refusal then answered with its real
+status code: re-typing a portion alongside the crucible, **422**, "name the
+crucible or weigh the portion, not both"; a result against a crucible charged
+with a *different* sample, **422** naming both ids ("crucible #1 was charged
+with sample #1, not #2"); a result against a still-`CHARGED` (never fired)
+crucible, **422**, "a bead exists only after cupellation"; an unknown
+crucible id, **404**. Superseding the wired result restated the same
+crucible and re-derived the portion (**201**, `5.200 g/t` from a corrected
+0.234 mg bead over the same stored 45 g), and `SELECT` on `audit_event`
+afterward showed both events — `create` and `amend` — carrying
+`crucible_id = 1` in their payloads. The second sample, charged into its own
+batch but never fired, stayed `in_assay` throughout, confirming result entry
+cannot be tricked into certifying an unfired charge. Demo data was truncated
+from the dev database afterward.
 
 ---
 
@@ -866,6 +938,11 @@ status. Demo data was truncated from the dev database afterward.
 | 2026-08-25 | Sample labels and sample types are **cross-checked at intake** (found in audit) | A drill label arriving as `soil` produces a row that contradicts its own identity — interval columns populated, hole resolved, while claiming a medium that has neither. CORE/RC_CHIP must parse as drill labels; SOIL/STREAM_SEDIMENT/ROCK_CHIP must be surface; PULP takes either shape because externally-received pulp may carry its sender's interval label. Pure function in `domain/sample_id.py`, so the rule is testable without a session like every other intake rule. |
 | 2026-08-25 | Sequential document numbers **retry on unique violation inside a savepoint** rather than trusting COUNT+1 alone (audit hardening) | COUNT+1 is correct only under single-writer; two concurrent requests could both compute the same number and one would 500 on the UNIQUE index. Retrying in `begin_nested()` recomputes from the live count with no schema change and no sequence to grant; only SQLSTATE 23505 retries, so real constraint bugs still surface loudly. Post-insert UPDATE was never an option: `certificate` holds no UPDATE grant, append-only by design. |
 | 2026-08-25 | Lookup endpoints require an **internal role** until per-client row scoping exists (audit hardening) | Any authenticated actor — including CLIENT — could read any sample or certificate by id. With no LabUser↔Client link to scope rows by, the honest interim posture is refusal with a message naming why, not open access justified by "nobody malicious uses the demo." `GET /api/me` stays reachable by every authenticated role; it is how you find out what you are. |
+| 2026-08-25 | A result naming its crucible **derives** the portion from the crucible's recorded charge; the request may carry one or the other, never both | The charge was physically weighed when the crucible was charged — that is what `Crucible.sample_weight_g` records. Accepting a second, freshly-typed weight would let a result contradict its own provenance, which is precisely the gap this wiring exists to close. Neither supplied is equally refused: silence is not a measurement. |
+| 2026-08-25 | A named crucible must have reached at least **cupellation**, and a rejected fusion never qualifies | A gold bead does not exist before cupellation — accepting `gold_bead_mg` against a merely-charged crucible would record a weighing nothing performed. The allowed set (`CUPELLED`/`PARTED`/`WEIGHED`) reads as physical possibility, not administrative progress. |
+| 2026-08-25 | Result entry **does not advance** the crucible's status | Parting and weighing are per-crucible measurements with their own future write path (see next actions). Auto-setting `WEIGHED` from a typed bead weight would invent measurements nobody took and arrive before the real ones can be recorded. |
+| 2026-08-25 | `CrucibleNotFoundError` lives in `fire_assay_results/service.py`, not `batches/service.py`, despite batches owning the entity | Same cycle-driven reasoning as `SampleNotFoundError` staying put: `batches/service.py` already imports from `fire_assay_results/service.py` (it raises `SampleNotFoundError` while charging), so importing the error back would close an import loop for no benefit the one-way dependency doesn't already give. One canonical class either way. |
+| 2026-08-25 | The crucible-link migration (`cfef85e840d4`) is **schema-only, no grants companion** | Postgres grants are table-level; `msa_app`'s existing SELECT/INSERT on the append-only `fire_assay_result` already cover the new column. Contrast `b1d0c4e77a10`'s rule for new *tables* — there the mutability decision genuinely must be made; adding a column to an already-decided table is not that decision. |
 
 ---
 
@@ -948,22 +1025,20 @@ status. Demo data was truncated from the dev database afterward.
    `domain/enums.py`'s `QcMaterialType` since Phase 0) and a decision about
    whether QC insertion is enforced (a batch cannot fire without one) or
    merely recorded.
-3. **Wire `fire_assay_result` to the crucible it came from.** Result entry
-   today still takes a raw `gold_bead_mg`/`sample_weight_g` typed directly
-   into the request, with no reference to the crucible a sample was actually
-   charged into — meaning the portion weight entered at result time is not
-   provably the same one recorded when the crucible was charged. A
-   `crucible_id` on `FireAssayResult` (or deriving the portion from the
-   crucible instead of re-entering it) is the natural next increment,
-   deliberately deferred this session to keep the vertical slice thin — see
-   the module docstring in `batches/service.py` for the current, honest
-   boundary between the two write paths.
+3. ~~**Wire `fire_assay_result` to the crucible it came from.**~~ **Done
+   2026-08-25** — nullable `crucible_id` on the result (migration
+   `cfef85e840d4`, schema-only); a named crucible derives the stored portion
+   from its recorded charge and refuses re-typed weights; provenance checks
+   (same sample only, cupellation reached); supersession restates the same
+   rule. 15 new tests; verified live end to end including every refusal as a
+   real status code — see "Verified live."
 4. **Per-crucible weighing (`lead_button_weight_mg`, `prill_weight_mg`,
    `parting_acid_volume_ml`) after cupellation.** `CrucibleStatus.PARTED` and
    `.WEIGHED` exist in the vocabulary (Phase 0) but have no write path — this
    session deliberately kept `Crucible` lean (position, flux charge, status)
    rather than adding columns with nothing to populate them yet, matching the
-   Phase 1 discipline of not building a dead branch ahead of its use.
+   Phase 1 discipline of not building a dead branch ahead of its use. Result
+   entry now names its crucible but still leaves these statuses untouched.
 
 ## Open questions
 
@@ -1059,13 +1134,17 @@ status. Demo data was truncated from the dev database afterward.
   needs a decision about ordering — does the hole's total depth get entered
   before or after all its samples, and can it be corrected once samples exist
   — that the drill-hole endpoint alone can't resolve.
-- **QC insertion policy.** Named in the original roadmap for Phase 2 and
-  still open — see "Next actions" above. No `crm_lots`/QC-material schema
-  exists yet.
-- **`fire_assay_result` is not wired to the crucible it came from.** A
-  result's `sample_weight_g` is typed directly into the request and is not
-  provably the same portion a crucible was actually charged with — see "Next
-  actions" above.
+- ~~**QC insertion policy.**~~ Still open — see "Next actions" above; no
+  `crm_lots`/QC-material schema exists yet.
+- ~~**`fire_assay_result` is not wired to the crucible it came from.**~~
+  **Resolved 2026-08-25** — a result may name its crucible, and when it does
+  the stored portion *is* the recorded charge, not a re-typed number; see
+  "Result↔crucible wiring" above and the decision log.
+- **A wired result's crucible is not yet shown beyond an id.**
+  `FireAssayResultOut.crucible_id` and the sample-detail screen surface the
+  link as `#id`; naming which batch and tray position that crucible occupied
+  needs either a relationship read or a batch-listing endpoint (also still
+  missing — below). Deferred until a screen actually needs to render it.
 - **No way to correct a batch or crucible charged in error.** The batch
   status machine has no backward move and `Crucible` rows are never deleted
   or amended once created (mutable at the grant level, but nothing in the

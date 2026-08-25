@@ -72,6 +72,7 @@ export interface FireAssayResult {
   supersedes_id: number | null;
   superseded_reason: string | null;
   notes: string | null;
+  crucible_id: number | null;
 }
 
 export interface SampleDetail {

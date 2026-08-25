@@ -214,7 +214,17 @@ def charge_a_crucible(
 ) -> int:
     """A crucible charged with this sample and fired to ``CUPELLED`` (or
     walked on to ``WEIGHED``), entirely through the real endpoints -- the
-    same walk the live verification does."""
+    same walk the live verification does.
+
+    Charging now requires the sample to genuinely be ``READY_FOR_ASSAY`` (see
+    ``batches/service.py``'s module docstring), so this walks it through
+    prep first -- the ``sample_id`` fixture hands back a fresh ``RECEIVED``
+    soil sample.
+    """
+    client.patch(f"/api/samples/{sample_id}/status", json={"target": "in_prep"}, headers=ANALYST)
+    client.patch(
+        f"/api/samples/{sample_id}/status", json={"target": "ready_for_assay"}, headers=ANALYST
+    )
     recipe = client.post(
         "/api/flux-recipes",
         json={

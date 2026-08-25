@@ -6,16 +6,18 @@ separate step — mirroring the sample lifecycle's "start preparation" — rathe
 than something the first charge does implicitly, so a batch's tray is always
 either open for placement or not, never ambiguously both.
 
-**Charging bypasses ``domain.lifecycle``'s ``READY_FOR_ASSAY -> IN_ASSAY``
-transition, the same way ``fire_assay_results/service.py`` bypasses the
-lifecycle table for entering a result.** Prep-stage tracking does not exist
-yet (see that module's own docstring for the identical reasoning), so no
-sample can honestly reach ``READY_FOR_ASSAY`` through the modelled path. A
-sample is chargeable from any pre-assay status — everything except
-``IN_ASSAY``, ``ASSAYED``, ``REPORTED`` and ``REJECTED`` — and charging moves
-it straight to ``IN_ASSAY``. This is the honest reflection of what this
-system currently tracks, not a shortcut hidden behind the full lifecycle
-machinery.
+**Charging a sample into a crucible genuinely calls
+``domain.lifecycle.check_transition`` for ``READY_FOR_ASSAY -> IN_ASSAY``** —
+the honest transition, not a bypass. Earlier phases could not do this
+honestly: nothing existed yet to move a sample to ``READY_FOR_ASSAY``, so
+charging accepted any pre-assay status with a hand-rolled guard and said so in
+this docstring. As of Phase 3's ``sample_lifecycle/service.py``, a sample
+reaches ``READY_FOR_ASSAY`` for real — through prep or the pulp shortcut —
+and charging now requires it, the same way certificate issuance requires
+``ASSAYED`` for the real ``ASSAYED -> REPORTED`` move. A sample still in
+``RECEIVED`` or ``IN_PREP`` is refused with the same
+``TransitionNotAllowedError`` (**409**) a skipped furnace stage gets, naming
+what state it needs to reach first.
 
 **A batch's own status is a separate, linear machine** (see
 :mod:`msa_lims.domain.batch_lifecycle`) with no branch and no way back — a
@@ -68,16 +70,10 @@ from msa_lims.domain.batch_lifecycle import (
 )
 from msa_lims.domain.enums import BatchStatus, CrucibleStatus, Role, SampleStatus
 from msa_lims.domain.flux import FluxAmounts, scale_flux_charge
-from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
+from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError, check_transition
 from msa_lims.fire_assay_results.service import CrucibleNotFoundError, SampleNotFoundError
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError
 from msa_lims.qc_materials.service import QcMaterialNotFoundError
-
-#: Sample statuses a crucible cannot be charged from — the terminal statuses
-#: and IN_ASSAY itself, which means the sample is already in another batch.
-_NOT_CHARGEABLE: frozenset[SampleStatus] = frozenset(
-    {SampleStatus.IN_ASSAY, SampleStatus.ASSAYED, SampleStatus.REPORTED, SampleStatus.REJECTED}
-)
 
 
 class BatchNotFoundError(ValueError):
@@ -208,6 +204,18 @@ class BatchService:
             sample = self._session.get(Sample, data.sample_id)
             if sample is None:
                 raise SampleNotFoundError(f"no sample with id {data.sample_id}")
+            # The real transition, not a bypass — see the module docstring.
+            # Raises TransitionNotAllowedError (409) for a sample not yet
+            # READY_FOR_ASSAY; InsufficientRoleError cannot actually trigger
+            # here since this transition's allowed_roles is BENCH_ROLES,
+            # already checked above, but is not caught so a future change to
+            # either role set fails loudly instead of silently.
+            check_transition(
+                source=sample.status,
+                target=SampleStatus.IN_ASSAY,
+                sample_type=sample.sample_type,
+                role=actor_role,
+            )
         else:
             assert data.qc_material_id is not None
             material = self._session.get(QcMaterial, data.qc_material_id)
@@ -242,21 +250,11 @@ class BatchService:
         )
 
         problems = self._check_batch_and_position(batch, data.position_row, data.position_col)
-        # State problems that depend on which kind of charge this is are
-        # collected, so a batch left PENDING *and* an already-charged sample
-        # are reported together rather than one hiding the other.
-        if sample is not None:
-            if sample.status in _NOT_CHARGEABLE:
-                problems.append(
-                    f"sample {sample.sample_id!r} is {sample.status.value} and cannot be charged"
-                )
-        else:
-            assert material is not None
-            if not material.is_active:
-                problems.append(
-                    f"QC material {material.name!r} is retired and cannot be charged; "
-                    "register its replacement as a new material"
-                )
+        if material is not None and not material.is_active:
+            problems.append(
+                f"QC material {material.name!r} is retired and cannot be charged; "
+                "register its replacement as a new material"
+            )
         if problems:
             raise CrucibleValidationError(problems)
 

@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 2 complete — furnace batching, result↔crucible wiring, per-crucible parting and weighing, and the QC insertion policy all built and verified live. A batch's tray carries client samples beside CRM/blank insertions from stock; every bead lands on its crucible row through one bench path. Phase 3 (lifecycle & prep) is next
+**Updated:** 2026-08-25 · **Phase:** 3 in progress — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY` (or skips straight there as a pulp), and charging a crucible finally calls the real `READY_FOR_ASSAY → IN_ASSAY` transition instead of the honest bypass Phases 1 and 2 each documented and deferred. Tightening `fire_assay_result` entry's own precondition the same way is the next slice
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -14,32 +14,33 @@ first — it explains the decisions this document only tracks.
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
-| 3 · Lifecycle & prep | wk 8–9 | Not started |
+| 3 · Lifecycle & prep | wk 8–9 | **In progress** — the real prep walk and re-assay/rejection moves built and verified live; charging now requires genuine `READY_FOR_ASSAY`. Tightening `fire_assay_result` entry to require genuine `IN_ASSAY` is the next slice |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 470 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (the QC-materials migration was checked
-with a full `downgrade base` / `upgrade head` round trip)
-· frontend builds and typechecks clean (TypeScript `strict` +
-`noUncheckedIndexedAccess`) · verified live through curl end to end: register
-a client, submission, and flux recipe; open a batch; charge a crucible with
-scaled reagent amounts; fire the batch through every furnace stage to
-`completed`, watching crucible status bulk-advance; record a crucible's
-parting and final weighing at the bench; enter a fire assay result that
-names its crucible alone — the portion and the bead coming back as the
-recorded 45 g charge and 0.225 mg weighing, nothing re-typed — with every
-refusal (re-typed numbers, premature parting, double parting, external role)
-demonstrated as a real status code; register a CRM and charge it beside
-client samples in the same tray (both/neither refusals included), walk it
-through the furnace, part and weigh its bead, and prove a result can never
-name a QC crucible. A post-Phase-1 audit (see its own section
-below) found six defects, all fixed and tested; a five-item hardening pass
-followed it.
+**Health:** 490 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible (Phase 3 needed none — it is a service and
+route addition over the existing schema) · frontend builds and typechecks
+clean (TypeScript `strict` + `noUncheckedIndexedAccess`) · verified live
+through curl end to end, Phase 1 and 2's own chain plus: a soil sample
+refused the pulp shortcut by name (`"only a pulp may skip preparation, and
+this is soil"`, **409**), walked `received → in_prep → ready_for_assay`
+across two real `PATCH` calls; a pulp sample reaching `ready_for_assay` in
+one; a fresh `RECEIVED` sample refused a crucible charge with **409** naming
+the transition itself, then the same sample charged cleanly once genuinely
+`ready_for_assay`; a supervisor rejecting a sample with a reason (**200**)
+and the identical request with no reason refused (**422**); and `in_assay`
+named as a target refused at the schema layer before reaching the service
+(**422**, the literal values named in the error). A post-Phase-1 audit (see
+its own section below) found six defects, all fixed and tested; a five-item
+hardening pass followed it.
 **Phase 1 — the thinnest complete thread the original roadmap called
 for — is done. Phase 2 is done: batching, result wiring,
-per-crucible weighing, and recorded-not-enforced QC insertion.**
+per-crucible weighing, and recorded-not-enforced QC insertion. Phase 3's
+first slice — the real prep walk, and charging closing the loop on
+`READY_FOR_ASSAY → IN_ASSAY` — is done; `fire_assay_result` entry's own
+precondition is next.**
 
 ---
 
@@ -641,6 +642,47 @@ existing suite (which was already green: the findings below are all things
   why. Its bead is judged by QC Sentinel on export (Phase 5); there is
   deliberately no verdict vocabulary here to judge it with.
 
+### Sample lifecycle & prep — `sample_lifecycle/`, `batches/service.py`
+- **`sample_lifecycle/service.py`** is where every bare sample-status move
+  finally goes through `domain.lifecycle.check_transition` for real —
+  closing a gap named honestly in every earlier phase's own docstring.
+  `PATCH /api/samples/{id}/status` covers `RECEIVED → IN_PREP`,
+  `IN_PREP → READY_FOR_ASSAY`, the pulp shortcut, returning an `ASSAYED`
+  sample for re-assay (reason required), and rejection (reason required) —
+  the five moves that carry no data beyond the status itself. No new schema:
+  `check_transition` and its whole role/reason/pulp-shortcut logic were
+  fully built and unit-tested since Phase 0 and simply never had a caller.
+- **This is deliberately not a general "set any status" endpoint.**
+  `SampleStatusUpdate.target` is a `Literal["in_prep", "ready_for_assay",
+  "rejected"]`, not the full `SampleStatus` vocabulary — `in_assay`,
+  `assayed`, and `reported` are excluded at the **schema layer**, before a
+  request even reaches the service. Each of those three is only ever true
+  because of the record that produces it (a crucible, a bead weight, a
+  signed PDF); a bare status flip claiming one would be a status "advance"
+  with nothing behind it, the exact problem `batches/service.py` already
+  names for crucible transitions. A malformed `target` value comes back as a
+  clean 422 listing the three legal values, not a runtime service refusal.
+- **Charging a crucible now calls the real
+  `READY_FOR_ASSAY → IN_ASSAY` transition — not a bypass.** This is the
+  payoff `batches/service.py`'s own docstring has been promising since
+  Phase 2: "Prep-stage tracking does not exist yet... this is the honest
+  reflection of what this system currently tracks." It now does, so charging
+  requires it, replacing the old `_NOT_CHARGEABLE` frozenset with a direct
+  `check_transition` call. A sample still `RECEIVED` or `IN_PREP` is refused
+  with **409** (`TransitionNotAllowedError`), the same status a skipped
+  furnace stage gets — a real, deliberate change from the old **422**, and
+  a more correct one: `_ERROR_STATUS`'s own comment already says a 409
+  means "the sample moved under you," which is exactly what "not ready yet"
+  means here.
+- **`fire_assay_results/service.py`'s own precondition is deliberately
+  *not* tightened in this pass.** It still accepts a result for any
+  non-`REJECTED` sample, the Phase 1 bypass, even though `IN_ASSAY` is now
+  genuinely reachable. Making it require the real transition too is real,
+  separately-scoped work — it ripples into every certificate and sample
+  test fixture that enters a result against a freshly-created sample, not
+  just the batching ones — and is named explicitly as the next slice rather
+  than folded in here to keep this one coherent.
+
 ### Database — `src/msa_lims/db/`
 - 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
@@ -690,20 +732,24 @@ existing suite (which was already green: the findings below are all things
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Thirteen write endpoints, and five read endpoints:
+- Fourteen write endpoints, and five read endpoints:
   `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
   result and every certificate that names it), `GET /api/certificates/{id}`
   (metadata, sharing the exact certified-samples query the issuance response
-  uses), `GET /api/certificates/{id}/pdf` (the raw document), and — new this
-  phase — `GET /api/batches/{id}` (a batch and its crucibles, ordered the way
-  a technician reads a tray).   `POST /api/fire-assay-results` was the first
+  uses), `GET /api/certificates/{id}/pdf` (the raw document), and
+  `GET /api/batches/{id}` (a batch and its crucibles, ordered the way a
+  technician reads a tray). `POST /api/fire-assay-results` was the first
   write to compute a response rather than only echo what it stored;
   `POST /api/batches/{id}/crucibles` is the second, computing scaled reagent
   amounts from a recipe rather than storing raw input. The charge endpoint
-  now names *what* goes into the slot — `sample_id` or `qc_material_id`,
+  names *what* goes into the slot — `sample_id` or `qc_material_id`,
   exactly one, enforced in the service and mirrored by a database CHECK;
   `POST /api/qc-materials` registers the stock those insertions draw from,
-  gated by `MAY_CONFIGURE_LAB` like flux recipes.
+  gated by `MAY_CONFIGURE_LAB` like flux recipes. New this phase,
+  `PATCH /api/samples/{id}/status` is the first write endpoint whose request
+  shape is *narrower* than the domain vocabulary on purpose — a `Literal` of
+  three status names, not the full `SampleStatus` enum every other status
+  field in this API exposes.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -754,7 +800,7 @@ existing suite (which was already green: the findings below are all things
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 470
+### Tests — 490
 - **Unit** (192): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -783,7 +829,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (261, real Postgres): the append-only grants proven against
+- **Integration** (281, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -822,10 +868,13 @@ existing suite (which was already green: the findings below are all things
   filtering, an invalid status value refused with 422 before it reaches
   the service, and the `client` role refused); flux recipe registration (9 tests — registration, the role
   gate, a duplicate name refused, a negative reagent amount refused at the
-  Pydantic layer, the audit event); furnace batching (30 tests — sequential
+  Pydantic layer, the audit event); furnace batching (32 tests — sequential
   batch numbering, opening restricted to bench roles, charging refused before
   a batch is `CHARGING`, flux scaled correctly onto the stored crucible row,
-  a sample already `IN_ASSAY` refused a second charge, an occupied position
+  a sample already `IN_ASSAY` refused a second charge via the real
+  `TransitionNotAllowedError` (not a collected validation problem), a sample
+  still `RECEIVED`/`IN_PREP` refused the same way — both service-level and,
+  new this phase, over HTTP as a real **409** — an occupied position
   refused, an out-of-tray position refused as the domain error (not a generic
   422), an unknown recipe/batch/sample each refused with the right error
   type, a zero sample weight surfacing the real `FluxCalculationError`, the
@@ -859,7 +908,17 @@ existing suite (which was already green: the findings below are all things
    on the row); result entry refusing a QC crucible at any stage (1, naming
    both ids); and over HTTP (5 — charge `201` with `sample_id` null and
    reagents scaled, both/neither 422, unknown material 404, pending-batch
-   422, and the full charge→fire→part→weigh walk for a QC slot)).
+   422, and the full charge→fire→part→weigh walk for a QC slot)); and, new
+   this phase, the sample lifecycle (18 — service-level: the two-step prep
+   walk, the pulp shortcut, a non-pulp refused it by name, a client role
+   refused starting prep, an unknown sample refused, the transition audit
+   event with `before`/`after`, re-assay with a reason, re-assay without one
+   refused, rejection with a reason, a prep tech refused rejection, an
+   already-`ASSAYED` sample refused rejection naming "amended certificate";
+   and over HTTP: the same two-step walk, skipping it refused as **409**, a
+   client role refused as **403**, an unknown sample as **404**, `in_assay`
+   refused at the schema layer as **422** before reaching the service, and
+   rejection with and without a reason)).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -1049,6 +1108,26 @@ proving the shared path still composes. `audit_event` showed the QC
 crucible's `create` carrying `qc_material_id` and no sample id. Demo data
 was truncated afterward.
 
+The sample lifecycle verified live over a fresh curl chain: a client and a
+submission with a soil sample and a pulp sample, both `RECEIVED`. Setting the
+soil sample straight to `ready_for_assay` was refused (**409**, "only a pulp
+may skip preparation, and this is soil"); the pulp sample reached
+`ready_for_assay` in one `PATCH` (**200**); the soil sample then walked
+`received → in_prep` (**200**) and `in_prep → ready_for_assay` (**200**) in
+two. A flux recipe and a batch (opened for charging) were set up, and the
+now-`ready_for_assay` soil sample charged into a crucible cleanly (**201**).
+A second, freshly-registered soil sample — still `RECEIVED` — was charged
+into the same batch and refused with **409**, `"a sample cannot go from
+received to in_assay"` — the real transition, not a generic validation
+error. That second sample was then rejected by a supervisor with a reason
+(**200**, `status: "rejected"`), while rejecting the *first* (now `in_assay`)
+sample with no reason was refused (**422**, "rejecting a sample requires a
+reason"). Finally, naming `in_assay` as the `target` on the lifecycle
+endpoint was refused at the schema layer (**422**, listing `in_prep`,
+`ready_for_assay`, and `rejected` as the only legal values) — proving the
+exclusion is enforced before any request reaches the service. Demo data was
+truncated afterward.
+
 ---
 
 ## Decision log
@@ -1117,6 +1196,9 @@ was truncated afterward.
 | 2026-08-25 | Duplicate-type QC is **refused at registration**, not given nullable stock rows | A field duplicate has no jar, no lot number, no certified grade — it is a *re-insertion of an existing sample*. Giving it a row shaped like stock would make `qc_material` lie about what it holds; the honest refusal names what duplicates actually are and defers their real insertion path. |
 | 2026-08-25 | A **retired** QC material cannot be charged into a new batch | Retirement means "this lot no longer guards work" — an expired or contaminated CRM inserted anyway would produce QC data everyone would have to remember to discount. The refusal names the remedy (register its replacement); historical batches still name the retired row, which is why retirement is `is_active`, never deletion. |
 | 2026-08-25 | A fire assay result can **never name a QC crucible**, at any stage | Result entry exists for samples; a QC insertion holds none. Its bead is judged by QC Sentinel on export (Phase 5), and there is deliberately no verdict vocabulary here to judge it with — letting one through would start this system silently grading its own controls under a sample's identity. |
+| 2026-08-25 | `PATCH /api/samples/{id}/status` accepts a **`Literal` of three status names**, not the full `SampleStatus` enum | `in_assay`, `assayed`, and `reported` are each true only because of a record that produced them (a crucible, a bead weight, a signed PDF). A generic "set any status" endpoint would let one of those be claimed with nothing behind it — refusing the other three at the schema layer, before any request reaches the service, makes the exclusion self-documenting in the OpenAPI contract rather than a runtime special case. |
+| 2026-08-25 | Charging a crucible now **genuinely calls** `check_transition` for `READY_FOR_ASSAY → IN_ASSAY`, replacing the `_NOT_CHARGEABLE` bypass | The bypass was honestly documented as temporary since Phase 2: prep tracking didn't exist, so nothing could legitimately reach `READY_FOR_ASSAY`. It does now. A sample not yet ready is refused with the real `TransitionNotAllowedError` (**409**) instead of a collected validation problem (**422**) — a deliberate status-code change, and the more correct one per `_ERROR_STATUS`'s own comment ("409 means the sample moved under you"). |
+| 2026-08-25 | `fire_assay_results/service.py`'s own precondition (any non-`REJECTED` sample) is **left untightened** in this pass | Requiring the real `IN_ASSAY → ASSAYED` transition too would be correct, but it ripples into every certificate and sample test fixture that enters a result against a freshly-created sample — a separately-scoped decision, not squeezed into the phase's first slice to keep this one coherent and reviewable on its own. |
 
 ---
 
@@ -1217,6 +1299,35 @@ was truncated afterward.
    crucible now derives both its numbers from those records. 30 new tests;
    verified live end to end — see "Verified live." **Phase 2's last open
    item is the QC insertion policy.**
+
+## Next actions (Phase 3 — lifecycle & prep)
+
+1. ~~**The real prep walk (`RECEIVED → IN_PREP → READY_FOR_ASSAY`), re-assay,
+   and rejection.**~~ **Done 2026-08-25** — `sample_lifecycle/service.py`,
+   `PATCH /api/samples/{id}/status`, restricted at the schema layer to the
+   three bare-flip targets (`in_prep`, `ready_for_assay`, `rejected`).
+   Charging a crucible now calls the real `check_transition` for
+   `READY_FOR_ASSAY → IN_ASSAY` instead of the Phase 1/2 bypass, closing a
+   gap named in both phases' own docstrings. 20 new tests; verified live end
+   to end — see "Verified live."
+2. **Tighten `fire_assay_results/service.py`'s own precondition to require
+   the real `IN_ASSAY → ASSAYED` transition**, replacing its current
+   any-non-`REJECTED`-sample guard. Deliberately deferred from item 1 to keep
+   that slice coherent — see the decision log. Real scope: every existing
+   test fixture across `test_fire_assay_results_*`, `test_certificates_*`,
+   and `test_samples_api.py` that enters a result against a freshly-created
+   sample will need to charge it into a crucible (or otherwise reach
+   `IN_ASSAY`) first, not just the batching-focused fixtures this pass
+   already updated.
+3. **A `PrepRecord` of what physically happened during prep** — crushing,
+   splitting, pulverising, which instrument, the resulting pulp weight — is
+   real remaining scope this pass deliberately did not build. Bare status
+   flips are honest for what this system currently tracks (matching
+   `Crucible`'s "no half-finished branch" discipline), but a real
+   contamination investigation would eventually want to trace a pulp back to
+   the pulveriser that touched it, the way a bead can already be traced to
+   its crucible. No `instrument_id` link exists on any prep record yet
+   because no prep record exists yet.
 
 ## Open questions
 
@@ -1320,6 +1431,18 @@ was truncated afterward.
   **Resolved 2026-08-25** — a result may name its crucible, and when it does
   the stored portion *is* the recorded charge, not a re-typed number; see
   "Result↔crucible wiring" above and the decision log.
+- **`fire_assay_results/service.py` still accepts a result for any
+  non-`REJECTED` sample**, not only a genuinely `IN_ASSAY` one — see "Next
+  actions" above. Charging now requires the real transition; result entry
+  does not yet require its own.
+- **No `PrepRecord` of what physically happened during prep.** A bare status
+  flip is the whole fact `sample_lifecycle/service.py` currently tracks — no
+  instrument, no pulp weight, no operation type (crush/split/pulverise). See
+  "Next actions" above.
+- **A sample can be charged into a crucible without ever having gone through
+  a formal receipt inspection or weighing check against `weight_received_g`.**
+  Nothing compares a prepped pulp's implied weight to what was logged at
+  intake; a large, unexplained mass loss during prep would go unnoticed.
 - **A wired result's crucible is not yet shown beyond an id.**
   `FireAssayResultOut.crucible_id` and the sample-detail screen surface the
   link as `#id`; naming which batch and tray position that crucible occupied

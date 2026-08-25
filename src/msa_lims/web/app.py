@@ -51,6 +51,7 @@ from msa_lims.web.routes import (
     flux_recipes,
     health,
     qc_materials,
+    sample_lifecycle,
     samples,
     submissions,
     whoami,
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(fire_assay_results.router)
     app.include_router(certificates.router)
     app.include_router(samples.router)
+    app.include_router(sample_lifecycle.router)
     app.include_router(submissions.router)
     app.include_router(flux_recipes.router)
     app.include_router(batches.router)

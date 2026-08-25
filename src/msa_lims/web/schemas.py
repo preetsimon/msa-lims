@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -434,6 +435,24 @@ class SampleDetailOut(BaseModel):
             current_result=current_result,
             certificates=certificates,
         )
+
+
+class SampleStatusUpdate(BaseModel):
+    """A bare lifecycle move — see ``sample_lifecycle/service.py``.
+
+    ``target`` is deliberately narrower than the full ``SampleStatus``
+    vocabulary: ``in_assay``, ``assayed``, and ``reported`` are each reached
+    only by the write path that produces the record making them true
+    (charging a crucible, entering a result, issuing a certificate), never by
+    a bare status flip here. Naming one of those is refused at this layer,
+    before the request even reaches the service.
+    """
+
+    target: Literal["in_prep", "ready_for_assay", "rejected"]
+    reason: str | None = Field(
+        default=None,
+        description="Required for rejecting a sample or returning one for re-assay.",
+    )
 
 
 class FluxRecipeCreate(BaseModel):

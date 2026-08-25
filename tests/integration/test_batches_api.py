@@ -50,6 +50,11 @@ FIELD_CLIENT = {"X-Actor": "geo@mineco", "X-Actor-Role": "client"}
 
 @pytest.fixture
 def sample_id(client: TestClient) -> int:
+    """A sample ready to charge. ``pulp`` is used deliberately — it lets the
+    fixture reach ``READY_FOR_ASSAY`` through the pulp shortcut in one
+    ``PATCH``, which charging now genuinely requires (see
+    ``batches/service.py``'s module docstring); the full two-step prep walk
+    for a non-pulp sample is ``sample_lifecycle``'s own test's job."""
     client_id = client.post(
         "/api/clients", json={"code": "MSA", "name": "MSA Test Mining Co"}, headers=SUPERVISOR
     ).json()["id"]
@@ -58,11 +63,16 @@ def sample_id(client: TestClient) -> int:
         json={
             "client_id": client_id,
             "received_at": "2026-08-24T10:00:00Z",
-            "samples": [{"sample_id": "MSA-24-SO-00417", "sample_type": "soil"}],
+            "samples": [{"sample_id": "MSA-24-SO-00417", "sample_type": "pulp"}],
         },
         headers=ANALYST,
     ).json()
-    return int(submission["samples"][0]["id"])
+    sample_id = int(submission["samples"][0]["id"])
+    response = client.patch(
+        f"/api/samples/{sample_id}/status", json={"target": "ready_for_assay"}, headers=ANALYST
+    )
+    assert response.status_code == 200, response.text
+    return sample_id
 
 
 @pytest.fixture
@@ -151,6 +161,44 @@ class TestChargingACrucible:
         body = response.json()
         assert body["status"] == "charged"
         assert body["litharge_g"] == "60"
+
+    def test_a_sample_not_yet_ready_for_assay_is_409(
+        self, client: TestClient, batch_id: int, recipe_id: int
+    ) -> None:
+        """The real transition, over HTTP: a core sample fresh off intake is
+        still ``RECEIVED`` and has not been through prep or the pulp
+        shortcut, so charging refuses it — the same status code a skipped
+        furnace stage gets."""
+        client_id = client.post(
+            "/api/clients", json={"code": "NRD", "name": "Not Ready Mining Co"}, headers=SUPERVISOR
+        ).json()["id"]
+        submission = client.post(
+            "/api/submissions",
+            json={
+                "client_id": client_id,
+                "received_at": "2026-08-24T10:00:00Z",
+                "samples": [{"sample_id": "NRD-24-SO-00001", "sample_type": "soil"}],
+            },
+            headers=ANALYST,
+        ).json()
+        not_ready_sample_id = submission["samples"][0]["id"]
+
+        client.patch(
+            f"/api/batches/{batch_id}/status", json={"status": "charging"}, headers=ANALYST
+        )
+        response = client.post(
+            f"/api/batches/{batch_id}/crucibles",
+            json={
+                "sample_id": not_ready_sample_id,
+                "flux_recipe_id": recipe_id,
+                "position_row": 1,
+                "position_col": 1,
+                "sample_weight_g": "30",
+                "charged_at": "2026-08-25T09:00:00Z",
+            },
+            headers=ANALYST,
+        )
+        assert response.status_code == 409
 
     def test_a_position_outside_the_configured_tray_is_422(
         self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int

@@ -481,7 +481,10 @@ class CupelledChain:
             sample_id="MSA-24-SO-00500",
             submission_id=submission.id,
             sample_type=SampleType.SOIL,
-            status=SampleStatus.RECEIVED,
+            # Charging now requires the real READY_FOR_ASSAY status (see
+            # batches/service.py's module docstring) — set up directly since
+            # this helper is testing crucible wiring, not the prep walk.
+            status=SampleStatus.READY_FOR_ASSAY,
         )
         app_session.add(sample)
 

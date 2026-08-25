@@ -95,7 +95,17 @@ def recipe(app_session: Session) -> FluxRecipe:
     return recipe
 
 
-def make_sample(session: Session, *, sample_id: str = "MSA-24-SO-00417") -> Sample:
+def make_sample(
+    session: Session,
+    *,
+    sample_id: str = "MSA-24-SO-00417",
+    status: SampleStatus = SampleStatus.READY_FOR_ASSAY,
+) -> Sample:
+    """A sample ready to charge by default — charging now requires the real
+    ``READY_FOR_ASSAY`` status (see ``batches/service.py``'s module
+    docstring), so batch tests set up that precondition directly rather than
+    walking a sample through prep every time; the prep walk itself is
+    ``sample_lifecycle``'s own concern to test."""
     client = Client(code=f"MSA{sample_id[-2:]}", name=f"MSA Test Mining Co {sample_id}")
     session.add(client)
     session.flush()
@@ -110,7 +120,7 @@ def make_sample(session: Session, *, sample_id: str = "MSA-24-SO-00417") -> Samp
         sample_id=sample_id,
         submission_id=submission.id,
         sample_type=SampleType.SOIL,
-        status=SampleStatus.RECEIVED,
+        status=status,
     )
     session.add(sample)
     session.flush()
@@ -611,7 +621,7 @@ class TestChargingACrucible:
         )
         app_session.flush()
 
-        with pytest.raises(CrucibleValidationError, match="cannot be charged"):
+        with pytest.raises(TransitionNotAllowedError):
             service.charge_crucible(
                 charge_input(
                     batch_id=charging_batch.id,
@@ -619,6 +629,26 @@ class TestChargingACrucible:
                     flux_recipe_id=recipe.id,
                     position_row=1,
                     position_col=2,
+                ),
+                charged_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_sample_not_yet_ready_for_assay_is_refused(
+        self, app_session: Session, analyst: LabUser, charging_batch, recipe: FluxRecipe
+    ) -> None:
+        """The real transition, not the old any-pre-assay-status bypass: a
+        sample still ``RECEIVED`` cannot be charged until it genuinely
+        reaches ``READY_FOR_ASSAY`` — through prep or the pulp shortcut."""
+        received_sample = make_sample(app_session, status=SampleStatus.RECEIVED)
+
+        with pytest.raises(TransitionNotAllowedError):
+            service = BatchService(app_session, **FURNACE)
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=received_sample.id,
+                    flux_recipe_id=recipe.id,
                 ),
                 charged_by=analyst,
                 actor_role=Role.ANALYST,

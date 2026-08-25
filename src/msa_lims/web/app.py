@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from msa_lims.clients.service import (
     ClientNotFoundError,
     ClientValidationError,
+    ProjectNotFoundError,
     ProjectValidationError,
 )
 from msa_lims.config import get_settings
@@ -20,8 +21,9 @@ from msa_lims.domain.lifecycle import (
 from msa_lims.domain.sample_id import DepthIntervalError, SampleIdError
 from msa_lims.domain.units import UnitError
 from msa_lims.domain.values import ValueParseError
+from msa_lims.drill_holes.service import DrillHoleValidationError
 from msa_lims.submissions.service import SubmissionValidationError
-from msa_lims.web.routes import clients, health, submissions, whoami
+from msa_lims.web.routes import clients, drill_holes, health, submissions, whoami
 
 DESCRIPTION = """
 Laboratory information management for fire assay and geochemical analysis:
@@ -48,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(whoami.router)
     app.include_router(clients.router)
+    app.include_router(drill_holes.router)
     app.include_router(submissions.router)
     _register_error_handlers(app)
     return app
@@ -68,7 +71,9 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     AssayCalculationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ClientNotFoundError: status.HTTP_404_NOT_FOUND,
     ClientValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    ProjectNotFoundError: status.HTTP_404_NOT_FOUND,
     ProjectValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    DrillHoleValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SubmissionValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 

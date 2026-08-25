@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-24 · **Phase:** 1 in progress (auth, client/project/submission intake done; results next)
+**Updated:** 2026-08-24 · **Phase:** 1 in progress (all reference-data registration done; results next)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,19 +12,20 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **In progress** — auth, client/project registration, submission intake done; result entry → certificate next |
+| 1 · The spine | wk 2–4 | **In progress** — auth, client/project/drill-hole registration, submission intake all done; result entry → certificate next |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 213 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 233 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty · frontend builds and typechecks · verified live through the
 browser: Vite → proxy → FastAPI → Postgres, with the degraded path exercised;
-auth, client/project registration, and submission intake all verified live
-against the running server — a client and project registered through the API
-now feed a submission with no direct DB insert required.
+auth, client/project/drill-hole registration, and submission intake all
+verified live against the running server — the full reference-data chain now
+runs client → project → drill hole → submission with a drill sample resolving
+its hole, entirely through HTTP, no direct DB insert anywhere.
 
 ---
 
@@ -59,7 +60,12 @@ now feed a submission with no direct DB insert required.
   1 oz/t.
 - **`sample_id.py`** — drill and surface label parsing, and `DepthInterval` with
   a **half-open** convention so contiguous sampling never reads as an overlap.
-  `find_overlaps` reports every conflicting pair, not the first.
+  `find_overlaps` reports every conflicting pair, not the first. Gained
+  `format_hole_id` / `canonical_hole_id`: the one function both
+  `SampleIdentity.hole_id` (computed from a parsed sample label) and drill-hole
+  registration now go through, so a hole registered as `"msa-24-001"` and a
+  drill sample labelled `"MSA-24-001-…"` provably resolve to the same string
+  rather than coincidentally agreeing.
 - **`lifecycle.py`** — the sample state machine. Pure. Pulps skip preparation;
   `Reported` is terminal; rejection after a result exists is refused with a
   message naming the real remedy (an amended certificate).
@@ -146,6 +152,32 @@ now feed a submission with no direct DB insert required.
   `SubmissionCreate` already names its own parent, so there is one convention
   for "how does a resource point at its parent" rather than two that disagree.
 
+### Drill hole registration — `src/msa_lims/drill_holes/`
+- **`service.py`** — `POST /api/drill-holes`, the last piece of reference data
+  submission intake depends on. Restricted to `BENCH_ROLES`, not
+  `MAY_MANAGE_ACCOUNTS`: a hole's collar coordinates and depth typically arrive
+  with the drill log accompanying a core shipment — the same moment a
+  submission is received — rather than as a business decision about who the
+  lab works for.
+- **Canonicalises `hole_id` through the same function submission intake's
+  lookup relies on.** A hole registered as `"msa-24-001"` is stored as
+  `"MSA-24-001"`, and a drill sample's parsed `hole_id` renders through the
+  identical `format_hole_id` — see `domain/sample_id.py` above — so the two
+  can never spell the same hole two different ways. A test proves this
+  directly: a hole registered in one case is the exact row a submission's
+  drill sample in another case resolves to, and the live verification below
+  exercised the same path through real HTTP.
+- Duplicate holes within a project are refused after the same canonicalisation
+  — `"msa-24-001"` collides with an already-registered `"MSA-24-001"` — and
+  `dip_degrees`/`azimuth_degrees`/`total_depth_m` are range-checked at the
+  Pydantic layer to mirror the database's own CHECK constraints, so a bad
+  value comes back as a clean 422 rather than a raw `IntegrityError`.
+- `ProjectNotFoundError` was added to `clients/service.py` — not
+  `drill_holes/service.py` — for the same reason `ClientNotFoundError` lives
+  there: the module that owns an entity owns the "this one doesn't exist"
+  error for it, so every caller asking the same question gets the same answer
+  type.
+
 ### Database — `src/msa_lims/db/`
 - 8 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`.
@@ -182,24 +214,28 @@ now feed a submission with no direct DB insert required.
   with `formatMeasured` so a non-detect cannot be rendered as its null value.
 - One screen so far: system status, which exists to prove the whole path.
 
-### Tests — 213
-- **Unit** (139): units and dimensions, censored values, assay arithmetic,
-  sample labels and intervals, the state machine, OIDC token verification
-  against a real self-signed keypair, the auth dependency exercised through a
-  real FastAPI app (`TestClient`) across dev-header and OIDC modes.
+### Tests — 233
+- **Unit** (143): units and dimensions, censored values, assay arithmetic,
+  sample labels and intervals (including the `format_hole_id`/
+  `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
+  state machine, OIDC token verification against a real self-signed keypair,
+  the auth dependency exercised through a real FastAPI app (`TestClient`)
+  across dev-header and OIDC modes.
 - **Property** (17, Hypothesis): conversion round-trips within working
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (57, real Postgres): the append-only grants proven against the
+- **Integration** (73, real Postgres): the append-only grants proven against the
   actual application role; submission intake against the service directly and
   through the real HTTP app (26 tests — happy paths, every validation refusal,
   the audit trail, role enforcement, `LabUser` provisioning); client and
   project registration against the service directly and through HTTP (21
-  tests — duplicate code/name/project-name refusals, cross-client isolation,
-  role enforcement, audit trail, and one test that registers a client and
-  project purely through the API and then submits a sample against them, with
-  no direct DB insert anywhere in the chain).
+  tests — duplicate refusals, cross-client isolation, role enforcement, audit
+  trail); drill hole registration against the service directly and through
+  HTTP (16 tests — duplicate-after-canonicalisation refusal, cross-project
+  isolation, role enforcement, and one test proving a hole registered in one
+  case is the exact row a submission's drill sample in another case resolves
+  to — the property the whole feature exists for).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -225,8 +261,21 @@ manager registers a project under it (`201`), an `analyst` attempting to
 register a client is refused (`403`), re-registering the same code returns
 **422** naming the conflict directly (`"client code 'MSA' is already in use"`),
 and a submission posted against the freshly registered `client_id`/`project_id`
-succeeds with **201** — the first time the whole spine has been driven purely
-through HTTP with no direct database insert anywhere in the chain.
+succeeds with **201**.
+
+Drill hole registration verified live, extending the chain one link further:
+an `analyst` registers a hole as `"msa-24-001"` under the freshly registered
+project (`201`, stored as `"MSA-24-001"`); a `client` role attempting the same
+is refused (`403`); re-registering `"msa-24-001"` (different case, same
+canonical hole) returns **422** naming the project and the hole directly; an
+out-of-range `dip_degrees: "-95"` is refused before it reaches the service,
+at the Pydantic layer; and a submission posted with a drill sample labelled
+`"MSA-24-001-142.50_144.00"` resolves to `drill_hole_id: 1` — the registered
+hole, matched purely by the canonicalisation agreeing, with the interval
+correctly split into `from_depth_m`/`to_depth_m`. This is the first time the
+entire spine — client, project, drill hole, and a drill sample against all
+three — has run purely through HTTP with no direct database insert anywhere
+in the chain.
 
 ---
 
@@ -249,6 +298,9 @@ through HTTP with no direct database insert anywhere in the chain.
 | 2026-08-24 | Client/project registration restricted to a **new, narrower** role tier (`MAY_MANAGE_ACCOUNTS` = supervisor, lab_manager) rather than reusing `BENCH_ROLES` | Receiving physical material at the door and setting up a billing relationship or a drilling program are different kinds of authority. Reusing `BENCH_ROLES` would let a prep technician onboard a client, which nothing about "prep technician" implies. |
 | 2026-08-24 | `ClientNotFoundError` **hoisted** out of `submissions/service.py` into the new `clients/service.py`, re-exported for backward compatibility | Both submission intake and project registration ask "does this client exist?" Two separately defined classes with the same name is a real bug source — a caller catching one type would silently miss the other. |
 | 2026-08-24 | Uniqueness (client code, client name, project name within a client) checked with a `SELECT` **before** the `INSERT`, not left to the database's UNIQUE indexes | There is no global `IntegrityError` handler yet. Without the pre-check, a duplicate registration would surface as an unhandled 500 instead of a clear 422 naming the conflict. |
+| 2026-08-24 | Drill hole registration restricted to `BENCH_ROLES`, not `MAY_MANAGE_ACCOUNTS` — the tier client/project registration uses | A hole's collar coordinates typically arrive with the drill log accompanying a core shipment, the same moment a submission is received, not as a business decision about who the lab works for. Client/project setup and hole logging are different kinds of authority even though both are "reference data." |
+| 2026-08-24 | Extracted `format_hole_id`/`canonical_hole_id` into `domain/sample_id.py` rather than duplicating the format string in the registration service | `SampleIdentity.hole_id` already computed this string from a parsed sample label. Registration needed to produce the identical string from a directly-typed hole label. Two independently-written format strings that happened to agree would be one refactor away from silently disagreeing and breaking every drill-sample lookup. |
+| 2026-08-24 | `ProjectNotFoundError` added to `clients/service.py`, not `drill_holes/service.py` | Same reasoning as `ClientNotFoundError`'s placement: the module that owns `Project` owns the error for "this one doesn't exist," so every caller — submissions, drill holes, anything else later — gets the same answer type. |
 
 ---
 
@@ -265,11 +317,14 @@ through HTTP with no direct database insert anywhere in the chain.
    `POST /api/clients`, `POST /api/projects`, both restricted to
    `MAY_MANAGE_ACCOUNTS`. 21 new tests; verified live end to end with a
    submission posted against a freshly registered client and project.
-4. A `POST /api/drill-holes` (or similar) registration endpoint. Submission
-   intake still *requires* a hole to pre-exist and there is still no way to
-   create one through the API — only through a direct DB insert, which is
-   what the tests do. This is now the **only** remaining gap blocking a real
-   demo of drill-sample intake purely through HTTP.
+4. ~~**Drill hole registration endpoint.**~~ **Done 2026-08-24** —
+   `POST /api/drill-holes`, restricted to `BENCH_ROLES`. Canonicalises through
+   the same `format_hole_id` a parsed sample's `hole_id` uses, so a hole
+   registered in one case is provably the row a drill sample in another case
+   resolves to. 16 new tests; verified live through the entire chain —
+   client → project → drill hole → a drill sample resolving its hole — purely
+   through HTTP. **Every reference-data registration endpoint the spine needs
+   now exists.**
 5. Fire assay result entry against `domain/assay.py`, stored append-only with
    supersession, writing an `audit_event` per change.
 6. Certificate of analysis: versioned row, byte-deterministic PDF, amended
@@ -292,10 +347,18 @@ through HTTP with no direct database insert anywhere in the chain.
   `current_lab_user` in `web/deps.py` and the decision log above.
 - ~~**Client onboarding and project registration.**~~ **Resolved 2026-08-24** —
   see the Client and project registration section above.
-- **No endpoint registers a `DrillHole` yet.** Submission intake requires one
-  to already exist; the tests seed it by inserting the row directly. This is
-  now the last piece of reference-data registration missing before a real
-  demo of the spine can run entirely through HTTP.
+- ~~**No endpoint registers a `DrillHole`.**~~ **Resolved 2026-08-24** — see
+  the Drill hole registration section above.
 - **No endpoint deactivates a client** (`Client.is_active`) or amends one
-  already registered. Out of scope for now — nothing downstream reads
-  `is_active` yet, so there is nothing to demonstrate it changing.
+  already registered — nor amends a project or a drill hole once created.
+  Out of scope for now: nothing downstream reads `is_active` yet, and no
+  workflow has surfaced a need to correct a registered hole's coordinates
+  after the fact. Worth revisiting once result entry exists and a wrong
+  collar coordinate would actually distort something (a downhole section, a
+  composite).
+- **`total_depth_m` on `DrillHole` is never checked against the samples
+  registered against it.** A sample's `to_depth_m` could exceed the hole's own
+  `total_depth_m` and nothing would refuse it. Not addressed here because it
+  needs a decision about ordering — does the hole's total depth get entered
+  before or after all its samples, and can it be corrected once samples exist
+  — that the drill-hole endpoint alone can't resolve.

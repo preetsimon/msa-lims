@@ -127,7 +127,7 @@ class SampleIdentity:
         """
         if self.hole_number is None:
             raise SampleIdError(f"{self.raw} is not a drill sample; it has no hole")
-        return f"{self.property_code}-{self.program_year:02d}-{self.hole_number:03d}"
+        return format_hole_id(self.property_code, self.program_year, self.hole_number)
 
     def __str__(self) -> str:
         return self.raw
@@ -181,6 +181,32 @@ def parse_hole_id(text: str) -> tuple[str, int, int]:
             int(match.group("hole_number")),
         )
     raise SampleIdError(f"cannot read {text!r} as a hole id; expected a label like 'MSA-24-001'")
+
+
+def format_hole_id(property_code: str, program_year: int, hole_number: int) -> str:
+    """The canonical hole label, e.g. ``'MSA-24-001'``.
+
+    Both :attr:`SampleIdentity.hole_id` (computed from a parsed sample label)
+    and a directly-registered drill hole's stored label go through this one
+    function, so the two routes to the same string can never drift into two
+    different spellings of the same hole — which would otherwise silently
+    break the lookup that resolves a drill sample to its hole.
+    """
+    return f"{property_code}-{program_year:02d}-{hole_number:03d}"
+
+
+def canonical_hole_id(text: str) -> str:
+    """Parse and immediately re-render a hole label in its canonical form.
+
+    ``"msa-24-001"`` and ``"MSA-24-001"`` must resolve to the same stored row;
+    this is the one function both a registration endpoint and a lookup should
+    call to make sure they agree. (The regex behind :func:`parse_hole_id`
+    already requires the hole number to be written with 3 or 4 digits, so this
+    mainly normalises case — but going through :func:`format_hole_id` keeps
+    both routes to the same string provably in agreement rather than
+    coincidentally so.)
+    """
+    return format_hole_id(*parse_hole_id(text))
 
 
 def find_overlaps(

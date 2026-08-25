@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from msa_lims.db.models import Client, Project, Sample, Submission
+from msa_lims.db.models import Client, DrillHole, Project, Sample, Submission
 from msa_lims.domain.enums import SampleType
 
 
@@ -78,6 +78,51 @@ class ProjectOut(BaseModel):
             location=project.location,
             start_date=project.start_date,
             end_date=project.end_date,
+        )
+
+
+class DrillHoleCreate(BaseModel):
+    project_id: int
+    hole_id: str = Field(min_length=1, description="e.g. 'MSA-24-001'")
+    easting: Decimal | None = None
+    northing: Decimal | None = None
+    elevation_m: Decimal | None = None
+    utm_zone: str | None = None
+    total_depth_m: Decimal | None = Field(default=None, gt=0)
+    # Mirrors the DB's dip_range and azimuth_range CHECK constraints, so a bad
+    # value comes back as a clean 422 rather than a raw IntegrityError.
+    dip_degrees: Decimal | None = Field(default=None, ge=-90, le=90)
+    azimuth_degrees: Decimal | None = Field(default=None, ge=0, lt=360)
+    drilling_method: str | None = None
+
+
+class DrillHoleOut(BaseModel):
+    id: int
+    project_id: int
+    hole_id: str
+    easting: Decimal | None
+    northing: Decimal | None
+    elevation_m: Decimal | None
+    utm_zone: str | None
+    total_depth_m: Decimal | None
+    dip_degrees: Decimal | None
+    azimuth_degrees: Decimal | None
+    drilling_method: str | None
+
+    @classmethod
+    def from_model(cls, hole: DrillHole) -> DrillHoleOut:
+        return cls(
+            id=hole.id,
+            project_id=hole.project_id,
+            hole_id=hole.hole_id,
+            easting=hole.easting,
+            northing=hole.northing,
+            elevation_m=hole.elevation_m,
+            utm_zone=hole.utm_zone,
+            total_depth_m=hole.total_depth_m,
+            dip_degrees=hole.dip_degrees,
+            azimuth_degrees=hole.azimuth_degrees,
+            drilling_method=hole.drilling_method,
         )
 
 

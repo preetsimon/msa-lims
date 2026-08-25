@@ -10,7 +10,9 @@ from msa_lims.domain.sample_id import (
     DepthInterval,
     DepthIntervalError,
     SampleIdError,
+    canonical_hole_id,
     find_overlaps,
+    format_hole_id,
     parse_hole_id,
     parse_sample_id,
 )
@@ -143,3 +145,22 @@ class TestHoleIds:
     def test_refuses_a_sample_label(self) -> None:
         with pytest.raises(SampleIdError):
             parse_hole_id("MSA-24-001-142.50_144.00")
+
+
+class TestHoleIdCanonicalisation:
+    def test_format_hole_id_matches_what_a_parsed_sample_computes(self) -> None:
+        """The identity the whole point of format_hole_id exists to guarantee:
+        a registered hole and a sample's parsed hole_id must be the same
+        string, or the lookup that joins them silently fails to match."""
+        sample = parse_sample_id("MSA-24-001-142.50_144.00")
+        assert format_hole_id("MSA", 24, 1) == sample.hole_id
+
+    def test_canonical_hole_id_normalises_case(self) -> None:
+        assert canonical_hole_id("msa-24-001") == "MSA-24-001"
+
+    def test_canonical_hole_id_is_idempotent(self) -> None:
+        assert canonical_hole_id("MSA-24-001") == "MSA-24-001"
+
+    def test_canonical_hole_id_refuses_a_malformed_label(self) -> None:
+        with pytest.raises(SampleIdError):
+            canonical_hole_id("not a hole")

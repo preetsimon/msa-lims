@@ -33,6 +33,17 @@ class ClientNotFoundError(ValueError):
     """No client with this id exists."""
 
 
+class ProjectNotFoundError(ValueError):
+    """No project with this id exists.
+
+    Lives here rather than in :mod:`msa_lims.drill_holes.service`, for the same
+    reason :class:`ClientNotFoundError` lives here rather than in
+    :mod:`msa_lims.submissions.service`: the module that owns an entity owns
+    the error for "this one doesn't exist," so every caller asking the same
+    question gets the same answer type.
+    """
+
+
 class ClientValidationError(ValueError):
     """One or more problems with a client registration, reported together."""
 

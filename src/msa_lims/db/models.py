@@ -576,11 +576,10 @@ class Crucible(Base, TimestampMixin):
     Mutable, matching ``Batch`` — its status is bulk-advanced in lockstep
     with the batch's for the stages a furnace run moves every crucible
     through together (see
-    :func:`msa_lims.domain.batch_lifecycle.bulk_crucible_status`).
-    ``PARTED`` and ``WEIGHED`` are not reachable through any write path yet —
-    those are per-crucible measurements this phase deliberately does not
-    wire in (see PROGRESS.md), so nothing here should silently invent a way
-    to reach them.
+    :func:`msa_lims.domain.batch_lifecycle.bulk_crucible_status`), while
+    parting and weighing are per-crucible acts with their own write paths
+    (see ``batches/service.py``): ``PARTED`` records the lead button, prill,
+    and parting acid; ``WEIGHED`` records the final gold-bead weighing.
 
     ``flux_recipe_id`` lives here, not on ``Batch``: one furnace load
     routinely fires a silicate core sample beside a sulfide one, and each
@@ -593,7 +592,11 @@ class Crucible(Base, TimestampMixin):
     recomputed from the recipe on every read. This mirrors
     ``fire_assay_result``'s "store what was actually weighed" precedent: if
     the recipe is edited afterward, an already-charged crucible still shows
-    what a technician actually weighed out.
+    what a technician actually weighed out. The four measurement columns
+    follow the identical discipline from the other end of the run — each is
+    written once, when the physical act happened, and never recomputed or
+    overwritten; a result naming this crucible reads them back rather than
+    being retyped a second number that could disagree.
     """
 
     __tablename__ = "crucible"
@@ -603,6 +606,10 @@ class Crucible(Base, TimestampMixin):
         CheckConstraint("position_row > 0", name="position_row_positive"),
         CheckConstraint("position_col > 0", name="position_col_positive"),
         CheckConstraint("sample_weight_g > 0", name="sample_weight_positive"),
+        CheckConstraint("lead_button_weight_mg > 0", name="lead_button_weight_positive"),
+        CheckConstraint("prill_weight_mg > 0", name="prill_weight_positive"),
+        CheckConstraint("parting_acid_volume_ml > 0", name="parting_acid_volume_positive"),
+        CheckConstraint("gold_bead_mg >= 0", name="gold_bead_non_negative"),
     )
 
     id: Mapped[IdPk]
@@ -623,6 +630,17 @@ class Crucible(Base, TimestampMixin):
     silica_g: Mapped[Decimal] = mapped_column(Numeric)
     flour_g: Mapped[Decimal] = mapped_column(Numeric)
     nitre_g: Mapped[Decimal] = mapped_column(Numeric)
+
+    # Per-crucible measurements, null until the corresponding act is
+    # recorded. See the class docstring: each is stored once, at the moment
+    # of the physical act it witnesses.
+    lead_button_weight_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+    prill_weight_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+    parting_acid_volume_ml: Mapped[Decimal | None] = mapped_column(Numeric)
+    parted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    gold_bead_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+    weighed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     charged_by_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
     charged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

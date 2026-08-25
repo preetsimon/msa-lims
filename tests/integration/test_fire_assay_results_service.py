@@ -544,6 +544,49 @@ class CupelledChain:
         crucible.status = status
         app_session.flush()
 
+    @staticmethod
+    def part(app_session: Session, analyst: LabUser, crucible: Crucible) -> None:
+        """Record parting through the real write path (CUPELLED -> PARTED)."""
+        from msa_lims.batches.service import BatchService, CruciblePartingInput
+
+        BatchService(app_session, furnace_rows=6, furnace_columns=6).record_parting(
+            crucible.batch_id,
+            crucible.id,
+            CruciblePartingInput(
+                lead_button_weight_mg=Decimal("27.8"),
+                prill_weight_mg=Decimal("0.512"),
+                parting_acid_volume_ml=Decimal("5"),
+                parted_at=datetime(2026, 8, 25, 9, 30, tzinfo=UTC),
+            ),
+            parted_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+    @staticmethod
+    def weigh(
+        app_session: Session,
+        analyst: LabUser,
+        crucible: Crucible,
+        *,
+        bead: Decimal = Decimal("0.225"),
+    ) -> None:
+        """Record parting + the final weighing through the real write paths
+        (CUPELLED -> PARTED -> WEIGHED), storing ``bead`` on the crucible."""
+        from msa_lims.batches.service import BatchService, CrucibleWeighingInput
+
+        CupelledChain.part(app_session, analyst, crucible)
+        BatchService(app_session, furnace_rows=6, furnace_columns=6).record_weighing(
+            crucible.batch_id,
+            crucible.id,
+            CrucibleWeighingInput(
+                gold_bead_mg=bead, weighed_at=datetime(2026, 8, 25, 10, 0, tzinfo=UTC)
+            ),
+            weighed_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
 
 class TestWiringAResultToItsCrucible:
     def test_a_named_crucible_derives_the_portion_from_its_recorded_charge(
@@ -752,3 +795,86 @@ class TestWiringAResultToItsCrucible:
 
         app_session.refresh(crucible)
         assert crucible.status is CrucibleStatus.CUPELLED
+
+    def test_a_weighed_crucible_supplies_the_portion_and_the_bead(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        """The full provenance chain: charge 45 g -> part -> weigh 0.225 mg ->
+        a result naming the crucible carries *both* recorded numbers, typed
+        nowhere in its own request."""
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        CupelledChain.weigh(app_session, analyst, crucible)
+
+        service = FireAssayResultService(app_session)
+        result = service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=None,
+                sample_weight_g=None,
+                crucible_id=crucible.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert result.sample_weight_g == Decimal("45")
+        assert result.gold_bead_mg == Decimal("0.225")
+        assert result.crucible_id == crucible.id
+        # 0.225 mg from exactly 45 g is exactly 5 g/t.
+        assert result.au_value == Decimal("5")
+
+    def test_retyping_the_bead_alongside_a_weighed_crucible_is_refused(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        CupelledChain.weigh(app_session, analyst, crucible)
+
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="already been weighed"):
+            service.create(
+                result_input(
+                    sample_id=sample.id,
+                    gold_bead_mg=Decimal("0.300"),
+                    sample_weight_g=None,
+                    crucible_id=crucible.id,
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_parted_but_unweighed_crucible_still_takes_a_typed_bead(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        """The boundary between the two paths: until the crucible's own
+        weighing is on record there is nothing to derive, so the typed bead
+        remains honest input rather than a contradiction."""
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        CupelledChain.part(app_session, analyst, crucible)
+
+        service = FireAssayResultService(app_session)
+        result = service.create(
+            result_input(
+                sample_id=sample.id,
+                gold_bead_mg=Decimal("0.225"),
+                sample_weight_g=None,
+                crucible_id=crucible.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert result.sample_weight_g == Decimal("45")
+        assert result.gold_bead_mg == Decimal("0.225")
+
+    def test_direct_entry_without_a_bead_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="gold_bead_mg is required"):
+            service.create(
+                result_input(sample_id=a_sample.id, gold_bead_mg=None),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )

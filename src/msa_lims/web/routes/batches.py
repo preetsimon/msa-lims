@@ -8,6 +8,8 @@ from msa_lims.batches.service import (
     BatchInput,
     BatchService,
     CrucibleChargeInput,
+    CruciblePartingInput,
+    CrucibleWeighingInput,
     get_batch_detail,
 )
 from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep, SettingsDep
@@ -18,6 +20,8 @@ from msa_lims.web.schemas import (
     BatchStatusUpdate,
     CrucibleChargeCreate,
     CrucibleOut,
+    CruciblePartingCreate,
+    CrucibleWeighingCreate,
 )
 
 router = APIRouter(prefix="/api", tags=["batches"])
@@ -73,6 +77,61 @@ def charge_crucible(
             notes=body.notes,
         ),
         charged_by=charged_by,
+        actor_role=actor.role,
+    )
+    session.commit()
+    return CrucibleOut.from_model(crucible)
+
+
+@router.post(
+    "/batches/{batch_id}/crucibles/{crucible_id}/parting",
+    response_model=CrucibleOut,
+)
+def record_crucible_parting(
+    batch_id: int,
+    crucible_id: int,
+    body: CruciblePartingCreate,
+    session: SessionDep,
+    settings: SettingsDep,
+    actor: ActorDep,
+    parted_by: LabUserDep,
+) -> CrucibleOut:
+    service = _service(session, settings)
+    crucible = service.record_parting(
+        batch_id,
+        crucible_id,
+        CruciblePartingInput(
+            lead_button_weight_mg=body.lead_button_weight_mg,
+            prill_weight_mg=body.prill_weight_mg,
+            parting_acid_volume_ml=body.parting_acid_volume_ml,
+            parted_at=body.parted_at,
+        ),
+        parted_by=parted_by,
+        actor_role=actor.role,
+    )
+    session.commit()
+    return CrucibleOut.from_model(crucible)
+
+
+@router.post(
+    "/batches/{batch_id}/crucibles/{crucible_id}/weighing",
+    response_model=CrucibleOut,
+)
+def record_crucible_weighing(
+    batch_id: int,
+    crucible_id: int,
+    body: CrucibleWeighingCreate,
+    session: SessionDep,
+    settings: SettingsDep,
+    actor: ActorDep,
+    weighed_by: LabUserDep,
+) -> CrucibleOut:
+    service = _service(session, settings)
+    crucible = service.record_weighing(
+        batch_id,
+        crucible_id,
+        CrucibleWeighingInput(gold_bead_mg=body.gold_bead_mg, weighed_at=body.weighed_at),
+        weighed_by=weighed_by,
         actor_role=actor.role,
     )
     session.commit()

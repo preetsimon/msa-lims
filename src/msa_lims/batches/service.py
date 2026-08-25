@@ -21,8 +21,16 @@ machinery.
 :mod:`msa_lims.domain.batch_lifecycle`) with no branch and no way back — a
 furnace run is a physical event, not a document to correct. ``FUSED`` and
 ``CUPELLED`` bulk-advance every charged crucible's status in lockstep, because
-a furnace fuses or cupels a whole tray at once; parting and weighing remain
-per-crucible measurements this phase does not wire in.
+a furnace fuses or cupels a whole tray at once.
+
+**Parting and weighing are per-crucible acts**, recorded one crucible at a
+time once cupellation has released them from the tray: parting stores the
+lead button, prill, and acid volume (``CUPELLED -> PARTED``); the final
+weighing stores the gold bead (``PARTED -> WEIGHED``). Each move carries the
+measurements that witness it — a status advance with nothing behind it would
+be a claim about the world nobody made — and each is stored once, at the
+moment of the physical act, never overwritten: a result naming this crucible
+reads them back rather than being retyped numbers that could disagree.
 """
 
 from __future__ import annotations
@@ -38,12 +46,13 @@ from msa_lims.db.models import AuditEvent, Batch, Crucible, FluxRecipe, LabUser,
 from msa_lims.domain.batch_lifecycle import (
     bulk_crucible_status,
     check_batch_transition,
+    check_crucible_transition,
     check_position,
 )
 from msa_lims.domain.enums import BatchStatus, CrucibleStatus, Role, SampleStatus
 from msa_lims.domain.flux import FluxAmounts, scale_flux_charge
 from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
-from msa_lims.fire_assay_results.service import SampleNotFoundError
+from msa_lims.fire_assay_results.service import CrucibleNotFoundError, SampleNotFoundError
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError
 
 #: Sample statuses a crucible cannot be charged from — the terminal statuses
@@ -89,6 +98,24 @@ class CrucibleChargeInput:
     sample_weight_g: Decimal
     charged_at: datetime
     notes: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CruciblePartingInput:
+    """The measurements taken while parting one cupelled crucible."""
+
+    lead_button_weight_mg: Decimal
+    prill_weight_mg: Decimal
+    parting_acid_volume_ml: Decimal
+    parted_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class CrucibleWeighingInput:
+    """The final gold-bead weighing for one parted crucible."""
+
+    gold_bead_mg: Decimal
+    weighed_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +269,115 @@ class BatchService:
                 f"{batch.batch_number!r} is already occupied"
             )
         return problems
+
+    def record_parting(
+        self,
+        batch_id: int,
+        crucible_id: int,
+        data: CruciblePartingInput,
+        *,
+        parted_by: LabUser,
+        actor_role: Role,
+    ) -> Crucible:
+        """Record one cupelled crucible's parting: lead button, prill, acid.
+
+        Parting is bench work — the same tier as charging — and happens one
+        crucible at a time after the batch has released the tray from
+        cupellation. Raises ``TransitionNotAllowedError`` if the crucible has
+        not been cupelled (or is already parted); both refusals are mapped
+        globally like every other lifecycle refusal.
+        """
+        if actor_role not in BENCH_ROLES:
+            raise InsufficientRoleError(
+                f"{actor_role.value} may not record a crucible's parting; this needs one of "
+                + ", ".join(sorted(role.value for role in BENCH_ROLES))
+            )
+
+        crucible = self._get_batch_crucible(batch_id, crucible_id)
+        before_status = crucible.status
+        check_crucible_transition(source=before_status, target=CrucibleStatus.PARTED)
+
+        crucible.status = CrucibleStatus.PARTED
+        crucible.lead_button_weight_mg = data.lead_button_weight_mg
+        crucible.prill_weight_mg = data.prill_weight_mg
+        crucible.parting_acid_volume_ml = data.parting_acid_volume_ml
+        crucible.parted_at = data.parted_at
+
+        self._session.add(
+            AuditEvent(
+                table_name="crucible",
+                record_id=crucible.id,
+                action="transition",
+                before={"status": before_status.value},
+                after={
+                    "status": CrucibleStatus.PARTED.value,
+                    "lead_button_weight_mg": str(data.lead_button_weight_mg),
+                    "prill_weight_mg": str(data.prill_weight_mg),
+                    "parting_acid_volume_ml": str(data.parting_acid_volume_ml),
+                },
+                actor_id=parted_by.id,
+            )
+        )
+        return crucible
+
+    def record_weighing(
+        self,
+        batch_id: int,
+        crucible_id: int,
+        data: CrucibleWeighingInput,
+        *,
+        weighed_by: LabUser,
+        actor_role: Role,
+    ) -> Crucible:
+        """Record one parted crucible's final gold-bead weighing.
+
+        This is the measurement a fire assay result later reads back when it
+        names the crucible (see ``fire_assay_results/service.py``) — stored
+        here once, at the balance, so the result never re-types a number that
+        could disagree with what was actually weighed.
+        """
+        if actor_role not in BENCH_ROLES:
+            raise InsufficientRoleError(
+                f"{actor_role.value} may not record a crucible's weighing; this needs one of "
+                + ", ".join(sorted(role.value for role in BENCH_ROLES))
+            )
+
+        crucible = self._get_batch_crucible(batch_id, crucible_id)
+        before_status = crucible.status
+        check_crucible_transition(source=before_status, target=CrucibleStatus.WEIGHED)
+
+        crucible.status = CrucibleStatus.WEIGHED
+        crucible.gold_bead_mg = data.gold_bead_mg
+        crucible.weighed_at = data.weighed_at
+
+        self._session.add(
+            AuditEvent(
+                table_name="crucible",
+                record_id=crucible.id,
+                action="transition",
+                before={"status": before_status.value},
+                after={
+                    "status": CrucibleStatus.WEIGHED.value,
+                    "gold_bead_mg": str(data.gold_bead_mg),
+                },
+                actor_id=weighed_by.id,
+            )
+        )
+        return crucible
+
+    def _get_batch_crucible(self, batch_id: int, crucible_id: int) -> Crucible:
+        """The crucible named by both path segments, or the honest refusal.
+
+        An unknown batch and a crucible that lives in some *other* batch are
+        the same situation from this URL — the resource asked for does not
+        exist here.
+        """
+        if self._session.get(Batch, batch_id) is None:
+            raise BatchNotFoundError(f"no batch with id {batch_id}")
+        crucible = self._session.get(Crucible, crucible_id)
+        if crucible is None or crucible.batch_id != batch_id:
+            raise CrucibleNotFoundError(f"no crucible with id {crucible_id} in batch {batch_id}")
+        return crucible
 
     def advance_status(
         self, batch_id: int, *, target: BatchStatus, advanced_by: LabUser, actor_role: Role

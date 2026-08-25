@@ -8,6 +8,7 @@ from msa_lims.domain.batch_lifecycle import (
     FurnacePositionError,
     bulk_crucible_status,
     check_batch_transition,
+    check_crucible_transition,
     check_position,
 )
 from msa_lims.domain.enums import BatchStatus, CrucibleStatus, Role
@@ -71,9 +72,37 @@ class TestBulkCrucibleStatus:
         assert bulk_crucible_status(BatchStatus.CHARGING) is None
 
     def test_completing_the_batch_does_not_bulk_update_crucibles(self) -> None:
-        """Parting and weighing are per-crucible measurements this phase does
-        not wire in."""
+        """Completing a batch closes it; it performs no physical act on any
+        crucible. Parting and weighing are hand-driven per-crucible moves."""
         assert bulk_crucible_status(BatchStatus.COMPLETED) is None
+
+
+class TestCrucibleTransitions:
+    def test_parting_moves_a_cupelled_crucible_to_parted(self) -> None:
+        check_crucible_transition(source=CrucibleStatus.CUPELLED, target=CrucibleStatus.PARTED)
+
+    def test_weighing_moves_a_parted_crucible_to_weighed(self) -> None:
+        check_crucible_transition(source=CrucibleStatus.PARTED, target=CrucibleStatus.WEIGHED)
+
+    @pytest.mark.parametrize(
+        ("source", "target"),
+        [
+            (CrucibleStatus.CHARGED, CrucibleStatus.PARTED),
+            (CrucibleStatus.FUSED, CrucibleStatus.PARTED),
+            (CrucibleStatus.CUPELLED, CrucibleStatus.WEIGHED),
+            (CrucibleStatus.PARTED, CrucibleStatus.PARTED),
+            (CrucibleStatus.EMPTY, CrucibleStatus.REJECTED),
+        ],
+    )
+    def test_every_other_move_is_refused(
+        self, source: CrucibleStatus, target: CrucibleStatus
+    ) -> None:
+        with pytest.raises(TransitionNotAllowedError):
+            check_crucible_transition(source=source, target=target)
+
+    def test_there_is_no_way_back_from_weighed(self) -> None:
+        with pytest.raises(TransitionNotAllowedError):
+            check_crucible_transition(source=CrucibleStatus.WEIGHED, target=CrucibleStatus.CUPELLED)
 
 
 class TestFurnacePosition:

@@ -269,7 +269,15 @@ class MeasuredValueOut(BaseModel):
 
 class FireAssayResultCreate(BaseModel):
     sample_id: int
-    gold_bead_mg: Decimal = Field(ge=0, description="Bead weight after parting — gold alone.")
+    gold_bead_mg: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Bead weight after parting — gold alone. Required unless crucible_id names a "
+            "crucible that has been weighed; then its recorded bead is used and this must "
+            "be left unset."
+        ),
+    )
     sample_weight_g: Decimal | None = Field(
         default=None,
         gt=0,
@@ -490,6 +498,22 @@ class CrucibleChargeCreate(BaseModel):
     notes: str | None = None
 
 
+class CruciblePartingCreate(BaseModel):
+    """The measurements taken while parting one cupelled crucible."""
+
+    lead_button_weight_mg: Decimal = Field(gt=0, description="Lead button from the fusion.")
+    prill_weight_mg: Decimal = Field(gt=0, description="Doré bead left by cupellation.")
+    parting_acid_volume_ml: Decimal = Field(gt=0, description="Acid used to part the prill.")
+    parted_at: datetime = Field(description="When the parting happened, not when it was entered.")
+
+
+class CrucibleWeighingCreate(BaseModel):
+    """The final gold-bead weighing for one parted crucible."""
+
+    gold_bead_mg: Decimal = Field(ge=0, description="Gold alone, after parting.")
+    weighed_at: datetime = Field(description="When the weighing happened, not when entered.")
+
+
 class CrucibleOut(BaseModel):
     id: int
     batch_id: int
@@ -505,6 +529,12 @@ class CrucibleOut(BaseModel):
     silica_g: Decimal
     flour_g: Decimal
     nitre_g: Decimal
+    lead_button_weight_mg: Decimal | None
+    prill_weight_mg: Decimal | None
+    parting_acid_volume_ml: Decimal | None
+    parted_at: datetime | None
+    gold_bead_mg: Decimal | None
+    weighed_at: datetime | None
     charged_at: datetime
     notes: str | None
 
@@ -525,6 +555,12 @@ class CrucibleOut(BaseModel):
             silica_g=crucible.silica_g,
             flour_g=crucible.flour_g,
             nitre_g=crucible.nitre_g,
+            lead_button_weight_mg=crucible.lead_button_weight_mg,
+            prill_weight_mg=crucible.prill_weight_mg,
+            parting_acid_volume_ml=crucible.parting_acid_volume_ml,
+            parted_at=crucible.parted_at,
+            gold_bead_mg=crucible.gold_bead_mg,
+            weighed_at=crucible.weighed_at,
             charged_at=crucible.charged_at,
             notes=crucible.notes,
         )

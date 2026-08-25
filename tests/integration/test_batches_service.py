@@ -16,10 +16,12 @@ from msa_lims.batches.service import (
     BatchService,
     BatchValidationError,
     CrucibleChargeInput,
+    CruciblePartingInput,
     CrucibleValidationError,
+    CrucibleWeighingInput,
     get_batch_detail,
 )
-from msa_lims.db.models import AuditEvent, Client, FluxRecipe, LabUser, Sample, Submission
+from msa_lims.db.models import AuditEvent, Client, Crucible, FluxRecipe, LabUser, Sample, Submission
 from msa_lims.domain.batch_lifecycle import FurnacePositionError
 from msa_lims.domain.enums import (
     BatchStatus,
@@ -179,6 +181,324 @@ def charging_batch(app_session: Session, analyst: LabUser):  # type: ignore[no-u
     )
     app_session.flush()
     return batch
+
+
+@pytest.fixture
+def prep_tech(app_session: Session) -> LabUser:
+    user = LabUser(
+        subject="sub-prep-batch-1",
+        email="prep-batch@lab.test",
+        full_name="P. Rep Tech",
+        role=Role.PREP_TECH,
+    )
+    app_session.add(user)
+    app_session.flush()
+    return user
+
+
+def cupelled_crucible(
+    app_session: Session,
+    analyst: LabUser,
+    charging_batch,  # type: ignore[no-untyped-def]
+    recipe: FluxRecipe,
+    a_sample: Sample,
+) -> Crucible:
+    """A charged crucible whose batch has been walked to CUPELLED."""
+    service = BatchService(app_session, **FURNACE)
+    crucible = service.charge_crucible(
+        charge_input(batch_id=charging_batch.id, sample_id=a_sample.id, flux_recipe_id=recipe.id),
+        charged_by=analyst,
+        actor_role=Role.ANALYST,
+    )
+    for stage in (
+        BatchStatus.IN_FUSION,
+        BatchStatus.FUSED,
+        BatchStatus.IN_CUPELLATION,
+        BatchStatus.CUPELLED,
+    ):
+        service.advance_status(
+            charging_batch.id, target=stage, advanced_by=analyst, actor_role=Role.ANALYST
+        )
+    app_session.flush()
+    return crucible
+
+
+class TestRecordingParting:
+    def test_parting_records_the_measurements_and_advances_the_crucible(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        service = BatchService(app_session, **FURNACE)
+        parted = service.record_parting(
+            charging_batch.id,
+            crucible.id,
+            CruciblePartingInput(
+                lead_button_weight_mg=Decimal("27.8"),
+                prill_weight_mg=Decimal("0.512"),
+                parting_acid_volume_ml=Decimal("5"),
+                parted_at=datetime(2026, 8, 25, 10, 0, tzinfo=UTC),
+            ),
+            parted_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert parted.status is CrucibleStatus.PARTED
+        assert parted.lead_button_weight_mg == Decimal("27.8")
+        assert parted.prill_weight_mg == Decimal("0.512")
+        assert parted.parting_acid_volume_ml == Decimal("5")
+        assert parted.parted_at == datetime(2026, 8, 25, 10, 0, tzinfo=UTC)
+
+    def test_parting_before_cupellation_is_refused(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id, sample_id=a_sample.id, flux_recipe_id=recipe.id
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        with pytest.raises(TransitionNotAllowedError):
+            service.record_parting(
+                charging_batch.id,
+                crucible.id,
+                parting_input(),
+                parted_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_parting_a_crucible_still_in_fusion_is_refused(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id, sample_id=a_sample.id, flux_recipe_id=recipe.id
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        for stage in (BatchStatus.IN_FUSION, BatchStatus.FUSED):
+            service.advance_status(
+                charging_batch.id, target=stage, advanced_by=analyst, actor_role=Role.ANALYST
+            )
+        assert crucible.status is CrucibleStatus.FUSED
+        with pytest.raises(TransitionNotAllowedError, match="fused to parted"):
+            service.record_parting(
+                charging_batch.id,
+                crucible.id,
+                parting_input(),
+                parted_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_parting_twice_is_refused(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        service = BatchService(app_session, **FURNACE)
+        service.record_parting(
+            charging_batch.id,
+            crucible.id,
+            parting_input(),
+            parted_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        with pytest.raises(TransitionNotAllowedError, match="already parted"):
+            service.record_parting(
+                charging_batch.id,
+                crucible.id,
+                parting_input(),
+                parted_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_prep_tech_may_record_parting_but_a_client_may_not(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        client_role_user: LabUser,
+        prep_tech: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        """Parting is bench work -- the same tier as charging -- not result
+        interpretation; the external role has no place at the bench at all."""
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        service = BatchService(app_session, **FURNACE)
+
+        parted = service.record_parting(
+            charging_batch.id,
+            crucible.id,
+            parting_input(),
+            parted_by=prep_tech,
+            actor_role=Role.PREP_TECH,
+        )
+        assert parted.status is CrucibleStatus.PARTED
+
+        app_session.refresh(crucible)
+        crucible.status = CrucibleStatus.CUPELLED
+        app_session.flush()
+        with pytest.raises(InsufficientRoleError):
+            service.record_parting(
+                charging_batch.id,
+                crucible.id,
+                parting_input(),
+                parted_by=client_role_user,
+                actor_role=Role.CLIENT,
+            )
+
+    def test_parting_writes_a_transition_audit_event_with_the_measurements(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        service = BatchService(app_session, **FURNACE)
+        parted = service.record_parting(
+            charging_batch.id,
+            crucible.id,
+            parting_input(),
+            parted_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        event = app_session.scalar(
+            select(AuditEvent)
+            .where(
+                AuditEvent.table_name == "crucible",
+                AuditEvent.record_id == parted.id,
+                AuditEvent.action == "transition",
+            )
+            .order_by(AuditEvent.id.desc())
+        )
+        assert event is not None
+        assert event.action == "transition"
+        assert event.before == {"status": "cupelled"}
+        assert event.after["status"] == "parted"
+        assert event.after["prill_weight_mg"] == "0.512"
+
+    def test_parting_a_crucible_from_another_batch_is_refused(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        from msa_lims.fire_assay_results.service import CrucibleNotFoundError
+
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        other = BatchService(app_session, **FURNACE).create_batch(
+            BatchInput(opened_at=datetime(2026, 8, 25, 12, 0, tzinfo=UTC)),
+            opened_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(CrucibleNotFoundError):
+            service.record_parting(
+                other.id, crucible.id, parting_input(), parted_by=analyst, actor_role=Role.ANALYST
+            )
+
+
+class TestRecordingWeighing:
+    def test_weighing_records_the_bead_and_advances_to_weighed(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        service = BatchService(app_session, **FURNACE)
+        service.record_parting(
+            charging_batch.id,
+            crucible.id,
+            parting_input(),
+            parted_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        weighed = service.record_weighing(
+            charging_batch.id,
+            crucible.id,
+            CrucibleWeighingInput(
+                gold_bead_mg=Decimal("0.225"), weighed_at=datetime(2026, 8, 25, 11, 0, tzinfo=UTC)
+            ),
+            weighed_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert weighed.status is CrucibleStatus.WEIGHED
+        assert weighed.gold_bead_mg == Decimal("0.225")
+        assert weighed.weighed_at == datetime(2026, 8, 25, 11, 0, tzinfo=UTC)
+
+    def test_weighing_before_parting_is_refused(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,  # type: ignore[no-untyped-def]
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        crucible = cupelled_crucible(app_session, analyst, charging_batch, recipe, a_sample)
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(TransitionNotAllowedError, match="cupelled to weighed"):
+            service.record_weighing(
+                charging_batch.id,
+                crucible.id,
+                weighing_input(),
+                weighed_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+
+def parting_input(**overrides: object) -> CruciblePartingInput:
+    defaults: dict[str, object] = {
+        "lead_button_weight_mg": Decimal("27.8"),
+        "prill_weight_mg": Decimal("0.512"),
+        "parting_acid_volume_ml": Decimal("5"),
+        "parted_at": datetime(2026, 8, 25, 10, 0, tzinfo=UTC),
+    }
+    defaults.update(overrides)
+    return CruciblePartingInput(**defaults)  # type: ignore[arg-type]
+
+
+def weighing_input(**overrides: object) -> CrucibleWeighingInput:
+    defaults: dict[str, object] = {
+        "gold_bead_mg": Decimal("0.225"),
+        "weighed_at": datetime(2026, 8, 25, 11, 0, tzinfo=UTC),
+    }
+    defaults.update(overrides)
+    return CrucibleWeighingInput(**defaults)  # type: ignore[arg-type]
 
 
 class TestChargingACrucible:

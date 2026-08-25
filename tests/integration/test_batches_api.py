@@ -236,3 +236,120 @@ class TestFiringABatchThroughHttp:
     def test_an_unknown_batch_is_404(self, client: TestClient) -> None:
         response = client.get("/api/batches/999999")
         assert response.status_code == 404
+
+
+def walk_to_cupelled(client: TestClient, batch_id: int, sample_id: int, recipe_id: int) -> int:
+    """Charge one crucible and fire the batch to CUPELLED over real HTTP."""
+    client.patch(f"/api/batches/{batch_id}/status", json={"status": "charging"}, headers=ANALYST)
+    crucible = client.post(
+        f"/api/batches/{batch_id}/crucibles",
+        json={
+            "sample_id": sample_id,
+            "flux_recipe_id": recipe_id,
+            "position_row": 1,
+            "position_col": 1,
+            "sample_weight_g": "30",
+            "charged_at": "2026-08-25T09:00:00Z",
+        },
+        headers=ANALYST,
+    ).json()
+    for stage in ("in_fusion", "fused", "in_cupellation", "cupelled"):
+        client.patch(f"/api/batches/{batch_id}/status", json={"status": stage}, headers=ANALYST)
+    return int(crucible["id"])
+
+
+class TestRecordingPartingAndWeighingThroughHttp:
+    def part(self, client: TestClient, batch_id: int, crucible_id: int) -> object:
+        return client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/parting",
+            json={
+                "lead_button_weight_mg": "27.8",
+                "prill_weight_mg": "0.512",
+                "parting_acid_volume_ml": "5",
+                "parted_at": "2026-08-25T10:00:00Z",
+            },
+            headers=ANALYST,
+        )
+
+    def test_parting_then_weighing_walks_the_crucible_to_weighed(
+        self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int
+    ) -> None:
+        crucible_id = walk_to_cupelled(client, batch_id, sample_id, recipe_id)
+
+        parted = self.part(client, batch_id, crucible_id)
+        assert parted.status_code == 200
+        body = parted.json()
+        assert body["status"] == "parted"
+        assert body["lead_button_weight_mg"] == "27.8"
+        assert body["prill_weight_mg"] == "0.512"
+
+        weighed = client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/weighing",
+            json={"gold_bead_mg": "0.225", "weighed_at": "2026-08-25T11:00:00Z"},
+            headers=ANALYST,
+        )
+        assert weighed.status_code == 200
+        body = weighed.json()
+        assert body["status"] == "weighed"
+        assert body["gold_bead_mg"] == "0.225"
+
+    def test_parting_twice_is_409(
+        self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int
+    ) -> None:
+        crucible_id = walk_to_cupelled(client, batch_id, sample_id, recipe_id)
+        assert self.part(client, batch_id, crucible_id).status_code == 200
+        response = self.part(client, batch_id, crucible_id)
+        assert response.status_code == 409
+
+    def test_weighing_before_parting_is_409(
+        self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int
+    ) -> None:
+        crucible_id = walk_to_cupelled(client, batch_id, sample_id, recipe_id)
+        response = client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/weighing",
+            json={"gold_bead_mg": "0.225", "weighed_at": "2026-08-25T11:00:00Z"},
+            headers=ANALYST,
+        )
+        assert response.status_code == 409
+
+    def test_a_negative_measurement_is_422_at_the_schema_layer(
+        self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int
+    ) -> None:
+        crucible_id = walk_to_cupelled(client, batch_id, sample_id, recipe_id)
+        response = client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/parting",
+            json={
+                "lead_button_weight_mg": "-1",
+                "prill_weight_mg": "0.512",
+                "parting_acid_volume_ml": "5",
+                "parted_at": "2026-08-25T10:00:00Z",
+            },
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+
+    def test_a_crucible_from_another_batch_is_404(
+        self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int
+    ) -> None:
+        crucible_id = walk_to_cupelled(client, batch_id, sample_id, recipe_id)
+        other_batch = client.post(
+            "/api/batches", json={"opened_at": "2026-08-25T12:00:00Z"}, headers=ANALYST
+        ).json()
+        response = self.part(client, other_batch["id"], crucible_id)
+        assert response.status_code == 404
+
+    def test_a_client_role_is_refused_with_403(
+        self, client: TestClient, batch_id: int, sample_id: int, recipe_id: int
+    ) -> None:
+        crucible_id = walk_to_cupelled(client, batch_id, sample_id, recipe_id)
+        response = client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/parting",
+            json={
+                "lead_button_weight_mg": "27.8",
+                "prill_weight_mg": "0.512",
+                "parting_acid_volume_ml": "5",
+                "parted_at": "2026-08-25T10:00:00Z",
+            },
+            headers=FIELD_CLIENT,
+        )
+        assert response.status_code == 403

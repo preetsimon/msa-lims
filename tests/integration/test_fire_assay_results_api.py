@@ -209,9 +209,12 @@ class TestTheSampleAdvancesThroughTheSpine:
         assert sample.status is SampleStatus.ASSAYED
 
 
-def charge_a_crucible(client: TestClient, sample_id: int, *, weight: str = "45") -> int:
-    """A crucible charged with this sample and fired to ``CUPELLED``, entirely
-    through the real endpoints -- the same walk the live verification does."""
+def charge_a_crucible(
+    client: TestClient, sample_id: int, *, weight: str = "45", weigh_too: bool = False
+) -> int:
+    """A crucible charged with this sample and fired to ``CUPELLED`` (or
+    walked on to ``WEIGHED``), entirely through the real endpoints -- the
+    same walk the live verification does."""
     recipe = client.post(
         "/api/flux-recipes",
         json={
@@ -245,6 +248,22 @@ def charge_a_crucible(client: TestClient, sample_id: int, *, weight: str = "45")
     ).json()
     for stage in ("in_fusion", "fused", "in_cupellation", "cupelled"):
         client.patch(f"/api/batches/{batch['id']}/status", json={"status": stage}, headers=ANALYST)
+    if weigh_too:
+        client.post(
+            f"/api/batches/{batch['id']}/crucibles/{crucible['id']}/parting",
+            json={
+                "lead_button_weight_mg": "41.2",
+                "prill_weight_mg": "0.512",
+                "parting_acid_volume_ml": "5",
+                "parted_at": "2026-08-25T09:30:00Z",
+            },
+            headers=ANALYST,
+        )
+        client.post(
+            f"/api/batches/{batch['id']}/crucibles/{crucible['id']}/weighing",
+            json={"gold_bead_mg": "0.225", "weighed_at": "2026-08-25T10:00:00Z"},
+            headers=ANALYST,
+        )
     return int(crucible["id"])
 
 
@@ -299,3 +318,57 @@ class TestWiringAResultToItsCrucible:
             headers=ANALYST,
         )
         assert response.status_code == 404
+
+    def test_the_weighed_crucible_derives_both_numbers_when_named(
+        self, client: TestClient, sample_id: int
+    ) -> None:
+        """The complete provenance chain over real HTTP: charge 45 g, fire,
+        part, weigh 0.225 mg -- then enter a result naming only the crucible.
+        Every number on the stored row was recorded at the physical act."""
+        crucible_id = charge_a_crucible(client, sample_id, weigh_too=True)
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(
+                sample_id=sample_id,
+                gold_bead_mg=None,
+                sample_weight_g=None,
+                crucible_id=crucible_id,
+            ),
+            headers=ANALYST,
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["crucible_id"] == crucible_id
+        assert body["sample_weight_g"] == "45"
+        assert body["gold_bead_mg"] == "0.225"
+        assert body["au"]["value"] == "5.000"
+
+    def test_retyping_the_bead_alongside_a_weighed_crucible_is_422(
+        self, client: TestClient, sample_id: int
+    ) -> None:
+        crucible_id = charge_a_crucible(client, sample_id, weigh_too=True)
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(
+                sample_id=sample_id,
+                gold_bead_mg="0.300",
+                sample_weight_g=None,
+                crucible_id=crucible_id,
+            ),
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+        assert "already been weighed" in response.json()["detail"]
+
+    def test_direct_entry_with_neither_number_is_422_naming_both_gaps(
+        self, client: TestClient, sample_id: int
+    ) -> None:
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(sample_id=sample_id, gold_bead_mg=None, sample_weight_g=None),
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "gold_bead_mg is required" in detail
+        assert "sample_weight_g is required" in detail

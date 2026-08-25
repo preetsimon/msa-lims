@@ -76,9 +76,9 @@ BATCH_TRANSITIONS: tuple[BatchTransition, ...] = (
 #: Bulk crucible status a batch transition drives, for the two stages every
 #: crucible in the tray moves through together. ``None`` for every other
 #: transition: charging is a per-crucible act with its own write path, and
-#: parting/weighing are per-crucible measurements this phase does not wire in
-#: (see PROGRESS.md), so nothing here should silently invent a status for
-#: them.
+#: parting/weighing are per-crucible acts with theirs (see
+#: :data:`CRUCIBLE_TRANSITIONS`), so nothing here should silently invent a
+#: status for them.
 _BULK_CRUCIBLE_STATUS: dict[BatchStatus, CrucibleStatus] = {
     BatchStatus.FUSED: CrucibleStatus.FUSED,
     BatchStatus.CUPELLED: CrucibleStatus.CUPELLED,
@@ -109,6 +109,48 @@ def bulk_crucible_status(batch_target: BatchStatus) -> CrucibleStatus | None:
     return _BULK_CRUCIBLE_STATUS.get(batch_target)
 
 
+@dataclass(frozen=True, slots=True)
+class CrucibleTransition:
+    """A per-crucible move a technician makes by hand, one crucible at a
+    time — unlike fusion and cupellation, which the furnace performs on the
+    whole tray at once (those stay with :func:`bulk_crucible_status`)."""
+
+    source: CrucibleStatus
+    target: CrucibleStatus
+    description: str
+
+
+#: The complete set of hand-driven crucible moves. Each is a physical act
+#: performed on one crucible after the batch has released it from a bulk
+#: stage: parting dissolves the prill's silver and recovers the bead;
+#: weighing is the final bead measurement. A move records the measurements
+#: that witness it — a status advance with nothing behind it would be a
+#: claim about the world nobody made. ``REJECTED`` has no path yet; nothing
+#: should silently invent one.
+CRUCIBLE_TRANSITIONS: tuple[CrucibleTransition, ...] = (
+    CrucibleTransition(
+        CrucibleStatus.CUPELLED,
+        CrucibleStatus.PARTED,
+        description="record parting: lead button, prill, and acid volume",
+    ),
+    CrucibleTransition(
+        CrucibleStatus.PARTED,
+        CrucibleStatus.WEIGHED,
+        description="record the final gold-bead weighing",
+    ),
+)
+
+
+def check_crucible_transition(*, source: CrucibleStatus, target: CrucibleStatus) -> None:
+    """Raise unless ``source -> target`` is a hand-driven crucible move."""
+    if source is target:
+        raise TransitionNotAllowedError(f"the crucible is already {source.value}")
+    if not any(t.source is source and t.target is target for t in CRUCIBLE_TRANSITIONS):
+        raise TransitionNotAllowedError(
+            f"a crucible cannot go from {source.value} to {target.value}"
+        )
+
+
 def check_position(*, row: int, col: int, rows: int, cols: int) -> None:
     """Raise unless ``(row, col)`` is a real slot in a ``rows`` x ``cols`` tray.
 
@@ -123,9 +165,12 @@ def check_position(*, row: int, col: int, rows: int, cols: int) -> None:
 
 __all__ = [
     "BATCH_TRANSITIONS",
+    "CRUCIBLE_TRANSITIONS",
     "BatchTransition",
+    "CrucibleTransition",
     "FurnacePositionError",
     "bulk_crucible_status",
     "check_batch_transition",
+    "check_crucible_transition",
     "check_position",
 ]

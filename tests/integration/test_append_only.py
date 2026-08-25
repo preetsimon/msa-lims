@@ -94,6 +94,31 @@ class TestOrdinaryTablesRemainMutable:
         ).scalar_one()
         assert phone == "555-0100"
 
+    def test_a_batch_status_can_be_updated(self, app_session: Session) -> None:
+        """``batch`` and ``crucible`` (added for furnace batching) advance in
+        place through ``domain.batch_lifecycle``, same tier as ``client``."""
+        user_id = app_session.execute(
+            text(
+                "INSERT INTO lab_user (subject, email, full_name, role, is_active, created_at) "
+                "VALUES ('sub-append-only-1', 'ao1@lab.test', 'A. Ppend', 'analyst', true, now()) "
+                "RETURNING id"
+            )
+        ).scalar_one()
+        batch_id = app_session.execute(
+            text(
+                "INSERT INTO batch (batch_number, status, opened_by_id, opened_at, created_at) "
+                "VALUES ('BATCH-2026-9001', 'pending', :user_id, now(), now()) RETURNING id"
+            ),
+            {"user_id": user_id},
+        ).scalar_one()
+        app_session.execute(
+            text("UPDATE batch SET status = 'charging' WHERE id = :id"), {"id": batch_id}
+        )
+        status = app_session.execute(
+            text("SELECT status FROM batch WHERE id = :id"), {"id": batch_id}
+        ).scalar_one()
+        assert status == "charging"
+
 
 class TestTheAmendmentReasonConstraint:
     def test_an_amendment_without_a_reason_is_refused_by_the_database(

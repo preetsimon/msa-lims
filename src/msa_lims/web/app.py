@@ -5,6 +5,11 @@ from __future__ import annotations
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from msa_lims.batches.service import (
+    BatchNotFoundError,
+    BatchValidationError,
+    CrucibleValidationError,
+)
 from msa_lims.certificates.service import (
     CertificateCorruptedError,
     CertificateNotFoundError,
@@ -18,6 +23,8 @@ from msa_lims.clients.service import (
 )
 from msa_lims.config import get_settings
 from msa_lims.domain.assay import AssayCalculationError
+from msa_lims.domain.batch_lifecycle import FurnacePositionError
+from msa_lims.domain.flux import FluxCalculationError
 from msa_lims.domain.lifecycle import (
     InsufficientRoleError,
     ReasonRequiredError,
@@ -31,12 +38,15 @@ from msa_lims.fire_assay_results.service import (
     FireAssayResultValidationError,
     SampleNotFoundError,
 )
+from msa_lims.flux_recipes.service import FluxRecipeNotFoundError, FluxRecipeValidationError
 from msa_lims.submissions.service import SubmissionValidationError
 from msa_lims.web.routes import (
+    batches,
     certificates,
     clients,
     drill_holes,
     fire_assay_results,
+    flux_recipes,
     health,
     samples,
     submissions,
@@ -73,6 +83,8 @@ def create_app() -> FastAPI:
     app.include_router(certificates.router)
     app.include_router(samples.router)
     app.include_router(submissions.router)
+    app.include_router(flux_recipes.router)
+    app.include_router(batches.router)
     _register_error_handlers(app)
     return app
 
@@ -103,6 +115,13 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     # A stored PDF that no longer hashes to what its row claims is a data
     # integrity failure, not something the caller did wrong.
     CertificateCorruptedError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    FluxRecipeNotFoundError: status.HTTP_404_NOT_FOUND,
+    FluxRecipeValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    FluxCalculationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    FurnacePositionError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    BatchNotFoundError: status.HTTP_404_NOT_FOUND,
+    BatchValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    CrucibleValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 
 

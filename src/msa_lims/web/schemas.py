@@ -14,15 +14,18 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 
 from msa_lims.db.models import (
+    Batch,
     Certificate,
     Client,
+    Crucible,
     DrillHole,
     FireAssayResult,
+    FluxRecipe,
     Project,
     Sample,
     Submission,
 )
-from msa_lims.domain.enums import SampleType
+from msa_lims.domain.enums import BatchStatus, MatrixType, SampleType
 from msa_lims.domain.values import MeasuredValue
 
 
@@ -404,4 +407,149 @@ class SampleDetailOut(BaseModel):
             to_depth_m=sample.to_depth_m,
             current_result=current_result,
             certificates=certificates,
+        )
+
+
+class FluxRecipeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100, description="e.g. 'Standard Silicate'")
+    matrix_type: MatrixType
+    nominal_portion_g: Decimal = Field(
+        gt=0, description="Sample weight this recipe's amounts are calibrated for."
+    )
+    litharge_g: Decimal = Field(ge=0)
+    soda_ash_g: Decimal = Field(ge=0)
+    borax_g: Decimal = Field(ge=0)
+    silica_g: Decimal = Field(ge=0)
+    flour_g: Decimal = Field(ge=0)
+    nitre_g: Decimal = Field(ge=0)
+
+
+class FluxRecipeOut(BaseModel):
+    id: int
+    name: str
+    matrix_type: str
+    nominal_portion_g: Decimal
+    litharge_g: Decimal
+    soda_ash_g: Decimal
+    borax_g: Decimal
+    silica_g: Decimal
+    flour_g: Decimal
+    nitre_g: Decimal
+    is_active: bool
+
+    @classmethod
+    def from_model(cls, recipe: FluxRecipe) -> FluxRecipeOut:
+        return cls(
+            id=recipe.id,
+            name=recipe.name,
+            matrix_type=recipe.matrix_type.value,
+            nominal_portion_g=recipe.nominal_portion_g,
+            litharge_g=recipe.litharge_g,
+            soda_ash_g=recipe.soda_ash_g,
+            borax_g=recipe.borax_g,
+            silica_g=recipe.silica_g,
+            flour_g=recipe.flour_g,
+            nitre_g=recipe.nitre_g,
+            is_active=recipe.is_active,
+        )
+
+
+class BatchCreate(BaseModel):
+    opened_at: datetime
+    notes: str | None = None
+
+
+class BatchStatusUpdate(BaseModel):
+    status: BatchStatus
+
+
+class CrucibleChargeCreate(BaseModel):
+    sample_id: int
+    flux_recipe_id: int
+    position_row: int = Field(gt=0)
+    position_col: int = Field(gt=0)
+    sample_weight_g: Decimal = Field(gt=0)
+    charged_at: datetime
+    notes: str | None = None
+
+
+class CrucibleOut(BaseModel):
+    id: int
+    batch_id: int
+    sample_id: int
+    flux_recipe_id: int
+    position_row: int
+    position_col: int
+    status: str
+    sample_weight_g: Decimal
+    litharge_g: Decimal
+    soda_ash_g: Decimal
+    borax_g: Decimal
+    silica_g: Decimal
+    flour_g: Decimal
+    nitre_g: Decimal
+    charged_at: datetime
+    notes: str | None
+
+    @classmethod
+    def from_model(cls, crucible: Crucible) -> CrucibleOut:
+        return cls(
+            id=crucible.id,
+            batch_id=crucible.batch_id,
+            sample_id=crucible.sample_id,
+            flux_recipe_id=crucible.flux_recipe_id,
+            position_row=crucible.position_row,
+            position_col=crucible.position_col,
+            status=crucible.status.value,
+            sample_weight_g=crucible.sample_weight_g,
+            litharge_g=crucible.litharge_g,
+            soda_ash_g=crucible.soda_ash_g,
+            borax_g=crucible.borax_g,
+            silica_g=crucible.silica_g,
+            flour_g=crucible.flour_g,
+            nitre_g=crucible.nitre_g,
+            charged_at=crucible.charged_at,
+            notes=crucible.notes,
+        )
+
+
+class BatchOut(BaseModel):
+    id: int
+    batch_number: str
+    status: str
+    opened_by_id: int
+    opened_at: datetime
+    notes: str | None
+
+    @classmethod
+    def from_model(cls, batch: Batch) -> BatchOut:
+        return cls(
+            id=batch.id,
+            batch_number=batch.batch_number,
+            status=batch.status.value,
+            opened_by_id=batch.opened_by_id,
+            opened_at=batch.opened_at,
+            notes=batch.notes,
+        )
+
+
+class BatchDetailOut(BaseModel):
+    id: int
+    batch_number: str
+    status: str
+    opened_by_id: int
+    opened_at: datetime
+    notes: str | None
+    crucibles: list[CrucibleOut]
+
+    @classmethod
+    def from_model(cls, batch: Batch, *, crucibles: list[CrucibleOut]) -> BatchDetailOut:
+        return cls(
+            id=batch.id,
+            batch_number=batch.batch_number,
+            status=batch.status.value,
+            opened_by_id=batch.opened_by_id,
+            opened_at=batch.opened_at,
+            notes=batch.notes,
+            crucibles=crucibles,
         )

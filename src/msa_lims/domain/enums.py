@@ -146,6 +146,26 @@ class InstrumentStatus(Enum):
     RETIRED = "retired"
 
 
+class MatrixType(Enum):
+    """The mineralogical character of a sample charge — what it is made of,
+    for the purpose of choosing a flux.
+
+    Independent of :class:`SampleType`, which classifies the physical medium
+    a sample arrived as (core, soil, pulp, ...). A silicate-hosted soil and a
+    silicate-hosted core take the same flux; a sulfide-rich core and an
+    oxide-rich core do not, despite both being "core." Nothing in this schema
+    infers a matrix from a sample type or a lithology code — a technician
+    assigns it when charging a crucible, the same way they would read it off
+    a geologist's log.
+    """
+
+    SILICATE = "silicate"
+    SULFIDE = "sulfide"
+    OXIDE = "oxide"
+    CARBONATE = "carbonate"
+    CARBONACEOUS = "carbonaceous"
+
+
 class Role(Enum):
     """Authorisation tiers.
 
@@ -173,3 +193,11 @@ MAY_SIGN_CERTIFICATE: frozenset[Role] = frozenset({Role.LAB_MANAGER})
 #: technician or analyst works material through the lab but does not set up
 #: billing relationships or drilling programs.
 MAY_MANAGE_ACCOUNTS: frozenset[Role] = frozenset({Role.SUPERVISOR, Role.LAB_MANAGER})
+
+#: Roles that may define lab process configuration — flux recipes, and
+#: (later) instrument and method setup. Same two roles as
+#: ``MAY_MANAGE_ACCOUNTS`` today, but a different authority: a billing
+#: relationship and a furnace recipe are not the same decision, and a lab that
+#: later splits "accounts manager" from "technical supervisor" should not have
+#: to hunt down every call site that conflated the two under one name.
+MAY_CONFIGURE_LAB: frozenset[Role] = frozenset({Role.SUPERVISOR, Role.LAB_MANAGER})

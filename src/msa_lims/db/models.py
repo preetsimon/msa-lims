@@ -1,10 +1,10 @@
 """The persistent model.
 
 Scope note: this is the **spine** — the entities a sample needs to exist, be
-found, be assayed, and (as of Phase 1's Certificate of Analysis) be reported.
-Prep stage tracking and furnace batching are still absent rather than stubbed,
-so that no table here is shaped by a guess about a workflow that has not been
-built.
+found, be assayed, and (as of Phase 1's Certificate of Analysis) be reported
+— plus, as of Phase 2, the furnace batch a sample is charged into on its way
+to a result. Prep stage tracking is still absent rather than stubbed, so that
+no table here is shaped by a guess about a workflow that has not been built.
 
 Three conventions run through everything below and are worth reading once:
 
@@ -44,8 +44,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from msa_lims.db.base import Base, IdPk, Sha256, TimestampMixin
 from msa_lims.domain.enums import (
     AssayMethod,
+    BatchStatus,
+    CrucibleStatus,
     InstrumentStatus,
     InstrumentType,
+    MatrixType,
     Role,
     SampleStatus,
     SampleType,
@@ -486,3 +489,130 @@ class CertificateResult(Base, TimestampMixin):
     certificate_id: Mapped[int] = mapped_column(ForeignKey("certificate.id"), index=True)
     sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
     fire_assay_result_id: Mapped[int] = mapped_column(ForeignKey("fire_assay_result.id"))
+
+
+class FluxRecipe(Base, TimestampMixin):
+    """A named flux formula, calibrated to a nominal sample portion.
+
+    Mutable, unlike ``fire_assay_result`` and ``certificate`` — a recipe is
+    lab reference data, amended in place as reagent sourcing or a
+    metallurgist's formulation changes, the same way ``instrument`` rows are.
+    What must never change after the fact is a crucible's own frozen charge
+    (see ``Crucible``); this row is only ever the current formula, not a
+    history of every version a batch was charged under.
+
+    Reagent columns allow zero — not every recipe uses every reagent — but
+    never a negative amount.
+    """
+
+    __tablename__ = "flux_recipe"
+    __table_args__ = (
+        CheckConstraint("nominal_portion_g > 0", name="nominal_portion_positive"),
+        CheckConstraint("litharge_g >= 0", name="litharge_non_negative"),
+        CheckConstraint("soda_ash_g >= 0", name="soda_ash_non_negative"),
+        CheckConstraint("borax_g >= 0", name="borax_non_negative"),
+        CheckConstraint("silica_g >= 0", name="silica_non_negative"),
+        CheckConstraint("flour_g >= 0", name="flour_non_negative"),
+        CheckConstraint("nitre_g >= 0", name="nitre_non_negative"),
+    )
+
+    id: Mapped[IdPk]
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    matrix_type: Mapped[MatrixType] = mapped_column(_enum(MatrixType, "matrix_type"))
+    nominal_portion_g: Mapped[Decimal] = mapped_column(Numeric)
+
+    litharge_g: Mapped[Decimal] = mapped_column(Numeric)
+    soda_ash_g: Mapped[Decimal] = mapped_column(Numeric)
+    borax_g: Mapped[Decimal] = mapped_column(Numeric)
+    silica_g: Mapped[Decimal] = mapped_column(Numeric)
+    flour_g: Mapped[Decimal] = mapped_column(Numeric)
+    nitre_g: Mapped[Decimal] = mapped_column(Numeric)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
+class Batch(Base, TimestampMixin):
+    """One furnace run: a tray of crucibles fired together.
+
+    Mutable — ``status`` advances in place through
+    :mod:`msa_lims.domain.batch_lifecycle`'s linear state machine, matching
+    how ``sample.status`` advances. Not append-only: unlike a result or a
+    certificate, a batch is not a statement the lab makes to a client, it is
+    the lab's own record of a physical event in progress. See
+    ``BatchStatus``'s docstring for why ``IN_FUSION`` onward is effectively
+    frozen in practice even though the schema does not enforce that lock with
+    a grant.
+    """
+
+    __tablename__ = "batch"
+
+    id: Mapped[IdPk]
+    batch_number: Mapped[str] = mapped_column(String(30), unique=True)
+    """Lab-assigned, e.g. 'BATCH-2026-0042'."""
+    status: Mapped[BatchStatus] = mapped_column(_enum(BatchStatus, "batch_status"), index=True)
+    opened_by_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    crucibles: Mapped[list[Crucible]] = relationship(back_populates="batch")
+
+
+class Crucible(Base, TimestampMixin):
+    """One assay unit within a batch: one sample, one position, one flux charge.
+
+    Mutable, matching ``Batch`` — its status is bulk-advanced in lockstep
+    with the batch's for the stages a furnace run moves every crucible
+    through together (see
+    :func:`msa_lims.domain.batch_lifecycle.bulk_crucible_status`).
+    ``PARTED`` and ``WEIGHED`` are not reachable through any write path yet —
+    those are per-crucible measurements this phase deliberately does not
+    wire in (see PROGRESS.md), so nothing here should silently invent a way
+    to reach them.
+
+    ``flux_recipe_id`` lives here, not on ``Batch``: one furnace load
+    routinely fires a silicate core sample beside a sulfide one, and each
+    needs its own recipe. A batch is a shared furnace slot, not a shared
+    formula.
+
+    The six reagent columns are the *scaled* charge for this crucible's own
+    ``sample_weight_g`` — computed once at charge time by
+    :func:`msa_lims.domain.flux.scale_flux_charge` and stored, not
+    recomputed from the recipe on every read. This mirrors
+    ``fire_assay_result``'s "store what was actually weighed" precedent: if
+    the recipe is edited afterward, an already-charged crucible still shows
+    what a technician actually weighed out.
+    """
+
+    __tablename__ = "crucible"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "position_row", "position_col", name="batch_position"),
+        UniqueConstraint("batch_id", "sample_id", name="batch_sample"),
+        CheckConstraint("position_row > 0", name="position_row_positive"),
+        CheckConstraint("position_col > 0", name="position_col_positive"),
+        CheckConstraint("sample_weight_g > 0", name="sample_weight_positive"),
+    )
+
+    id: Mapped[IdPk]
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batch.id"), index=True)
+    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    flux_recipe_id: Mapped[int] = mapped_column(ForeignKey("flux_recipe.id"))
+
+    position_row: Mapped[int] = mapped_column(Integer)
+    position_col: Mapped[int] = mapped_column(Integer)
+    status: Mapped[CrucibleStatus] = mapped_column(
+        _enum(CrucibleStatus, "crucible_status"), index=True
+    )
+
+    sample_weight_g: Mapped[Decimal] = mapped_column(Numeric)
+    litharge_g: Mapped[Decimal] = mapped_column(Numeric)
+    soda_ash_g: Mapped[Decimal] = mapped_column(Numeric)
+    borax_g: Mapped[Decimal] = mapped_column(Numeric)
+    silica_g: Mapped[Decimal] = mapped_column(Numeric)
+    flour_g: Mapped[Decimal] = mapped_column(Numeric)
+    nitre_g: Mapped[Decimal] = mapped_column(Numeric)
+
+    charged_by_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    charged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    batch: Mapped[Batch] = relationship(back_populates="crucibles")

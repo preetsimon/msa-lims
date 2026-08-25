@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 1 complete (sample list and detail screens ship the phase — Phase 2, fire assay batching, is next)
+**Updated:** 2026-08-25 · **Phase:** 2 in progress — furnace batching (batches, crucibles, flux recipes) is built and verified live; QC insertion policy and wiring a result to the crucible it came from remain
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -13,23 +13,24 @@ first — it explains the decisions this document only tracks.
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
-| 2 · Fire assay batching | wk 5–7 | Not started |
+| 2 · Fire assay batching | wk 5–7 | **In progress** — batches, crucibles (position-constrained), and flux recipes (matrix-scaled) built and verified live; QC insertion policy and crucible↔result wiring still open |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 311 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible · frontend builds and typechecks clean
-(TypeScript `strict` + `noUncheckedIndexedAccess`) · verified live through the
-browser at every layer, most recently the whole user-facing path: open the
-app, see every sample in a table, click through to one, see its grade and
-status, download its signed certificate PDF — no console errors, no direct
-database queries, nothing left to check by hand. Live verification confirmed
-the `POST` and `GET` responses for a certificate are byte-for-byte identical,
-and caught and fixed a real defect earlier in the phase: an unrounded grade
-printing 34 digits of `Decimal` division onto the certificate. **Phase 1 —
-the thinnest complete thread the original roadmap called for — is done.**
+**Health:** 377 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible (including the two new furnace-batching
+migrations, checked with a full `downgrade base` / `upgrade head` round trip)
+· frontend builds and typechecks clean (TypeScript `strict` +
+`noUncheckedIndexedAccess`) · verified live through curl end to end: register
+a client, submission, and flux recipe; open a batch; charge a crucible with
+scaled reagent amounts; fire the batch through every furnace stage to
+`completed`, watching crucible status bulk-advance; and enter a fire assay
+result against the now-`in_assay` sample, proving Phase 1 and Phase 2 compose
+without a seam. **Phase 1 — the thinnest complete thread the original roadmap
+called for — is done. Phase 2's core batching flow is done; QC insertion
+policy and crucible↔result wiring remain.**
 
 ---
 
@@ -343,10 +344,112 @@ the thinnest complete thread the original roadmap called for — is done.**
   `status` filters exist on the service and the route today; no UI calls
   them with a value yet (see open questions).
 
+### Fire assay batching — `src/msa_lims/domain/flux.py`, `domain/batch_lifecycle.py`, `flux_recipes/`, `batches/`
+- **`domain/flux.py`** — pure Decimal scaling from a flux recipe's nominal
+  charge to what a technician actually weighs out, mirroring `domain/assay.py`'s
+  discipline exactly: a pinned `localcontext` precision, no session, no clock.
+  Scaling is linear (doubling the sample weight doubles every reagent), which
+  is the entire physical premise of a recipe — it specifies proportions, not
+  absolutes.
+- **`domain/batch_lifecycle.py`** — a second, independent state machine
+  alongside `domain/lifecycle.py`'s sample one, for `BatchStatus`. **Strictly
+  linear, no branch and no way back** — unlike a sample, a batch cannot be
+  "returned" the way a re-assay returns a sample to `READY_FOR_ASSAY`, because
+  a batch describes a furnace run that already physically happened. Reuses
+  `domain.lifecycle`'s `TransitionNotAllowedError`/`InsufficientRoleError`
+  rather than a parallel exception hierarchy: a batch refusal and a sample
+  refusal mean the same two things, and a caller that already catches those
+  types for one catches the other for free. Also owns `check_position`
+  (furnace-tray bounds) and `bulk_crucible_status` (which two batch moves —
+  reaching `FUSED` and `CUPELLED` — advance every charged crucible's status in
+  lockstep, because a furnace fuses or cupels a whole tray at once).
+- **`flux_recipes/service.py`** — `POST /api/flux-recipes`, thin like
+  `clients/service.py`: one uniqueness check on `name`, one audit event.
+  Restricted to a **new role tier, `MAY_CONFIGURE_LAB`** (supervisor,
+  lab_manager) — the same two roles as `MAY_MANAGE_ACCOUNTS` today, but a
+  deliberately separate constant: defining what goes into a furnace and
+  setting up a client's billing relationship are different kinds of authority
+  that happen to be held by the same people in this lab, the identical
+  reasoning `MAY_MANAGE_ACCOUNTS`'s own docstring already gives for staying
+  distinct from `BENCH_ROLES`.
+- **`batches/service.py`** — `POST /api/batches` (open, starts `PENDING`),
+  `POST /api/batches/{id}/crucibles` (charge), `PATCH /api/batches/{id}/status`
+  (advance), `GET /api/batches/{id}` (detail) — built alongside the writes
+  this time, not deferred the way Phase 1's `GET` endpoints were.
+- **Charging bypasses `domain.lifecycle`'s `READY_FOR_ASSAY -> IN_ASSAY`
+  transition, exactly the way `fire_assay_results/service.py` bypasses the
+  lifecycle table for entering a result, and for the identical reason.**
+  Investigation before writing any code confirmed `check_transition` is
+  called from exactly one place in the whole codebase —
+  `certificates/service.py`'s `ASSAYED -> REPORTED` move — meaning no sample
+  can currently reach `READY_FOR_ASSAY` through the modelled path (prep-stage
+  tracking doesn't exist yet). Routing crucible charging through
+  `check_transition` honestly would only ever succeed for a sample that
+  reached `READY_FOR_ASSAY` some other way that also doesn't exist. Instead, a
+  sample is chargeable from any pre-assay status — everything except
+  `IN_ASSAY`, `ASSAYED`, `REPORTED`, `REJECTED` — and charging moves it
+  straight to `IN_ASSAY`, stated plainly in the module docstring as the
+  honest reflection of what this system currently tracks.
+- **A batch must be `CHARGING` before any crucible can be placed into it** —
+  `PENDING -> CHARGING` ("open for charging") is a deliberate, separate step,
+  mirroring the sample lifecycle's "start preparation," rather than the first
+  charge implicitly opening the tray. Charging into a `PENDING` batch is
+  refused with a message naming the remedy.
+- **`flux_recipe_id` lives on `Crucible`, not `Batch`** — a correction to the
+  original roadmap sketch, made before any schema was written. One furnace
+  load routinely fires a silicate core sample beside a sulfide one, and each
+  needs its own recipe; a batch is a shared furnace slot, not a shared
+  formula.
+- **A crucible's scaled reagent amounts are computed once at charge time and
+  stored**, not recomputed from the recipe on every read — matches
+  `fire_assay_result`'s "store what was actually weighed" precedent. If a
+  recipe is edited afterward, an already-charged crucible still shows what a
+  technician actually weighed out.
+- **Position uniqueness (`UNIQUE(batch_id, position_row, position_col)`) is
+  checked before insert**, same "clean 422, not a raw `IntegrityError`"
+  discipline as client/project registration, alongside a domain-level
+  `check_position` bounds check against `config.furnace_rows`/
+  `furnace_columns` (both pre-set in Phase 0 anticipating exactly this).
+- **`Crucible.sample_id` is `NOT NULL`; QC crucibles are out of scope for this
+  pass.** No `crm_lots`/QC-material tables exist yet, so a nullable
+  "this crucible has no sample, it's a blank" column would be an unused
+  half-built branch. QC insertion is real remaining Phase 2 scope — see next
+  actions.
+- **`Batch`, `Crucible`, `FluxRecipe` are mutable, not append-only** — a new
+  category alongside `audit_event`/`fire_assay_result`/`certificate`'s
+  append-only tier. A batch's and a crucible's `status` advance in place
+  through `domain.batch_lifecycle`, exactly like `sample.status` already does;
+  a recipe is lab reference data, edited in place like `instrument`. What must
+  never be an `UPDATE` — a crucible's frozen charge amounts once weighed out —
+  is enforced in the service layer, the same way `sample.status`'s legal moves
+  are enforced in `domain/lifecycle.py` rather than by revoking UPDATE from
+  the whole `sample` table.
+- **`AuditEvent.action = "transition"` is used for the first time** — a value
+  the column's own docstring named as legal since Phase 0 (`"One of create,
+  amend, supersede, transition"`) but nothing had written until a batch's
+  status actually needed one.
+- **A real modelling correction, caught before any schema was written, not
+  after:** the original plan sketch put `flux_recipe_id` on `Batch`. Working
+  through the physical reality — one furnace load, several different sample
+  matrices — during design surfaced that a shared-slot/shared-formula model
+  was wrong before it became a migration to walk back.
+- **A real migration bug, caught by the reversibility check itself:** the
+  first generated migration named `Batch.batch_number`'s unique constraint
+  `"number"`, copying `Submission.submission_number`'s own literal constraint
+  name. Postgres backs a `UNIQUE` constraint with an index, and index names
+  are unique **per schema**, not per table — the migration failed outright
+  with `relation "number" already exists` on `alembic upgrade head`. Fixed by
+  dropping the explicit literal names on `FluxRecipe.name` and
+  `Batch.batch_number` in favour of `unique=True`, which lets the declared
+  naming convention (`uq_%(table_name)s_%(column_0_N_name)s`) generate a name
+  that is unique across the whole schema by construction — the same approach
+  `Instrument.name` already used, just not one this session's first draft
+  followed.
+
 ### Database — `src/msa_lims/db/`
-- 11 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
+- 14 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
-  `certificate_result`.
+  `certificate_result`, `flux_recipe`, `batch`, `crucible`.
 - `7172b2adeb7e` — initial schema.
 - `a64c168cff52` — audit events.
 - `b1d0c4e77a10` — **append-only grants**. Creates `msa_app` with no
@@ -358,6 +461,10 @@ the thinnest complete thread the original roadmap called for — is done.**
   reviewed as separate decisions everywhere in this repo).
 - `f73c45982855` / `2d5f8a17c930` — the `certificate` and `certificate_result`
   tables and their append-only grants, same split.
+- `f9845a996c0d` / `e4d969607d8c` — the `flux_recipe`, `batch`, and `crucible`
+  tables and their **mutable** grants (`SELECT, INSERT, UPDATE, DELETE`,
+  matching the `MUTABLE_TABLES` tier `b1d0c4e77a10` already defined), same
+  schema/mutability split, first use of that tier since Phase 0.
 - Enums stored as VARCHAR with a CHECK rather than Postgres native enums, so
   removing a vocabulary value is not a table rewrite.
 - `submission.declared_sample_count` records what the client's paperwork claimed
@@ -375,13 +482,16 @@ the thinnest complete thread the original roadmap called for — is done.**
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Seven write endpoints, and now three read endpoints:
-  `GET /api/certificates/{id}/pdf` (the raw document), `GET
-  /api/certificates/{id}` (its metadata, sharing the exact certified-samples
-  query the issuance response uses), and `GET /api/samples/{id}` (a sample's
-  current result and every certificate that names it). `POST
-  /api/fire-assay-results` was the first write to compute a response rather
-  than only echo what it stored.
+- Ten write endpoints, and now five read endpoints:
+  `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
+  result and every certificate that names it), `GET /api/certificates/{id}`
+  (metadata, sharing the exact certified-samples query the issuance response
+  uses), `GET /api/certificates/{id}/pdf` (the raw document), and — new this
+  phase — `GET /api/batches/{id}` (a batch and its crucibles, ordered the way
+  a technician reads a tray). `POST /api/fire-assay-results` was the first
+  write to compute a response rather than only echo what it stored;
+  `POST /api/batches/{id}/crucibles` is the second, computing scaled reagent
+  amounts from a recipe rather than storing raw input.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -429,44 +539,65 @@ the thinnest complete thread the original roadmap called for — is done.**
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 311
-- **Unit** (154): units and dimensions, censored values, assay arithmetic,
+### Tests — 377
+- **Unit** (178): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals (including the `format_hole_id`/
   `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
-  state machine, OIDC token verification against a real self-signed keypair,
-  the auth dependency exercised through a real FastAPI app (`TestClient`)
-  across dev-header and OIDC modes, Certificate of Analysis PDF
+  sample state machine, OIDC token verification against a real self-signed
+  keypair, the auth dependency exercised through a real FastAPI app
+  (`TestClient`) across dev-header and OIDC modes, Certificate of Analysis PDF
   byte-determinism (identical content twice → identical bytes; different
-  content → different bytes; an 80-sample page-break case), and the grade-
+  content → different bytes; an 80-sample page-break case), the grade-
   rounding fix (a non-terminating division rounds to three decimal places
   under `ROUND_HALF_EVEN`; a clean value is unaffected; a non-detect's
   detection limit is never rounded; the stored full-precision value is
-  untouched by rendering).
+  untouched by rendering) — and, new this phase, flux charge scaling (7 —
+  the exact-nominal-weight identity, doubling and halving the sample weight,
+  an unused reagent staying zero, non-positive inputs refused) and the batch
+  state machine (13 — the full linear walk, every skip and every backward
+  move refused, an insufficiently-privileged role refused, `FUSED`/`CUPELLED`
+  bulk-mapping to a crucible status and every other transition mapping to
+  `None`, and the furnace-position bounds check on all four edges).
 - **Property** (17, Hypothesis): conversion round-trips within working
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (140, real Postgres): the append-only grants proven against
-  the actual application role; submission intake against the service directly
-  and through the real HTTP app (26 tests); client and project registration
-  (21 tests); drill hole registration (16 tests, including the
-  hole-canonicalisation-matches-a-drill-sample proof); fire assay result entry
-  (26 tests — the computed grade, the ASSAYED transition, every supersession
-  refusal including anti-branching, and a direct proof that Postgres refuses
-  `UPDATE`/`DELETE` against `fire_assay_result`); Certificate of Analysis
-  issuance (25 tests — issuance, the ASSAYED→REPORTED transition, every
-  validation refusal including cross-client isolation and anti-branching on
-  the amendment chain, the hash-verified download, and a direct proof that
-  Postgres refuses `UPDATE`/`DELETE` against `certificate` too); sample and
-  certificate lookup (9 tests — a fresh sample with no result or
-  certificates, the current result surfacing after a correction supersedes
-  the original, every certificate a sample was ever named on staying listed
-  after an amendment, a 404 for each unknown id, and the `POST`/`GET`
-  responses for one certificate asserted byte-for-byte equal); sample listing
-  (7 tests — an empty lab lists nothing, a listed row carries its client and
-  submission but deliberately not its grade or certificates, newest-first
-  ordering, `client_id`/`status` filtering, and an invalid status value
-  refused with 422 before it reaches the service).
+- **Integration** (182, real Postgres): the append-only grants proven against
+  the actual application role, now also proving `batch` remains genuinely
+  mutable under the same role (11 tests); submission intake against the
+  service directly and through the real HTTP app (26 tests); client and
+  project registration (21 tests); drill hole registration (16 tests,
+  including the hole-canonicalisation-matches-a-drill-sample proof); fire
+  assay result entry (26 tests — the computed grade, the ASSAYED transition,
+  every supersession refusal including anti-branching, and a direct proof
+  that Postgres refuses `UPDATE`/`DELETE` against `fire_assay_result`);
+  Certificate of Analysis issuance (25 tests — issuance, the
+  ASSAYED→REPORTED transition, every validation refusal including
+  cross-client isolation and anti-branching on the amendment chain, the
+  hash-verified download, and a direct proof that Postgres refuses
+  `UPDATE`/`DELETE` against `certificate` too); sample and certificate lookup
+  (9 tests — a fresh sample with no result or certificates, the current
+  result surfacing after a correction supersedes the original, every
+  certificate a sample was ever named on staying listed after an amendment, a
+  404 for each unknown id, and the `POST`/`GET` responses for one certificate
+  asserted byte-for-byte equal); sample listing (7 tests — an empty lab lists
+  nothing, a listed row carries its client and submission but deliberately
+  not its grade or certificates, newest-first ordering, `client_id`/`status`
+  filtering, and an invalid status value refused with 422 before it reaches
+  the service); flux recipe registration (9 tests — registration, the role
+  gate, a duplicate name refused, a negative reagent amount refused at the
+  Pydantic layer, the audit event); furnace batching (30 tests — sequential
+  batch numbering, opening restricted to bench roles, charging refused before
+  a batch is `CHARGING`, flux scaled correctly onto the stored crucible row,
+  a sample already `IN_ASSAY` refused a second charge, an occupied position
+  refused, an out-of-tray position refused as the domain error (not a generic
+  422), an unknown recipe/batch/sample each refused with the right error
+  type, a zero sample weight surfacing the real `FluxCalculationError`, the
+  full linear status walk with crucible status bulk-advancing at `FUSED`/
+  `CUPELLED`, firing an empty batch refused, skipping a stage refused, batch
+  detail ordering crucibles by tray position — both service-level and,
+  end-to-end through HTTP, the full open→charge→fire→complete walk and the
+  precondition/position/role refusals as real status codes).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -571,6 +702,37 @@ showed "No sample with id 999999," distinguishing the 404 case from a
 generic failure; `npm run build` and `tsc --noEmit` both passed clean
 throughout.
 
+Furnace batching verified live end to end via curl against a running server
+seeded through the same session: a client, a two-sample submission, and a
+"Standard Silicate" flux recipe (60/90/30/15/3/0 g, calibrated at 30 g) were
+registered first. An `analyst` opened a batch (**201**, `BATCH-2026-0001`,
+`status: "pending"`); charging a crucible into it before advancing to
+`CHARGING` was refused with **422** naming the batch and the exact remedy
+("open it for charging before assigning crucibles"), proven on a *second*
+batch left deliberately `PENDING` so the first batch's own happy path stayed
+uninterrupted. After `PATCH .../status {"status": "charging"}`, a sample was
+charged at position `2-3` with a `45` g portion — one and a half times the
+recipe's 30 g nominal — and every reagent in the response came back scaled by
+exactly that factor (`litharge_g: 60 → 90.0`, `soda_ash_g: 90 → 135.0`,
+`borax_g: 30 → 45.0`, `silica_g: 15 → 22.5`, `flour_g: 3 → 4.5`); charging a
+second sample into the same position `2-3` was refused with **422** naming
+the exact occupied slot. The batch was then walked through every remaining
+status in order — `in_fusion → fused → in_cupellation → cupelled →
+completed` — each `PATCH` returning **200** with the new status; `GET
+/api/batches/1` afterward showed the crucible's own status bulk-advanced to
+`"cupelled"` without a separate call, and the sample's status was `in_assay`
+(not yet `assayed` — batch completion charges and fires material, it does not
+itself produce a result). A `prep_tech` was then confirmed able to open a
+batch (**201** — bench work, same tier as charging), while an `analyst`
+attempting to register a flux recipe was refused with **403** naming
+`lab_manager, supervisor` — proving `MAY_CONFIGURE_LAB` is enforced as its
+own, narrower gate. Finally, `POST /api/fire-assay-results` was called
+against the now-`in_assay` sample with a `0.220` mg bead from the actual `45`
+g charged portion: it succeeded (**201**), computed a real grade, and moved
+the sample to `assayed` — proving Phase 1's result-entry path and Phase 2's
+batching path compose cleanly, with no conflict over who owns the sample's
+status. Demo data was truncated from the dev database afterward.
+
 ---
 
 ## Decision log
@@ -614,6 +776,13 @@ throughout.
 | 2026-08-25 | `StatusPill` **extracted and reused** for sample statuses, extending the existing three-tier colour system rather than inventing a second one | `assayed`/`reported` map to the same "good" tier `healthy` already used; `received` through `in_assay` map to the same "in progress" tier as `degraded`. Two vocabularies, one set of CSS tokens — matches this codebase's own "choose neutrals, don't default to them" discipline at the component level. |
 | 2026-08-25 | `.components` renamed to `.detail-grid` | The class was never really about "system components" — it was a dt/dd grid layout that a second, unrelated screen needed identically. A name tied to its first caller stops being honest the moment a second one arrives. |
 | 2026-08-25 | React Router's v7 future flags enabled immediately, not deferred | One line, zero behaviour change today, and it removes two console warnings that would otherwise sit in every future screenshot and demo recording of this app. |
+| 2026-08-25 | Crucible charging **bypasses** `domain.lifecycle`'s `READY_FOR_ASSAY -> IN_ASSAY` transition, the same way fire assay result entry bypasses the table | Investigated before writing code: `check_transition` is called from exactly one place in the whole codebase (`ASSAYED -> REPORTED`), so no sample can currently reach `READY_FOR_ASSAY` through the modelled path — prep-stage tracking doesn't exist yet. Routing charging through `check_transition` honestly would only work for a sample that reached `READY_FOR_ASSAY` some other way that also doesn't exist yet. |
+| 2026-08-25 | `flux_recipe_id` lives on **`Crucible`, not `Batch`** — a correction to the original roadmap sketch | One furnace load routinely fires a silicate sample beside a sulfide one; each needs its own recipe. A batch is a shared furnace slot, not a shared formula. Caught during design, before any migration was written. |
+| 2026-08-25 | A new role tier, `MAY_CONFIGURE_LAB`, defined **separately** from `MAY_MANAGE_ACCOUNTS` even though both currently name the same two roles | Defining what goes into a furnace and setting up a client's billing relationship are different kinds of authority, held by the same two roles only because this lab is small. Matches the standing precedent (`BENCH_ROLES` vs. `MAY_REJECT`, `MAY_ENTER_RESULTS` vs. `MAY_SIGN_CERTIFICATE`) of keeping distinct authority domains as distinct constants even where membership currently overlaps. |
+| 2026-08-25 | A batch's own status machine (`domain/batch_lifecycle.py`) is **strictly linear** — no branch, no way back | A batch describes a furnace run that already physically happened; unlike a sample (which can be returned for re-assay), there is no honest way to "un-fire" a batch. A re-assay charges the sample into a *new* batch instead. |
+| 2026-08-25 | `Crucible.sample_id` is `NOT NULL`; QC-material crucibles are **out of scope** for this pass | No `crm_lots` or QC-material tables exist yet. A nullable "this crucible has no sample" column with no write path to ever populate it would be exactly the kind of half-finished branch this codebase avoids. |
+| 2026-08-25 | `flux_recipe`, `batch`, `crucible` are **mutable**, joining `client`/`sample`/`instrument`'s grant tier, not append-only | A batch's and a crucible's status advance in place, matching `sample.status`; a recipe is edited in place, matching `instrument`. What must never be an `UPDATE` (a crucible's frozen charge once weighed) is a service-layer discipline, not a grant — the same split `sample.status`'s legal moves already rely on. |
+| 2026-08-25 | `Batch.batch_number` and `FluxRecipe.name` use `unique=True` on the column, not an explicit `UniqueConstraint(..., name="number")` | The first-drafted migration copied `Submission`'s literal constraint name `"number"` and failed outright on `alembic upgrade head` with `relation "number" already exists` — Postgres unique-constraint index names are unique per schema, not per table. Letting the declared naming convention derive a table-qualified name (as `Instrument.name` already did) avoids the whole collision class rather than requiring every future short literal name to be checked against every other table's. |
 
 ---
 
@@ -677,13 +846,41 @@ throughout.
 
 ## Next actions (Phase 2 — fire assay batching)
 
-Per the original roadmap: furnace batches, crucibles with position
-constraints, flux recipes with matrix-based suggestion, and QC insertion
-policy. Not started. The natural first step is the same one every phase here
-has started with — read `domain/assay.py` and the batch/crucible sketch in
-the original plan artifact, then design the domain core before the schema,
-matching how `assay.py`/`sample_id.py`/`lifecycle.py` were each written pure
-and tested before anything touched a session.
+1. ~~**Furnace batches, crucibles with position constraints, flux recipes with
+   matrix-scaled amounts.**~~ **Done 2026-08-25** — `domain/flux.py`,
+   `domain/batch_lifecycle.py`, `flux_recipes/service.py`,
+   `batches/service.py`; `POST /api/flux-recipes`, `POST /api/batches`,
+   `POST /api/batches/{id}/crucibles`, `PATCH /api/batches/{id}/status`,
+   `GET /api/batches/{id}`. 60 new tests. Verified live end to end: a
+   recipe registered, a batch opened, charging refused before `CHARGING`, a
+   crucible charged with correctly scaled reagents, a position collision
+   refused, the full furnace walk to `completed` with crucible status
+   bulk-advancing, and a fire assay result entered against the now-`in_assay`
+   sample — proving this phase composes with Phase 1 rather than
+   conflicting with it.
+2. **QC insertion policy.** No `crm_lots` or QC-material tables exist yet, and
+   `Crucible.sample_id` is `NOT NULL` — a QC crucible (a blank, a CRM, a
+   duplicate) has no row shape to occupy. Needs its own design pass: at
+   minimum a `QcMaterialType`-tagged crucible variant (already anticipated by
+   `domain/enums.py`'s `QcMaterialType` since Phase 0) and a decision about
+   whether QC insertion is enforced (a batch cannot fire without one) or
+   merely recorded.
+3. **Wire `fire_assay_result` to the crucible it came from.** Result entry
+   today still takes a raw `gold_bead_mg`/`sample_weight_g` typed directly
+   into the request, with no reference to the crucible a sample was actually
+   charged into — meaning the portion weight entered at result time is not
+   provably the same one recorded when the crucible was charged. A
+   `crucible_id` on `FireAssayResult` (or deriving the portion from the
+   crucible instead of re-entering it) is the natural next increment,
+   deliberately deferred this session to keep the vertical slice thin — see
+   the module docstring in `batches/service.py` for the current, honest
+   boundary between the two write paths.
+4. **Per-crucible weighing (`lead_button_weight_mg`, `prill_weight_mg`,
+   `parting_acid_volume_ml`) after cupellation.** `CrucibleStatus.PARTED` and
+   `.WEIGHED` exist in the vocabulary (Phase 0) but have no write path — this
+   session deliberately kept `Crucible` lean (position, flux charge, status)
+   rather than adding columns with nothing to populate them yet, matching the
+   Phase 1 discipline of not building a dead branch ahead of its use.
 
 ## Open questions
 
@@ -776,3 +973,30 @@ and tested before anything touched a session.
   needs a decision about ordering — does the hole's total depth get entered
   before or after all its samples, and can it be corrected once samples exist
   — that the drill-hole endpoint alone can't resolve.
+- **QC insertion policy.** Named in the original roadmap for Phase 2 and
+  still open — see "Next actions" above. No `crm_lots`/QC-material schema
+  exists yet.
+- **`fire_assay_result` is not wired to the crucible it came from.** A
+  result's `sample_weight_g` is typed directly into the request and is not
+  provably the same portion a crucible was actually charged with — see "Next
+  actions" above.
+- **No way to correct a batch or crucible charged in error.** The batch
+  status machine has no backward move and `Crucible` rows are never deleted
+  or amended once created (mutable at the grant level, but nothing in the
+  service layer offers an "un-charge" or "cancel a batch" operation). A
+  technician who mis-keys a position or charges the wrong sample currently
+  has no remedy through the API — only a direct database fix. Not addressed
+  because no real workflow has surfaced which correction shape (delete the
+  crucible? supersede it? reject and re-charge?) is the right one.
+- **No `GET` endpoint lists batches, or lists a sample's crucible history.**
+  `GET /api/batches/{id}` requires already knowing the id; there is no
+  `GET /api/batches` and no "which batch (if any) is this sample currently
+  in" query. Not addressed because nothing downstream has needed it yet —
+  the live verification always tracked the id from the `POST` response.
+- **Furnace tray geometry (`furnace_rows`/`furnace_columns`) is a single
+  global setting**, not per-furnace. A lab with two furnaces of different
+  sizes has no way to express that — `Batch` has no `instrument_id` at all
+  right now (dropped from the original sketch: `instrument` has no
+  registration endpoint yet, and a nullable FK nothing can ever populate
+  would have been exactly the half-finished-feature shape this codebase
+  avoids). Revisit once instrument registration exists.

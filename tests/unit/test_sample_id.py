@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from msa_lims.domain.enums import SampleType
 from msa_lims.domain.sample_id import (
     DepthInterval,
     DepthIntervalError,
@@ -13,6 +14,7 @@ from msa_lims.domain.sample_id import (
     canonical_hole_id,
     find_overlaps,
     format_hole_id,
+    label_type_conflict,
     parse_hole_id,
     parse_sample_id,
 )
@@ -164,3 +166,42 @@ class TestHoleIdCanonicalisation:
     def test_canonical_hole_id_refuses_a_malformed_label(self) -> None:
         with pytest.raises(SampleIdError):
             canonical_hole_id("not a hole")
+
+
+class TestLabelTypeCompatibility:
+    """A sample row must not contradict its own identity: a drill label
+    carries an interval and resolves to a hole, so declaring it a surface
+    medium (or the reverse) puts a row in the world that says two things."""
+
+    def test_a_drill_label_matches_the_drill_types(self) -> None:
+        identity = parse_sample_id("MSA-24-001-142.50_144.00")
+        assert label_type_conflict(identity, SampleType.CORE) is None
+        assert label_type_conflict(identity, SampleType.RC_CHIP) is None
+
+    def test_a_surface_label_matches_the_surface_types(self) -> None:
+        identity = parse_sample_id("MSA-24-SO-00417")
+        assert label_type_conflict(identity, SampleType.SOIL) is None
+        assert label_type_conflict(identity, SampleType.STREAM_SEDIMENT) is None
+        assert label_type_conflict(identity, SampleType.ROCK_CHIP) is None
+
+    def test_a_drill_label_declared_soil_is_a_conflict(self) -> None:
+        identity = parse_sample_id("MSA-24-001-142.50_144.00")
+        conflict = label_type_conflict(identity, SampleType.SOIL)
+        assert conflict is not None
+        assert "carries a drill interval" in conflict
+        assert "soil" in conflict
+
+    def test_a_core_sample_on_a_surface_label_is_a_conflict(self) -> None:
+        identity = parse_sample_id("MSA-24-SO-00417")
+        conflict = label_type_conflict(identity, SampleType.CORE)
+        assert conflict is not None
+        assert "surface label" in conflict
+
+    def test_pulp_accepts_either_shape(self) -> None:
+        """Pulp received back from an external lab may carry the sender's
+        interval-bearing label; refusing it would renumber material whose
+        identity is fixed on someone else's paperwork."""
+        drill = parse_sample_id("MSA-24-001-142.50_144.00")
+        surface = parse_sample_id("MSA-24-SO-00417")
+        assert label_type_conflict(drill, SampleType.PULP) is None
+        assert label_type_conflict(surface, SampleType.PULP) is None

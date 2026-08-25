@@ -21,7 +21,7 @@ from msa_lims.certificates.service import (
     get_pdf,
 )
 from msa_lims.db.models import Certificate
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.schemas import (
     CertificateCreate,
     CertificateOut,
@@ -68,7 +68,9 @@ def create_certificate(
 
 
 @router.get("/{certificate_id}", response_model=CertificateOut)
-def read_certificate(certificate_id: int, session: SessionDep, actor: ActorDep) -> CertificateOut:
+def read_certificate(
+    certificate_id: int, session: SessionDep, actor: InternalActorDep
+) -> CertificateOut:
     certificate = get_certificate(session, certificate_id)
     return _certificate_out(session, certificate)
 
@@ -78,7 +80,9 @@ def read_certificate(certificate_id: int, session: SessionDep, actor: ActorDep) 
     response_class=Response,
     summary="Download the signed Certificate of Analysis",
 )
-def download_certificate_pdf(certificate_id: int, session: SessionDep, actor: ActorDep) -> Response:
+def download_certificate_pdf(
+    certificate_id: int, session: SessionDep, actor: InternalActorDep
+) -> Response:
     certificate, pdf_bytes = get_pdf(session, certificate_id)
     return Response(
         content=pdf_bytes,

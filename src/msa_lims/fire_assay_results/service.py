@@ -37,7 +37,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from msa_lims.db.models import AuditEvent, FireAssayResult, LabUser, Sample
 from msa_lims.domain.assay import gravimetric_grade
@@ -77,19 +77,21 @@ def current_result(session: Session, sample_id: int) -> FireAssayResult | None:
 
     Found by exclusion rather than a stored "is_current" flag: a row is
     current exactly when no other row's ``supersedes_id`` names it, so there
-    is nothing to keep in sync when a new correction lands.
+    is nothing to keep in sync when a new correction lands. Expressed as a
+    LEFT JOIN / IS NULL anti-join against an aliased successor — the planner
+    can use indexes on the join instead of materialising every superseded id
+    in the table the way a NOT IN subquery would.
 
     Exported (not module-private) because certificate issuance needs the
     identical question answered the identical way — a certificate must
     freeze the *current* result at the moment it is signed, not just any
     result that happens to exist for the sample.
     """
-    superseded_ids = select(FireAssayResult.supersedes_id).where(
-        FireAssayResult.supersedes_id.is_not(None)
-    )
+    successor = aliased(FireAssayResult)
     return session.scalar(
         select(FireAssayResult)
-        .where(FireAssayResult.sample_id == sample_id, FireAssayResult.id.not_in(superseded_ids))
+        .outerjoin(successor, successor.supersedes_id == FireAssayResult.id)
+        .where(FireAssayResult.sample_id == sample_id, successor.id.is_(None))
         .order_by(FireAssayResult.id.desc())
     )
 

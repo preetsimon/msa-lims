@@ -19,7 +19,7 @@ first — it explains the decisions this document only tracks.
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 377 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 392 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible (including the two new furnace-batching
 migrations, checked with a full `downgrade base` / `upgrade head` round trip)
 · frontend builds and typechecks clean (TypeScript `strict` +
@@ -28,9 +28,11 @@ a client, submission, and flux recipe; open a batch; charge a crucible with
 scaled reagent amounts; fire the batch through every furnace stage to
 `completed`, watching crucible status bulk-advance; and enter a fire assay
 result against the now-`in_assay` sample, proving Phase 1 and Phase 2 compose
-without a seam. **Phase 1 — the thinnest complete thread the original roadmap
-called for — is done. Phase 2's core batching flow is done; QC insertion
-policy and crucible↔result wiring remain.**
+without a seam. A post-Phase-1 audit (see its own section below) found six
+defects, all fixed and tested; a five-item hardening pass followed it.
+**Phase 1 — the thinnest complete thread the original roadmap called
+for — is done. Phase 2's core batching flow is done; QC insertion policy
+and crucible↔result wiring remain.**
 
 ---
 
@@ -344,6 +346,74 @@ policy and crucible↔result wiring remain.**
   `status` filters exist on the service and the route today; no UI calls
   them with a value yet (see open questions).
 
+### Phase 1 audit and hardening — full-codebase review after the phase shipped
+
+A line-by-line audit of everything above — domain, services, web, auth,
+migrations, tests, frontend — ran against real Postgres probes, not just the
+existing suite (which was already green: the findings below are all things
+311 passing tests did not catch). Two groups came out of it.
+
+**Fixed during the audit** (commit `81d7d61`):
+
+1. A zero bead weight with no stated balance sensitivity produced a
+   *detected* `0 g/t` grade — exactly the below-detection-vs-zero conflation
+   `MeasuredValue` exists to prevent. Now refused at the domain layer;
+   stating the sensitivity turns the same reading into a proper non-detect.
+2. `MeasuredValue.parse` accepted `"<0"` (a non-detect bounded by nothing)
+   and `"-3"` (a negative mass fraction) as storable results. Both refused.
+3. Submission intake reported the same unregistered-hole problem once per
+   sample rather than once per hole — six samples from one missing hole
+   buried any *other* problem under six identical messages. Problems are now
+   grouped per hole; a no-project batch names all affected labels on one
+   problem.
+4. The certificate PDF drew supersession reasons and notes as single
+   unwrapped lines that silently ran off the right edge of a signed document,
+   and continuation pages had no column headers. Text is now word-wrapped to
+   the printable width using exact font metrics, and page breaks re-draw the
+   table header — byte-determinism preserved and re-proven.
+5. `make seed` referenced a `msa_lims.db.seed` module that did not exist.
+   Implemented idempotently, seeding through the same service layer the API
+   uses so seeded rows carry honest audit events.
+6. README claimed "127 tests" and "Phase 0 complete" — stale since Phase 1.
+
+**Hardening pass immediately following the audit** (same working session):
+
+7. **Label/type compatibility is enforced at intake.** Nothing stopped a
+   drill label arriving as `sample_type: soil` or a core sample labelled like
+   a stream sediment — a sample whose row contradicts its own identity, which
+   would then sit in the hole-interval index while claiming no hole work
+   applies. The rule lives pure in `domain/sample_id.py`
+   (`label_type_conflict`): CORE/RC_CHIP must parse as drill labels;
+   SOIL/STREAM_SEDIMENT/ROCK_CHIP must be surface labels; PULP is allowed
+   either shape, because pulp received back from an external lab may carry
+   the sender's interval-bearing label.
+8. **Submission/certificate numbering survives a race instead of 500-ing.**
+   Both allocators were COUNT+1 under a documented single-writer assumption;
+   two concurrent requests could both compute the same number and one dies on
+   the UNIQUE index with an unhandled IntegrityError. Allocation now retries
+   inside a savepoint (`begin_nested`) on a genuine unique violation only
+   (SQLSTATE 23505 is retried; every other IntegrityError still propagates),
+   recomputing from the live count each attempt. No schema change, and the
+   certificate path stays grant-clean — no post-insert UPDATE exists to
+   collide with append-only.
+9. **The `client` role can no longer read arbitrary lab records.**
+   `GET /api/samples`, `/api/samples/{id}`, `/api/certificates/{id}` and
+   `/api/certificates/{id}/pdf` were reachable by any authenticated actor,
+   including CLIENT — fine for staff-only use, but one forgotten check away
+   from exposure if ever fronted directly. There is still no LabUser↔Client
+   link to scope rows by, so the honest interim posture is refusal with a
+   message saying why: reads require an internal role until per-client
+   scoping exists. `GET /api/me` stays open to every authenticated role.
+10. **`GET /health`'s database probe left the event loop.** The sync
+    SQLAlchemy ping inside an `async def` blocked the loop for the round
+    trip; it now runs via `asyncio.to_thread`.
+11. **`current_result` is an anti-join, scoped to its sample.** The NOT-IN
+    subquery previously scanned every supersession in the whole table for
+    every lookup. It is now a correlated LEFT JOIN / IS NULL against an
+    aliased successor, letting the planner use indexes instead of materialising
+    the exclusion set. Semantics unchanged and re-proven by the existing
+    supersession tests plus a new long-chain test.
+
 ### Fire assay batching — `src/msa_lims/domain/flux.py`, `domain/batch_lifecycle.py`, `flux_recipes/`, `batches/`
 - **`domain/flux.py`** — pure Decimal scaling from a flux recipe's nominal
   charge to what a technician actually weighs out, mirroring `domain/assay.py`'s
@@ -539,20 +609,23 @@ policy and crucible↔result wiring remain.**
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 377
-- **Unit** (178): units and dimensions, censored values, assay arithmetic,
-  sample labels and intervals (including the `format_hole_id`/
-  `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
-  sample state machine, OIDC token verification against a real self-signed
-  keypair, the auth dependency exercised through a real FastAPI app
-  (`TestClient`) across dev-header and OIDC modes, Certificate of Analysis PDF
-  byte-determinism (identical content twice → identical bytes; different
-  content → different bytes; an 80-sample page-break case), the grade-
-  rounding fix (a non-terminating division rounds to three decimal places
-  under `ROUND_HALF_EVEN`; a clean value is unaffected; a non-detect's
-  detection limit is never rounded; the stored full-precision value is
-  untouched by rendering) — and, new this phase, flux charge scaling (7 —
-  the exact-nominal-weight identity, doubling and halving the sample weight,
+### Tests — 392
+- **Unit** (184): units and dimensions, censored values (including the audit's
+  new parse refusals — a negative reading and a `<0` limit are rejected, not
+  stored), assay arithmetic (including the zero-bead-without-sensitivity
+  refusal and its non-detect remedy), sample labels and intervals (including
+  the `format_hole_id`/`canonical_hole_id` identity with a parsed sample's own
+  `hole_id`, and the label↔type compatibility rule), the sample state machine,
+  OIDC token verification against a real self-signed keypair, the auth
+  dependency exercised through a real FastAPI app (`TestClient`) across
+  dev-header and OIDC modes, Certificate of Analysis PDF byte-determinism
+  (identical content twice → identical bytes; different content → different
+  bytes; an 80-sample page-break case; a wrapped paragraph-long supersession
+  reason and notes block that stays deterministic), the grade-rounding fix
+  (a non-terminating division rounds to three decimal places under
+  `ROUND_HALF_EVEN`; a clean value is unaffected; a non-detect's detection
+  limit is never rounded; the stored full-precision value is untouched by
+  rendering) — and, new this phase, flux charge scaling (7 — the exact-nominal-weight identity, doubling and halving the sample weight,
   an unused reagent staying zero, non-positive inputs refused) and the batch
   state machine (13 — the full linear walk, every skip and every backward
   move refused, an insufficiently-privileged role refused, `FUSED`/`CUPELLED`
@@ -562,29 +635,35 @@ policy and crucible↔result wiring remain.**
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (182, real Postgres): the append-only grants proven against
+- **Integration** (191, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
-  service directly and through the real HTTP app (26 tests); client and
+  service directly and through the real HTTP app (28 tests — including the
+  audit's label↔type refusals and a pre-occupied submission number being
+  skipped by the savepoint retry); client and
   project registration (21 tests); drill hole registration (16 tests,
   including the hole-canonicalisation-matches-a-drill-sample proof); fire
-  assay result entry (26 tests — the computed grade, the ASSAYED transition,
-  every supersession refusal including anti-branching, and a direct proof
-  that Postgres refuses `UPDATE`/`DELETE` against `fire_assay_result`);
-  Certificate of Analysis issuance (25 tests — issuance, the
+  assay result entry (27 tests — the computed grade, the ASSAYED transition,
+  every supersession refusal including anti-branching, `current_result`
+  answering correctly over a three-link supersession chain as an anti-join,
+  and a direct proof that Postgres refuses `UPDATE`/`DELETE` against
+  `fire_assay_result`);
+  Certificate of Analysis issuance (26 tests — issuance, the
   ASSAYED→REPORTED transition, every validation refusal including
-  cross-client isolation and anti-branching on the amendment chain, the
-  hash-verified download, and a direct proof that Postgres refuses
+  cross-client isolation and anti-branching on the amendment chain, a
+  pre-occupied certificate number skipped with its PDF re-rendered to match,
+  the hash-verified download, and a direct proof that Postgres refuses
   `UPDATE`/`DELETE` against `certificate` too); sample and certificate lookup
-  (9 tests — a fresh sample with no result or certificates, the current
+  (13 tests — a fresh sample with no result or certificates, the current
   result surfacing after a correction supersedes the original, every
   certificate a sample was ever named on staying listed after an amendment, a
-  404 for each unknown id, and the `POST`/`GET` responses for one certificate
-  asserted byte-for-byte equal); sample listing (7 tests — an empty lab lists
+  404 for each unknown id, the `POST`/`GET` responses for one certificate
+  asserted byte-for-byte equal, and the `client` role refused with 403 on
+  every lookup while internal roles read normally); sample listing (9 tests — an empty lab lists
   nothing, a listed row carries its client and submission but deliberately
   not its grade or certificates, newest-first ordering, `client_id`/`status`
-  filtering, and an invalid status value refused with 422 before it reaches
-  the service); flux recipe registration (9 tests — registration, the role
+  filtering, an invalid status value refused with 422 before it reaches
+  the service, and the `client` role refused); flux recipe registration (9 tests — registration, the role
   gate, a duplicate name refused, a negative reagent amount refused at the
   Pydantic layer, the audit event); furnace batching (30 tests — sequential
   batch numbering, opening restricted to bench roles, charging refused before
@@ -783,6 +862,10 @@ status. Demo data was truncated from the dev database afterward.
 | 2026-08-25 | `Crucible.sample_id` is `NOT NULL`; QC-material crucibles are **out of scope** for this pass | No `crm_lots` or QC-material tables exist yet. A nullable "this crucible has no sample" column with no write path to ever populate it would be exactly the kind of half-finished branch this codebase avoids. |
 | 2026-08-25 | `flux_recipe`, `batch`, `crucible` are **mutable**, joining `client`/`sample`/`instrument`'s grant tier, not append-only | A batch's and a crucible's status advance in place, matching `sample.status`; a recipe is edited in place, matching `instrument`. What must never be an `UPDATE` (a crucible's frozen charge once weighed) is a service-layer discipline, not a grant — the same split `sample.status`'s legal moves already rely on. |
 | 2026-08-25 | `Batch.batch_number` and `FluxRecipe.name` use `unique=True` on the column, not an explicit `UniqueConstraint(..., name="number")` | The first-drafted migration copied `Submission`'s literal constraint name `"number"` and failed outright on `alembic upgrade head` with `relation "number" already exists` — Postgres unique-constraint index names are unique per schema, not per table. Letting the declared naming convention derive a table-qualified name (as `Instrument.name` already did) avoids the whole collision class rather than requiring every future short literal name to be checked against every other table's. |
+| 2026-08-25 | A zero bead weight is **refused** unless `balance_sensitivity_mg` is stated (found in audit) | A bare zero cannot be told apart from a reading below what the balance resolves. Reporting it as detected `0 g/t` flattens the exact distinction `MeasuredValue` exists to keep; stating the sensitivity converts the identical reading into a non-detect at the grade it corresponds to. The refusal names the remedy rather than guessing a convention. |
+| 2026-08-25 | Sample labels and sample types are **cross-checked at intake** (found in audit) | A drill label arriving as `soil` produces a row that contradicts its own identity — interval columns populated, hole resolved, while claiming a medium that has neither. CORE/RC_CHIP must parse as drill labels; SOIL/STREAM_SEDIMENT/ROCK_CHIP must be surface; PULP takes either shape because externally-received pulp may carry its sender's interval label. Pure function in `domain/sample_id.py`, so the rule is testable without a session like every other intake rule. |
+| 2026-08-25 | Sequential document numbers **retry on unique violation inside a savepoint** rather than trusting COUNT+1 alone (audit hardening) | COUNT+1 is correct only under single-writer; two concurrent requests could both compute the same number and one would 500 on the UNIQUE index. Retrying in `begin_nested()` recomputes from the live count with no schema change and no sequence to grant; only SQLSTATE 23505 retries, so real constraint bugs still surface loudly. Post-insert UPDATE was never an option: `certificate` holds no UPDATE grant, append-only by design. |
+| 2026-08-25 | Lookup endpoints require an **internal role** until per-client row scoping exists (audit hardening) | Any authenticated actor — including CLIENT — could read any sample or certificate by id. With no LabUser↔Client link to scope rows by, the honest interim posture is refusal with a message naming why, not open access justified by "nobody malicious uses the demo." `GET /api/me` stays reachable by every authenticated role; it is how you find out what you are. |
 
 ---
 
@@ -916,13 +999,16 @@ status. Demo data was truncated from the dev database afterward.
   nothing flags the certificate as needing an amendment — a person has to
   notice and issue one manually (which works, and is tested), but the system
   does not surface the staleness itself.
-- **No client-scoped authorisation on certificate download.** Any
-  authenticated actor — including the `client` role — can `GET` any
-  certificate's PDF by id. There is no per-client row-level scoping anywhere
-  in this system yet; a real client portal would need it before this
-  endpoint could be exposed to clients directly rather than only to lab
-  staff. Now applies to the new `GET /api/samples/{id}` and `GET
-  /api/certificates/{id}` too — same gap, not newly introduced by them.
+- **No per-client row scoping on reads — the `client` role is refused
+  outright meanwhile.** The audit's interim hardening: since there is no
+  LabUser↔Client link to scope rows by, `GET /api/samples`,
+  `/api/samples/{id}`, `/api/certificates/{id}` and `/api/certificates/{id}/pdf`
+  now require an internal role and answer the external role with **403** and a
+  message naming why (see `web/deps.py`'s `internal_actor`). That closes the
+  "any authenticated actor can read any grade by id" hole without pretending
+  scoping exists. A real client portal still needs the schema work: a durable
+  LabUser↔Client association, then replacing `internal_actor` with a
+  row-scoped dependency on exactly these endpoints.
 - ~~**No listing endpoint anywhere.**~~ **Partly resolved 2026-08-25** —
   `GET /api/samples` exists now, with `client_id`/`status` filters. Still
   missing: "every certificate for client Y" and "every result for a sample"

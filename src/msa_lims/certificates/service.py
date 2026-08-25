@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from msa_lims.certificates.pdf import CertificateContent, CertifiedSample, render_pdf
@@ -42,6 +42,7 @@ from msa_lims.db.models import (
     LabUser,
     Sample,
 )
+from msa_lims.db.numbering import count_with_prefix, insert_with_unique_number
 from msa_lims.domain.enums import MAY_SIGN_CERTIFICATE, Role, SampleStatus
 from msa_lims.domain.lifecycle import InsufficientRoleError, check_transition
 from msa_lims.domain.values import MeasuredValue
@@ -210,40 +211,50 @@ class CertificateService:
                 )
                 sample.status = SampleStatus.REPORTED
 
-        certificate_number = self._allocate_number(data.issued_at)
-        pdf_bytes = render_pdf(
-            CertificateContent(
-                certificate_number=certificate_number,
-                client_name=client.name,
+        # The PDF embeds the certificate number, so it is rendered inside the
+        # build step: a retried attempt renders a fresh document with its own
+        # number, and the stored bytes always match the stored number.
+        def build_certificate(number: str) -> Certificate:
+            pdf_bytes = render_pdf(
+                CertificateContent(
+                    certificate_number=number,
+                    client_name=client.name,
+                    issued_at=data.issued_at,
+                    issued_by_name=issued_by.full_name,
+                    samples=tuple(
+                        CertifiedSample(
+                            sample_id=sample.sample_id,
+                            method=result.method.value,
+                            au_display=_display_grade(measured_value(result)),
+                        )
+                        for sample, result in zip(samples, results, strict=True)
+                    ),
+                    supersedes_number=superseded.certificate_number if superseded else None,
+                    superseded_reason=data.superseded_reason,
+                    notes=data.notes,
+                )
+            )
+            return Certificate(
+                certificate_number=number,
+                client_id=client.id,
+                issued_by_id=issued_by.id,
                 issued_at=data.issued_at,
-                issued_by_name=issued_by.full_name,
-                samples=tuple(
-                    CertifiedSample(
-                        sample_id=sample.sample_id,
-                        method=result.method.value,
-                        au_display=_display_grade(measured_value(result)),
-                    )
-                    for sample, result in zip(samples, results, strict=True)
-                ),
-                supersedes_number=superseded.certificate_number if superseded else None,
+                supersedes_id=data.supersedes_id,
                 superseded_reason=data.superseded_reason,
+                pdf_bytes=pdf_bytes,
+                pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
                 notes=data.notes,
             )
-        )
 
-        certificate = Certificate(
-            certificate_number=certificate_number,
-            client_id=client.id,
-            issued_by_id=issued_by.id,
-            issued_at=data.issued_at,
-            supersedes_id=data.supersedes_id,
-            superseded_reason=data.superseded_reason,
-            pdf_bytes=pdf_bytes,
-            pdf_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
-            notes=data.notes,
+        # Same savepoint-retry discipline as submission numbering — see
+        # db/numbering.py. The certificate row is append-only at the grant
+        # level, so the number must be right before the INSERT; there is no
+        # UPDATE to fall back on.
+        certificate = insert_with_unique_number(
+            self._session,
+            build_certificate,
+            lambda attempt: self._allocate_number(data.issued_at, attempt),
         )
-        self._session.add(certificate)
-        self._session.flush()
 
         for sample, result in zip(samples, results, strict=True):
             self._session.add(
@@ -325,20 +336,14 @@ class CertificateService:
 
         return superseded
 
-    def _allocate_number(self, issued_at: datetime) -> str:
+    def _allocate_number(self, issued_at: datetime, attempt: int = 0) -> str:
         """A certificate number in the shape ``COA-2026-0001``.
 
         Same provisional-numbering caveat as ``submission_number`` — see
-        ``submissions/service.py`` — and the identical single-writer
-        assumption.
+        ``submissions/service.py``. The ``attempt`` offset and the savepoint
+        retry in :func:`msa_lims.db.numbering.insert_with_unique_number` are
+        what make a concurrent collision a recompute instead of a 500.
         """
         prefix = f"COA-{issued_at.year}-"
-        count = (
-            self._session.scalar(
-                select(func.count())
-                .select_from(Certificate)
-                .where(Certificate.certificate_number.like(f"{prefix}%"))
-            )
-            or 0
-        )
-        return f"{prefix}{count + 1:04d}"
+        count = count_with_prefix(self._session, Certificate, "certificate_number", prefix)
+        return f"{prefix}{count + 1 + attempt:04d}"

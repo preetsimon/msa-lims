@@ -19,11 +19,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from msa_lims.clients.service import ClientNotFoundError
 from msa_lims.db.models import AuditEvent, Client, DrillHole, LabUser, Project, Sample, Submission
+from msa_lims.db.numbering import count_with_prefix, insert_with_unique_number
 from msa_lims.domain.enums import Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
 from msa_lims.domain.sample_id import (
@@ -31,6 +32,7 @@ from msa_lims.domain.sample_id import (
     SampleIdentity,
     SampleIdError,
     find_overlaps,
+    label_type_conflict,
     parse_sample_id,
 )
 
@@ -132,21 +134,29 @@ class SubmissionService:
         if problems:
             raise SubmissionValidationError(problems)
 
-        submission = Submission(
-            submission_number=self._allocate_number(data.received_at),
-            client_id=client.id,
-            project_id=project.id if project else None,
-            client_reference=data.client_reference,
-            purchase_order=data.purchase_order,
-            received_at=data.received_at,
-            received_by_id=received_by.id,
-            declared_sample_count=data.declared_sample_count,
-            rush=data.rush,
-            requested_tat_days=data.requested_tat_days,
-            comments=data.comments,
+        def build_submission(number: str) -> Submission:
+            return Submission(
+                submission_number=number,
+                client_id=client.id,
+                project_id=project.id if project else None,
+                client_reference=data.client_reference,
+                purchase_order=data.purchase_order,
+                received_at=data.received_at,
+                received_by_id=received_by.id,
+                declared_sample_count=data.declared_sample_count,
+                rush=data.rush,
+                requested_tat_days=data.requested_tat_days,
+                comments=data.comments,
+            )
+
+        # COUNT+1 allocation is only single-writer-safe; the savepoint retry in
+        # the helper turns a concurrent collision into a recompute instead of
+        # an IntegrityError 500. See db/numbering.py for why not a sequence.
+        submission = insert_with_unique_number(
+            self._session,
+            build_submission,
+            lambda attempt: self._allocate_number(data.received_at, attempt),
         )
-        self._session.add(submission)
-        self._session.flush()  # need submission.id for the samples and the audit event
 
         self._audit(
             "submission",
@@ -203,6 +213,10 @@ class SubmissionService:
                 identity = parse_sample_id(item.sample_id)
             except SampleIdError as exc:
                 problems.append(str(exc))
+                continue
+            conflict = label_type_conflict(identity, item.sample_type)
+            if conflict is not None:
+                problems.append(conflict)
                 continue
             parsed.append((item, identity))
         return parsed, problems
@@ -310,28 +324,20 @@ class SubmissionService:
 
     # -- writes -----------------------------------------------------------
 
-    def _allocate_number(self, received_at: datetime) -> str:
+    def _allocate_number(self, received_at: datetime, attempt: int = 0) -> str:
         """A submission number in the shape ``SUB-2026-0841``.
 
         **Provisional.** The real numbering convention is an open question —
         see PROGRESS.md — and this is a placeholder good enough to demonstrate
         the shape of the system: a per-year count of existing submissions,
-        incremented. It is correct only under the single-writer assumption
-        already documented for this schema's primary keys (see
-        :data:`msa_lims.db.base.IdPk`); it is not safe against two concurrent
-        submissions racing for the same number, which a real front desk would
-        eventually do.
+        incremented. The ``attempt`` offset steps past numbers a concurrent
+        writer took between this COUNT and the INSERT; the savepoint retry in
+        :func:`msa_lims.db.numbering.insert_with_unique_number` is what makes
+        that safe rather than hopeful.
         """
         prefix = f"SUB-{received_at.year}-"
-        count = (
-            self._session.scalar(
-                select(func.count())
-                .select_from(Submission)
-                .where(Submission.submission_number.like(f"{prefix}%"))
-            )
-            or 0
-        )
-        return f"{prefix}{count + 1:04d}"
+        count = count_with_prefix(self._session, Submission, "submission_number", prefix)
+        return f"{prefix}{count + 1 + attempt:04d}"
 
     def _audit(
         self,

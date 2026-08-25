@@ -11,6 +11,7 @@ went down.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 import httpx
@@ -39,7 +40,10 @@ class HealthResponse(BaseModel):
 
 @router.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    database = _check_database()
+    # The database probe is synchronous SQLAlchemy; run it on a worker thread
+    # so a slow or unreachable database cannot stall the event loop (and every
+    # other request behind it) for the length of the connection timeout.
+    database = await asyncio.to_thread(_check_database)
     sentinel = await _check_sentinel()
 
     if database.status != "ok":

@@ -48,6 +48,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 MANAGER = {"X-Actor": "manager@lab", "X-Actor-Role": "lab_manager"}
 ANALYST = {"X-Actor": "analyst@lab", "X-Actor-Role": "analyst"}
+CLIENT = {"X-Actor": "client@example.com", "X-Actor-Role": "client"}
 
 
 @pytest.fixture
@@ -174,6 +175,43 @@ class TestIssuingACertificate:
 
 
 class TestReadingACertificate:
+    def test_the_client_role_cannot_read_certificates(
+        self, client: TestClient, assayed_sample_and_client: tuple[int, int]
+    ) -> None:
+        """No LabUser↔Client link exists to scope rows by, so the external
+        role is refused on every lookup until a client portal adds real
+        per-client authorisation."""
+        _client_id, sample_id = assayed_sample_and_client
+        issued = client.post(
+            "/api/certificates",
+            json={
+                "client_id": _client_id,
+                "sample_ids": [sample_id],
+                "issued_at": "2026-08-24T15:00:00Z",
+            },
+            headers=MANAGER,
+        ).json()
+
+        metadata = client.get(f"/api/certificates/{issued['id']}", headers=CLIENT)
+        assert metadata.status_code == 403
+        pdf = client.get(f"/api/certificates/{issued['id']}/pdf", headers=CLIENT)
+        assert pdf.status_code == 403
+
+    def test_an_internal_role_can_still_read(
+        self, client: TestClient, assayed_sample_and_client: tuple[int, int]
+    ) -> None:
+        client_id, sample_id = assayed_sample_and_client
+        issued = client.post(
+            "/api/certificates",
+            json={
+                "client_id": client_id,
+                "sample_ids": [sample_id],
+                "issued_at": "2026-08-24T15:00:00Z",
+            },
+            headers=MANAGER,
+        ).json()
+        assert client.get(f"/api/certificates/{issued['id']}", headers=ANALYST).status_code == 200
+
     def test_metadata_matches_the_issuance_response(
         self, client: TestClient, assayed_sample_and_client: tuple[int, int]
     ) -> None:

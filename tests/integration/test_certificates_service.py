@@ -27,6 +27,7 @@ from msa_lims.certificates.service import (
 from msa_lims.clients.service import ClientNotFoundError
 from msa_lims.db.models import (
     AuditEvent,
+    Certificate,
     CertificateResult,
     Client,
     LabUser,
@@ -529,3 +530,40 @@ class TestAppendOnly:
             app_session.execute(
                 text("DELETE FROM certificate WHERE id = :id"), {"id": certificate.id}
             )
+
+
+class TestNumberingSurvivesACollision:
+    """The certificate row is append-only at the grant level, so the number
+    must be right before the INSERT. If another writer already took the
+    number this request computes, the savepoint retry must skip to the next
+    free number — and re-render the PDF with it."""
+
+    def test_a_taken_certificate_number_is_skipped(
+        self,
+        app_session: Session,
+        manager: LabUser,
+        a_client: Client,
+        an_assayed_sample: Sample,
+    ) -> None:
+        occupied = Certificate(
+            certificate_number="COA-2026-0001",
+            client_id=a_client.id,
+            issued_by_id=manager.id,
+            issued_at=datetime(2026, 8, 24, 14, 0, tzinfo=UTC),
+            pdf_bytes=b"%PDF-occupied",
+            pdf_sha256="0" * 64,
+        )
+        app_session.add(occupied)
+        app_session.flush()
+
+        service = CertificateService(app_session)
+        certificate = service.create(
+            cert_input(client_id=a_client.id, sample_ids=(an_assayed_sample.id,)),
+            issued_by=manager,
+            actor_role=Role.LAB_MANAGER,
+        )
+        app_session.flush()
+        assert certificate.certificate_number == "COA-2026-0002"
+        # The stored document carries the number actually stored, not the one
+        # the first allocation attempt computed.
+        assert b"COA-2026-0002" in certificate.pdf_bytes

@@ -15,7 +15,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, Client, DrillHole, LabUser, Project, Sample
+from msa_lims.db.models import (
+    AuditEvent,
+    Client,
+    DrillHole,
+    LabUser,
+    Project,
+    Sample,
+    Submission,
+)
 from msa_lims.domain.enums import Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import InsufficientRoleError
 from msa_lims.submissions.service import (
@@ -492,3 +500,64 @@ class TestAuditTrail:
             )
         ).all()
         assert len(sample_events) == 2
+
+
+class TestLabelTypeCompatibility:
+    def test_a_drill_label_declared_soil_is_refused(
+        self, service: SubmissionService, analyst: LabUser, a_client: Client
+    ) -> None:
+        with pytest.raises(SubmissionValidationError, match="carries a drill interval"):
+            service.create(
+                submission_input(
+                    client_id=a_client.id,
+                    samples=(SampleInput("MSA-24-001-142.50_144.00", SampleType.SOIL),),
+                ),
+                received_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_core_sample_on_a_surface_label_is_refused(
+        self, service: SubmissionService, analyst: LabUser, a_client: Client
+    ) -> None:
+        with pytest.raises(SubmissionValidationError, match="surface label"):
+            service.create(
+                submission_input(
+                    client_id=a_client.id,
+                    samples=(SampleInput("MSA-24-SO-00417", SampleType.CORE),),
+                ),
+                received_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+
+class TestNumberingSurvivesACollision:
+    """COUNT+1 allocation is only single-writer-safe. If another writer has
+    already taken the number this request computes, the savepoint retry in
+    db/numbering.py must skip to the next free number — not 500."""
+
+    def test_a_taken_submission_number_is_skipped(
+        self,
+        app_session: Session,
+        service: SubmissionService,
+        analyst: LabUser,
+        a_client: Client,
+    ) -> None:
+        # Occupy the next number the allocator would compute, as a concurrent
+        # writer would have.
+        occupied = Submission(
+            submission_number="SUB-2026-0001",
+            client_id=a_client.id,
+            received_at=datetime(2026, 8, 24, tzinfo=UTC),
+        )
+        app_session.add(occupied)
+        app_session.flush()
+
+        submission = service.create(
+            submission_input(
+                client_id=a_client.id, samples=(SampleInput("MSA-24-SO-00417", SampleType.SOIL),)
+            ),
+            received_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert submission.submission_number == "SUB-2026-0002"

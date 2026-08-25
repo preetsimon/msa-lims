@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from msa_lims.domain.enums import SampleType
+
 #: ``MSA-24-001-142.50_144.00`` — property, two-digit program year, hole number,
 #: then the interval. The interval separator is an underscore rather than a
 #: second hyphen so that splitting on "-" cannot mistake a depth for a hole.
@@ -229,6 +231,44 @@ def find_overlaps(
             if interval.overlaps(other):
                 conflicts.append((label, other_label))
     return conflicts
+
+
+#: Types whose identity is a hole and an interval down it.
+_DRILL_TYPES: frozenset[SampleType] = frozenset({SampleType.CORE, SampleType.RC_CHIP})
+
+#: Surface media: located by coordinates or a sequence, never by depth.
+_SURFACE_TYPES: frozenset[SampleType] = frozenset(
+    {SampleType.SOIL, SampleType.STREAM_SEDIMENT, SampleType.ROCK_CHIP}
+)
+
+
+def label_type_conflict(identity: SampleIdentity, sample_type: SampleType) -> str | None:
+    """Why a label's shape contradicts its declared type, or ``None`` if none.
+
+    A drill label arriving as ``soil`` produces a row that contradicts its own
+    identity — interval columns populated, hole resolved — while claiming a
+    medium that has neither. The check lives here because the label shapes
+    live here, and like everything else in this module it is pure: the intake
+    service collects the returned reason into its problem list.
+
+    ``PULP`` matches either shape on purpose. Pulp received back from an
+    external lab may legitimately carry the sender's interval-bearing label,
+    and refusing it would mean renumbering material whose identity is already
+    fixed on someone else's paperwork.
+    """
+    if sample_type in _DRILL_TYPES and not identity.is_drill_sample:
+        return (
+            f"{identity.raw} parses as a surface label but was declared "
+            f"{sample_type.value}; a {sample_type.value} comes from a drill hole and needs "
+            "a drill label like 'MSA-24-001-142.50_144.00'"
+        )
+    if sample_type in _SURFACE_TYPES and identity.is_drill_sample:
+        return (
+            f"{identity.raw} carries a drill interval but was declared {sample_type.value}; "
+            f"a {sample_type.value} is a surface medium and needs a surface label like "
+            "'MSA-24-SO-00417'"
+        )
+    return None
 
 
 def _decimal(text: str) -> Decimal:

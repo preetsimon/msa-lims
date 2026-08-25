@@ -23,6 +23,7 @@ from msa_lims.fire_assay_results.service import (
     FireAssayResultService,
     FireAssayResultValidationError,
     SampleNotFoundError,
+    current_result,
 )
 
 pytestmark = pytest.mark.integration
@@ -410,3 +411,45 @@ class TestAppendOnly:
             app_session.execute(
                 text("DELETE FROM fire_assay_result WHERE id = :id"), {"id": result.id}
             )
+
+
+class TestCurrentResultQuery:
+    """`current_result` is the one definition of "the sample's grade" that
+    result entry, certificate issuance, and the lookup screens all share.
+    Expressed as an anti-join, it must still answer correctly over a chain
+    of any length."""
+
+    def test_a_three_link_chain_reports_only_its_head(
+        self, app_session: Session, analyst: LabUser, supervisor: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        first = service.create(
+            result_input(sample_id=a_sample.id, gold_bead_mg=Decimal("0.150")),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        second = service.create(
+            result_input(
+                sample_id=a_sample.id,
+                gold_bead_mg=Decimal("0.160"),
+                supersedes_id=first.id,
+                superseded_reason="re-weighed once",
+            ),
+            analyst=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        third = service.create(
+            result_input(
+                sample_id=a_sample.id,
+                gold_bead_mg=Decimal("0.170"),
+                supersedes_id=second.id,
+                superseded_reason="re-weighed twice",
+            ),
+            analyst=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        app_session.flush()
+
+        current = current_result(app_session, a_sample.id)
+        assert current is not None
+        assert current.id == third.id

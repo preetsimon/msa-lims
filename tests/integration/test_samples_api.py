@@ -48,6 +48,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 MANAGER = {"X-Actor": "manager@lab", "X-Actor-Role": "lab_manager"}
 ANALYST = {"X-Actor": "analyst@lab", "X-Actor-Role": "analyst"}
+CLIENT = {"X-Actor": "client@example.com", "X-Actor-Role": "client"}
 
 
 @pytest.fixture
@@ -74,6 +75,24 @@ def received_sample_id(client: TestClient, registered_client_id: int) -> int:
 
 
 class TestReadingASample:
+    def test_the_client_role_cannot_browse_lab_records(
+        self, client: TestClient, received_sample_id: int
+    ) -> None:
+        """There is no LabUser↔Client link to scope rows by yet, so an
+        open read would let any client account read any other client's
+        grades by id. Until per-client scoping exists, the external role is
+        refused outright."""
+        listing = client.get("/api/samples", headers=CLIENT)
+        assert listing.status_code == 403
+        detail = client.get(f"/api/samples/{received_sample_id}", headers=CLIENT)
+        assert detail.status_code == 403
+
+    def test_an_internal_role_can_still_read(
+        self, client: TestClient, received_sample_id: int
+    ) -> None:
+        assert client.get("/api/samples", headers=ANALYST).status_code == 200
+        assert client.get(f"/api/samples/{received_sample_id}", headers=ANALYST).status_code == 200
+
     def test_a_freshly_received_sample_has_no_result_and_no_certificates(
         self, client: TestClient, received_sample_id: int
     ) -> None:

@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from msa_lims.db.models import Client, DrillHole, Project, Sample, Submission
+from msa_lims.db.models import Client, DrillHole, FireAssayResult, Project, Sample, Submission
 from msa_lims.domain.enums import SampleType
 
 
@@ -195,4 +195,70 @@ class SubmissionOut(BaseModel):
             received_at=submission.received_at,
             declared_sample_count=submission.declared_sample_count,
             samples=[SampleOut.from_model(sample) for sample in submission.samples],
+        )
+
+
+class MeasuredValueOut(BaseModel):
+    """Mirrors ``frontend/src/types.ts``'s ``MeasuredValue`` exactly, so the
+    same ``formatMeasured`` helper renders a non-detect correctly the moment
+    a screen exists to show one — a censored value is never a null string
+    quietly standing in for zero."""
+
+    value: str | None
+    detection_limit: str | None
+    censored: bool
+    unit: str
+
+
+class FireAssayResultCreate(BaseModel):
+    sample_id: int
+    gold_bead_mg: Decimal = Field(ge=0, description="Bead weight after parting — gold alone.")
+    sample_weight_g: Decimal = Field(gt=0)
+    balance_sensitivity_mg: Decimal | None = Field(default=None, gt=0)
+    analysed_at: datetime = Field(
+        description="When the weighing happened, not when it was entered."
+    )
+    notes: str | None = None
+    supersedes_id: int | None = Field(
+        default=None, description="Set to correct an existing result."
+    )
+    superseded_reason: str | None = Field(
+        default=None, description="Required when supersedes_id is set."
+    )
+
+
+class FireAssayResultOut(BaseModel):
+    id: int
+    sample_id: int
+    method: str
+    gold_bead_mg: Decimal
+    sample_weight_g: Decimal
+    balance_sensitivity_mg: Decimal | None
+    au: MeasuredValueOut
+    analysed_at: datetime
+    supersedes_id: int | None
+    superseded_reason: str | None
+    notes: str | None
+
+    @classmethod
+    def from_model(cls, result: FireAssayResult) -> FireAssayResultOut:
+        return cls(
+            id=result.id,
+            sample_id=result.sample_id,
+            method=result.method.value,
+            gold_bead_mg=result.gold_bead_mg,
+            sample_weight_g=result.sample_weight_g,
+            balance_sensitivity_mg=result.balance_sensitivity_mg,
+            au=MeasuredValueOut(
+                value=None if result.au_value is None else str(result.au_value),
+                detection_limit=(
+                    None if result.au_detection_limit is None else str(result.au_detection_limit)
+                ),
+                censored=result.au_censored,
+                unit=result.au_unit,
+            ),
+            analysed_at=result.analysed_at,
+            supersedes_id=result.supersedes_id,
+            superseded_reason=result.superseded_reason,
+            notes=result.notes,
         )

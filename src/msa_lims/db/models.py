@@ -1,9 +1,10 @@
 """The persistent model.
 
-Scope note: this is the **spine** — the entities a sample needs to exist and be
-found. Preparation, batching, results and certificates arrive in later phases
-and are deliberately absent rather than stubbed, so that no table here is shaped
-by a guess about a workflow that has not been built.
+Scope note: this is the **spine** — the entities a sample needs to exist, be
+found, and (as of Phase 1's gravimetric fire assay result) be assayed. Prep
+stage tracking, furnace batching, and certificates are still absent rather
+than stubbed, so that no table here is shaped by a guess about a workflow that
+has not been built.
 
 Three conventions run through everything below and are worth reading once:
 
@@ -41,6 +42,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from msa_lims.db.base import Base, IdPk, TimestampMixin
 from msa_lims.domain.enums import (
+    AssayMethod,
     InstrumentStatus,
     InstrumentType,
     Role,
@@ -350,3 +352,66 @@ class AuditEvent(Base, TimestampMixin):
     happened to trigger it."""
     actor_ip: Mapped[str | None] = mapped_column(String(45))
     """45 characters holds an IPv6 address with an IPv4 tail."""
+
+
+class FireAssayResult(Base, TimestampMixin):
+    """One gravimetric fire assay result.
+
+    **Append-only, enforced by database grants** — same mechanism as
+    ``audit_event``. A corrected result is a new row whose ``supersedes_id``
+    points at the row it corrects, with a required ``superseded_reason``,
+    never an ``UPDATE`` to the original. Only the row nothing else supersedes
+    is *current* for a sample; the service layer refuses to supersede a row
+    that has already been superseded, so a chain cannot branch (mirrors QC
+    Sentinel's rule against double-replacement in a re-assay chain).
+
+    The raw weighings are stored alongside the computed grade, not only the
+    grade — ``gold_bead_mg`` and ``sample_weight_g`` are what
+    :func:`msa_lims.domain.assay.gravimetric_grade` was actually called with,
+    so the number on a certificate is reproducible from a weighing years
+    later, not just asserted.
+
+    Only ``FIRE_ASSAY_GRAVIMETRIC`` is entered through this table's current
+    write path (see ``fire_assay_results/service.py``); ``method`` stores the
+    full vocabulary because AAS and ICP-MS are real methods this schema
+    already names, even though nothing writes them yet.
+
+    ``analysed_at`` is instrument/bench wall-clock time, distinct from
+    ``created_at`` — see the ``TimestampMixin`` docstring in ``db/base.py``
+    for why the two are never conflated.
+    """
+
+    __tablename__ = "fire_assay_result"
+    __table_args__ = (
+        CheckConstraint(
+            "supersedes_id IS NULL OR "
+            "(superseded_reason IS NOT NULL AND length(trim(superseded_reason)) > 0)",
+            name="supersession_states_reason",
+        ),
+        CheckConstraint("sample_weight_g > 0", name="sample_weight_positive"),
+        CheckConstraint("gold_bead_mg >= 0", name="bead_weight_non_negative"),
+    )
+
+    id: Mapped[IdPk]
+    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    method: Mapped[AssayMethod] = mapped_column(_enum(AssayMethod, "assay_method"))
+
+    gold_bead_mg: Mapped[Decimal] = mapped_column(Numeric)
+    sample_weight_g: Mapped[Decimal] = mapped_column(Numeric)
+    balance_sensitivity_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+
+    # The computed grade, stored across columns rather than one JSON blob so
+    # it stays queryable and constrainable — the same shape
+    # domain.values.MeasuredValue enforces in memory, carried into the schema.
+    au_value: Mapped[Decimal | None] = mapped_column(Numeric)
+    au_detection_limit: Mapped[Decimal | None] = mapped_column(Numeric)
+    au_censored: Mapped[bool] = mapped_column(Boolean)
+    au_unit: Mapped[str] = mapped_column(String(16))
+
+    analyst_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    analysed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("fire_assay_result.id"))
+    superseded_reason: Mapped[str | None] = mapped_column(Text)
+
+    notes: Mapped[str | None] = mapped_column(Text)

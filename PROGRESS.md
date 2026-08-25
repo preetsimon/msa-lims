@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-24 · **Phase:** 1 in progress (all reference-data registration done; results next)
+**Updated:** 2026-08-25 · **Phase:** 1 in progress (fire assay result entry done; certificate of analysis next)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,20 +12,21 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **In progress** — auth, client/project/drill-hole registration, submission intake all done; result entry → certificate next |
+| 1 · The spine | wk 2–4 | **In progress** — auth, all reference-data registration, submission intake, and fire assay result entry all done; certificate of analysis next |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 233 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty · frontend builds and typechecks · verified live through the
-browser: Vite → proxy → FastAPI → Postgres, with the degraded path exercised;
-auth, client/project/drill-hole registration, and submission intake all
-verified live against the running server — the full reference-data chain now
-runs client → project → drill hole → submission with a drill sample resolving
-its hole, entirely through HTTP, no direct DB insert anywhere.
+**Health:** 259 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible · frontend builds and typechecks · verified
+live through the browser: Vite → proxy → FastAPI → Postgres, with the degraded
+path exercised. The full spine now runs client → project → drill hole →
+submission → **a fire assay result computed from a real weighing** entirely
+through HTTP, including a live-verified correction (supersession) and a live
+proof that Postgres itself refuses an `UPDATE` against `fire_assay_result`
+using the exact credentials the deployed application holds.
 
 ---
 
@@ -178,15 +179,69 @@ its hole, entirely through HTTP, no direct DB insert anywhere.
   error for it, so every caller asking the same question gets the same answer
   type.
 
+### Fire assay result entry — `src/msa_lims/fire_assay_results/`
+- **`service.py`** — `POST /api/fire-assay-results`, the first write path
+  that *computes* something rather than only storing what it was told. Calls
+  `domain.assay.gravimetric_grade` directly on the raw weighing, so the number
+  a future certificate reports is reproducible from a bead weight and a
+  sample weight years later, not asserted. Restricted to `MAY_ENTER_RESULTS`
+  (`analyst`, `supervisor`, `lab_manager`) — a `prep_tech` weighs and
+  pulverises material but does not enter or interpret a result, so the tier
+  deliberately excludes it even though it's inside `BENCH_ROLES`.
+- **Scope note, stated in the module's own docstring:** only
+  `FIRE_ASSAY_GRAVIMETRIC` is entered here. AAS and ICP-MS read a
+  concentration off a calibration curve, not a bead weight, and need an
+  entirely different input shape — so there is no method parameter on the
+  request and no dead validation branch pretending to support a method
+  nothing here implements. `AssayMethod` on the stored row still carries the
+  full vocabulary, because AAS/ICP-MS are real methods this schema already
+  named in Phase 0, even though nothing writes them yet.
+- **`fire_assay_result` is genuinely append-only**, not append-only by
+  convention — `msa_app` holds SELECT/INSERT only on it (new migration
+  `9a1c2e6f4b3d`, following `b1d0c4e77a10`'s own comment: *"As results,
+  certificates and their amendments arrive in later phases they join this
+  tuple, not the one above"*). A test proves it directly against the real
+  role — UPDATE and DELETE both refused — and the live verification below
+  proved the identical thing with `psql` and the application's own
+  credentials.
+- **A correction is a new row, never an `UPDATE`.** `supersedes_id` points at
+  the result it corrects; `superseded_reason` is required and enforced by a
+  CHECK, mirroring `audit_event`'s own amendment-reason constraint. "Current"
+  is computed by exclusion — the row nothing else's `supersedes_id` names —
+  rather than a stored flag, so there is nothing to keep in sync when a
+  correction lands. Entering a brand-new result against a sample that already
+  has a current one is refused ("supersede it explicitly"); superseding a row
+  that is not currently the head of the chain is also refused, so a chain
+  cannot branch — the same rule QC Sentinel enforces on its re-assay chains.
+- **Entering a sample's first result moves it straight to `ASSAYED`,
+  skipping every intermediate status.** Stated plainly in the module
+  docstring as a known Phase 1 simplification, not routed through
+  `domain/lifecycle.py`'s `Transition` table (which would require the sample
+  to already be `IN_ASSAY`, unreachable until furnace batching exists).
+  Superseding a result does **not** touch sample status — correcting a
+  number and physically re-running a sample through the furnace are
+  different acts, and the latter is `domain/lifecycle.py`'s separate,
+  already-modelled `ASSAYED → READY_FOR_ASSAY` re-assay transition.
+- The response's `au` field is shaped to match `frontend/src/types.ts`'s
+  `MeasuredValue` exactly (`value`, `detection_limit`, `censored`, `unit`),
+  so the existing `formatMeasured` helper renders a non-detect correctly the
+  moment a screen exists to show one.
+
 ### Database — `src/msa_lims/db/`
-- 8 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
-  `instrument`, `lab_user`, `audit_event`.
+- 9 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
+  `instrument`, `lab_user`, `audit_event`, `fire_assay_result`.
 - `7172b2adeb7e` — initial schema.
 - `a64c168cff52` — audit events.
 - `b1d0c4e77a10` — **append-only grants**. Creates `msa_app` with no
   UPDATE/DELETE on `audit_event`, and deliberately **no `ALTER DEFAULT
   PRIVILEGES`**: a table added in a later migration gets no grants until someone
   decides, in a reviewable diff, whether it is mutable or append-only.
+- `450d413603cf` — the `fire_assay_result` table.
+- `9a1c2e6f4b3d` — its append-only grants, in their own migration rather than
+  folded into `450d413603cf`, because grants and schema are reviewed as
+  separate decisions everywhere else in this repo (see `b1d0c4e77a10` vs.
+  `7172b2adeb7e`/`a64c168cff52`) and a new table should be a deliberate,
+  visible choice about mutability, not a side effect of adding columns.
 - Enums stored as VARCHAR with a CHECK rather than Postgres native enums, so
   removing a vocabulary value is not a table rewrite.
 - `submission.declared_sample_count` records what the client's paperwork claimed
@@ -204,6 +259,9 @@ its hole, entirely through HTTP, no direct DB insert anywhere.
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
+- Six write endpoints exist now, all POST-only — nothing has a `GET` yet
+  except `/health` and `/api/me`. `POST /api/fire-assay-results` is the
+  first that computes a response rather than only echoing what it stored.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -214,7 +272,7 @@ its hole, entirely through HTTP, no direct DB insert anywhere.
   with `formatMeasured` so a non-detect cannot be rendered as its null value.
 - One screen so far: system status, which exists to prove the whole path.
 
-### Tests — 233
+### Tests — 259
 - **Unit** (143): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals (including the `format_hole_id`/
   `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
@@ -225,17 +283,18 @@ its hole, entirely through HTTP, no direct DB insert anywhere.
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (73, real Postgres): the append-only grants proven against the
+- **Integration** (99, real Postgres): the append-only grants proven against the
   actual application role; submission intake against the service directly and
-  through the real HTTP app (26 tests — happy paths, every validation refusal,
-  the audit trail, role enforcement, `LabUser` provisioning); client and
-  project registration against the service directly and through HTTP (21
-  tests — duplicate refusals, cross-client isolation, role enforcement, audit
-  trail); drill hole registration against the service directly and through
-  HTTP (16 tests — duplicate-after-canonicalisation refusal, cross-project
-  isolation, role enforcement, and one test proving a hole registered in one
-  case is the exact row a submission's drill sample in another case resolves
-  to — the property the whole feature exists for).
+  through the real HTTP app (26 tests); client and project registration
+  against the service directly and through HTTP (21 tests); drill hole
+  registration against the service directly and through HTTP (16 tests,
+  including the hole-canonicalisation-matches-a-drill-sample proof); fire
+  assay result entry against the service directly and through HTTP (26 tests
+  — the computed grade, the ASSAYED transition, every supersession refusal
+  including anti-branching and cross-sample supersession, and — proven
+  directly against the real `msa_app` role, the same pattern
+  `test_append_only.py` established for `audit_event` — that Postgres itself
+  refuses both `UPDATE` and `DELETE` against `fire_assay_result`).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -272,10 +331,27 @@ out-of-range `dip_degrees: "-95"` is refused before it reaches the service,
 at the Pydantic layer; and a submission posted with a drill sample labelled
 `"MSA-24-001-142.50_144.00"` resolves to `drill_hole_id: 1` — the registered
 hole, matched purely by the canonicalisation agreeing, with the interval
-correctly split into `from_depth_m`/`to_depth_m`. This is the first time the
+correctly split into `from_depth_m`/`to_depth_m`. This was the first time the
 entire spine — client, project, drill hole, and a drill sample against all
-three — has run purely through HTTP with no direct database insert anywhere
-in the chain.
+three — ran purely through HTTP with no direct database insert anywhere in
+the chain.
+
+Fire assay result entry verified live, all the way to a computed grade: a
+`0.150` mg bead from a `30` g portion posted as `analyst` returns **201**
+with `au: {"value": "5.000", "censored": false, "unit": "g/t", ...}` —
+computed, not supplied; a `prep_tech` attempt is refused with **403**; a
+second new result against the same sample returns **422** naming the
+existing result by id and telling the caller to supersede it; a `lab_manager`
+then supersedes it with a corrected bead weight and a stated reason, and the
+new row's `au.value` differs from the original's, proving the recalculation
+actually ran on the corrected input; attempting to supersede the now-
+superseded original a second time is refused with **422**, "only the current
+result can be superseded"; and, with the same `msa_app` credentials the
+deployed application holds, a direct `psql` `UPDATE fire_assay_result SET
+au_value = 999` was refused by Postgres itself with `permission denied for
+table fire_assay_result` — not a service-layer promise, a database-enforced
+one, checked live exactly as `test_append_only.py` checks it for
+`audit_event`.
 
 ---
 
@@ -301,6 +377,11 @@ in the chain.
 | 2026-08-24 | Drill hole registration restricted to `BENCH_ROLES`, not `MAY_MANAGE_ACCOUNTS` — the tier client/project registration uses | A hole's collar coordinates typically arrive with the drill log accompanying a core shipment, the same moment a submission is received, not as a business decision about who the lab works for. Client/project setup and hole logging are different kinds of authority even though both are "reference data." |
 | 2026-08-24 | Extracted `format_hole_id`/`canonical_hole_id` into `domain/sample_id.py` rather than duplicating the format string in the registration service | `SampleIdentity.hole_id` already computed this string from a parsed sample label. Registration needed to produce the identical string from a directly-typed hole label. Two independently-written format strings that happened to agree would be one refactor away from silently disagreeing and breaking every drill-sample lookup. |
 | 2026-08-24 | `ProjectNotFoundError` added to `clients/service.py`, not `drill_holes/service.py` | Same reasoning as `ClientNotFoundError`'s placement: the module that owns `Project` owns the error for "this one doesn't exist," so every caller — submissions, drill holes, anything else later — gets the same answer type. |
+| 2026-08-25 | Fire assay result entry supports **only `FIRE_ASSAY_GRAVIMETRIC`**, with no `method` field on the request and no validation branch for AAS/ICP-MS | Those methods read a concentration off a calibration curve, not a bead weight — a completely different input shape. Adding a `method` parameter that only one value is honoured for would invite exactly the "designed for a hypothetical future requirement" trap; AAS entry gets its own endpoint with its own shape when it is built. |
+| 2026-08-25 | "Current result" for a sample is computed **by exclusion** (the row nothing else's `supersedes_id` names), not a stored `is_current` flag | A flag needs to be flipped in two places every time a correction lands and can drift from reality if one write forgets to. Exclusion has nothing to keep in sync — it is derived from the same facts every time. |
+| 2026-08-25 | Superseding a row that is not currently the chain's head is **refused**, not permitted as a branch | Mirrors QC Sentinel's rule against double-replacement in a re-assay chain. Allowing it would let two different "corrections" of the same original both claim to be current, and nothing in the schema says which one wins. |
+| 2026-08-25 | Entering a sample's first result moves it straight to `ASSAYED`, **bypassing `domain/lifecycle.py`'s `Transition` table** rather than adding a fake transition to it | The legal path to `ASSAYED` requires `IN_ASSAY`, which nothing can reach yet — furnace batching doesn't exist. Adding a permissive `RECEIVED → ASSAYED` row to the shared `TRANSITIONS` tuple would misrepresent a real legal path once Phase 2 lands. A narrow, honestly-documented guard local to this service says exactly what it is: a Phase 1 simplification, not lab policy. |
+| 2026-08-25 | The append-only grants for `fire_assay_result` are their **own migration** (`9a1c2e6f4b3d`), not folded into the table-creation migration | Matches the existing split between `b1d0c4e77a10` and the schema migrations before it: schema and mutability are separate decisions, each visible on its own in the migration history. |
 
 ---
 
@@ -325,19 +406,44 @@ in the chain.
    client → project → drill hole → a drill sample resolving its hole — purely
    through HTTP. **Every reference-data registration endpoint the spine needs
    now exists.**
-5. Fire assay result entry against `domain/assay.py`, stored append-only with
-   supersession, writing an `audit_event` per change.
+5. ~~**Fire assay result entry against `domain/assay.py`.**~~ **Done
+   2026-08-25** — `POST /api/fire-assay-results`, gravimetric only, stored
+   append-only with supersession, one `audit_event` per write (create or
+   amend). 26 new tests, including a direct proof against the real
+   application role that Postgres refuses `UPDATE`/`DELETE`. Verified live
+   end to end: a computed grade, a role refusal, a duplicate-result refusal,
+   a correction with a recalculated grade, an anti-branching refusal, and the
+   database itself refusing a tampering attempt with the deployed
+   application's own credentials.
 6. Certificate of analysis: versioned row, byte-deterministic PDF, amended
    never overwritten.
-7. Sample list and detail screens in React over those endpoints.
+7. Sample list and detail screens in React over those endpoints. With six
+   POST-only endpoints now built and nothing to read them back with, a
+   minimal `GET /api/samples/{id}` (or similar) is close to a prerequisite
+   for this, not purely a frontend concern.
 
 ## Open questions
 
 - **Which balance sensitivity is real?** `gravimetric_grade` takes it as a
   parameter, but the value should come from the instrument record once
-  `instrument` carries calibration data. Currently every caller must supply it.
+  `instrument` carries calibration data. Currently every caller must supply it
+  — `fire_assay_results/service.py` still does not resolve this; it just
+  passes through whatever the request gives, which may be nothing at all.
 - **Does the lab report silver on every fire assay, or only on request?** Drives
   whether `silver_by_difference` is computed eagerly at bead entry or on demand.
+  Still open — `fire_assay_result` has no silver columns yet.
+- **No `analyst_id`/`instrument_id` link to a specific balance or AAS.**
+  `fire_assay_result.analyst_id` records who entered it, but there is no
+  `instrument_id` column recording which balance weighed the bead — meaning a
+  future contamination or calibration-drift investigation has nothing to
+  trace back to a specific piece of equipment. Deferred because `instrument`
+  currently only tracks calibration due-dates, not per-weighing readings.
+- **No `GET` endpoint exists for a fire assay result, or anything else.**
+  Every one of the six write endpoints so far is POST-only. Confirming a
+  write worked currently means reading the POST response or querying the
+  database directly, which is what every test here still does. This is now
+  flagged as close to a prerequisite for the React sample-detail screen, not
+  purely a nice-to-have.
 - **Submission numbering.** `SUB-2026-0841` is invented. Needs the real
   convention before Phase 1 hardens it into stored data.
 - **Does a sample ever move between submissions?** Currently `submission_id` is

@@ -193,6 +193,32 @@ class CertificateReferenceOut(BaseModel):
     certificate_number: str
 
 
+class SampleListItemOut(BaseModel):
+    """One row of ``GET /api/samples`` — deliberately lighter than
+    `SampleDetailOut`: no current result, no certificate list, so listing a
+    hundred samples costs one query, not a hundred and one."""
+
+    id: int
+    sample_id: str
+    sample_type: str
+    status: str
+    client_name: str
+    submission_number: str
+
+    @classmethod
+    def from_model(
+        cls, sample: Sample, *, client_name: str, submission_number: str
+    ) -> SampleListItemOut:
+        return cls(
+            id=sample.id,
+            sample_id=sample.sample_id,
+            sample_type=sample.sample_type.value,
+            status=sample.status.value,
+            client_name=client_name,
+            submission_number=submission_number,
+        )
+
+
 class SubmissionOut(BaseModel):
     id: int
     submission_number: str

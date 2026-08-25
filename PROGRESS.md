@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 1 API-complete (sample and certificate `GET` endpoints done; React screens are what remain)
+**Updated:** 2026-08-25 · **Phase:** 1 complete (sample list and detail screens ship the phase — Phase 2, fire assay batching, is next)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,23 +12,24 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **API-complete** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, and sample/certificate lookup all built and verified live; only React screens remain |
+| 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 304 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible · frontend builds and typechecks · verified
-live through the browser: Vite → proxy → FastAPI → Postgres, with the degraded
-path exercised. The full spine now runs client → project → drill hole →
-submission → fire assay result → **a signed, downloadable Certificate of
-Analysis PDF**, and both a sample and a certificate can be **read back**
-afterward — entirely through HTTP. Live verification confirmed the `POST` and
-`GET` responses for a certificate are byte-for-byte identical, and caught and
-fixed a real defect earlier in the phase: an unrounded grade printing 34
-digits of `Decimal` division onto the certificate.
+**Health:** 311 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible · frontend builds and typechecks clean
+(TypeScript `strict` + `noUncheckedIndexedAccess`) · verified live through the
+browser at every layer, most recently the whole user-facing path: open the
+app, see every sample in a table, click through to one, see its grade and
+status, download its signed certificate PDF — no console errors, no direct
+database queries, nothing left to check by hand. Live verification confirmed
+the `POST` and `GET` responses for a certificate are byte-for-byte identical,
+and caught and fixed a real defect earlier in the phase: an unrounded grade
+printing 34 digits of `Decimal` division onto the certificate. **Phase 1 —
+the thinnest complete thread the original roadmap called for — is done.**
 
 ---
 
@@ -332,6 +333,15 @@ digits of `Decimal` division onto the certificate.
   a breaking change to the response shape; acceptable now because nothing
   outside this repo's own tests consumed it yet — the kind of correction to
   make before something external depends on the wart, not after.
+- **`GET /api/samples`** — the first listing endpoint anywhere in this
+  system, added specifically because a real sample-list React screen had
+  nothing to list without one (already anticipated in the previous phase's
+  open questions). Deliberately lean: `list_samples` is one query joining
+  through `submission`/`client` for display names, with **no per-row grade
+  lookup** — a hundred samples would otherwise cost a hundred extra queries
+  for a fact the detail screen already shows. Optional `client_id` and
+  `status` filters exist on the service and the route today; no UI calls
+  them with a value yet (see open questions).
 
 ### Database — `src/msa_lims/db/`
 - 11 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
@@ -378,11 +388,48 @@ digits of `Decimal` division onto the certificate.
   `exactOptionalPropertyTypes`.
 - Dev server proxies `/api` and `/health` to the backend, so there is one origin
   and no CORS configuration to get wrong in dev and differently wrong later.
+- **Routing landed for the first time** — `react-router-dom` had been a
+  dependency since Phase 0 but unused; `App.tsx` is now a thin shell (nav +
+  `<Routes>`) over `pages/SampleList.tsx`, `pages/SampleDetail.tsx`, and the
+  original walking-skeleton screen, relocated to `pages/SystemStatus.tsx` and
+  demoted from landing page to a reachable-but-secondary `/status` route now
+  that there is something more useful to land on. `main.tsx` opts into
+  React Router's v7 future flags specifically to keep the console clean —
+  cheap, and a portfolio demo's console is part of what a reviewer sees.
+- **`pages/SampleList.tsx`** — a table over `GET /api/samples`: sample id
+  (linked), type, status (colour-coded pill), client, submission. No filter
+  UI yet even though the backend already accepts `client_id`/`status` query
+  params — building filter controls with nothing yet to filter *against*
+  (no client-listing endpoint exists) would have been UI for a use case the
+  API can't actually serve.
+- **`pages/SampleDetail.tsx`** — a sample's status, type, submission/hole
+  context, its current fire assay result rendered through the *existing*
+  `formatMeasured` helper (unchanged since Phase 0 — a censored grade shows
+  as `<0.01 g/t` here for the same reason it always has, not a new
+  code path), and every certificate that names it with a direct
+  `/api/certificates/{id}/pdf` download link. A 404 from the API is
+  distinguished from any other failure (`ApiError.status`) and shown as "No
+  sample with id N," not a generic error — the one place this frontend reads
+  an HTTP status code rather than just success/failure.
+- **`StatusPill` was extracted** from `App.tsx` into `components/StatusPill.tsx`
+  and reused for both health-check statuses and sample statuses — the same
+  three-tier colour system (`--ok`/`--warn`/`--bad`) now covers both
+  vocabularies via extended CSS selector groups (`.pill-assayed`,
+  `.pill-reported` join `.pill-ok`; `.pill-received` through
+  `.pill-in_assay` join `.pill-degraded`; `.pill-rejected` joins
+  `.pill-unavailable`) rather than a second, parallel pill system.
+- **`.components` was renamed `.detail-grid`** — the same dt/dd grid layout
+  now serves the health-check screen and both sample screens; a name specific
+  to "system components" stopped describing what it actually was the moment
+  a second screen needed the identical layout.
 - `types.ts` mirrors the wire format including the censored-value distinction,
-  with `formatMeasured` so a non-detect cannot be rendered as its null value.
-- One screen so far: system status, which exists to prove the whole path.
+  with `formatMeasured` so a non-detect cannot be rendered as its null value —
+  now also carrying `SampleListItem`, `SampleDetail`, `FireAssayResult`, and
+  `CertificateReference`, hand-written like everything else here with the
+  same standing note that these should come from `/openapi.json` once the API
+  stops moving.
 
-### Tests — 304
+### Tests — 311
 - **Unit** (154): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals (including the `format_hole_id`/
   `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
@@ -399,7 +446,7 @@ digits of `Decimal` division onto the certificate.
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (133, real Postgres): the append-only grants proven against
+- **Integration** (140, real Postgres): the append-only grants proven against
   the actual application role; submission intake against the service directly
   and through the real HTTP app (26 tests); client and project registration
   (21 tests); drill hole registration (16 tests, including the
@@ -415,7 +462,11 @@ digits of `Decimal` division onto the certificate.
   certificates, the current result surfacing after a correction supersedes
   the original, every certificate a sample was ever named on staying listed
   after an amendment, a 404 for each unknown id, and the `POST`/`GET`
-  responses for one certificate asserted byte-for-byte equal).
+  responses for one certificate asserted byte-for-byte equal); sample listing
+  (7 tests — an empty lab lists nothing, a listed row carries its client and
+  submission but deliberately not its grade or certificates, newest-first
+  ordering, `client_id`/`status` filtering, and an invalid status value
+  refused with 422 before it reaches the service).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -505,6 +556,21 @@ returned a JSON body **byte-for-byte identical** to what the `POST` that
 issued it had already returned, in a second, independent request; and both
 `GET /api/samples/999999` and `GET /api/certificates/999999` return **404**.
 
+The React screens verified live through the browser, the golden path and the
+edges both: two samples seeded through the real API (one with a fire assay
+result and an issued certificate, one still `received`) rendered on
+`/samples` as a table with correctly colour-coded status pills and no
+console errors; clicking the reported sample opened `/samples/1` and showed
+`Au: 5.000 g/t`, the method, bead weight, and portion exactly as entered, and
+a `Download PDF` link; that link was fetched directly from the rendered page
+(not just present in markup) and returned real PDF bytes — `%PDF-` magic
+header, `content-type: application/pdf` — through the Vite dev-server proxy;
+the still-`received` sample rendered "No result yet." and "Not yet on a
+certificate." rather than blank sections; navigating to `/samples/999999`
+showed "No sample with id 999999," distinguishing the 404 case from a
+generic failure; `npm run build` and `tsc --noEmit` both passed clean
+throughout.
+
 ---
 
 ## Decision log
@@ -542,6 +608,12 @@ issued it had already returned, in a second, independent request; and both
 | 2026-08-25 | `SampleNotFoundError` **stays** in `fire_assay_results/service.py`; `samples/service.py` imports it rather than the reverse | Breaks precedent (`ClientNotFoundError`/`ProjectNotFoundError` were both hoisted to the module owning the entity) deliberately: `samples/service.py` already depends on `fire_assay_results/service.py` for `current_result`, and hoisting the exception the other way would have created an import cycle for no benefit the one-way dependency doesn't already give. |
 | 2026-08-25 | `CertificateOut.sample_count` **replaced** with a real `samples` list read back from `certificate_result`, not kept alongside it | The int was computed from `len(request.sample_ids)` at issuance time and never actually verified against what got written — a number that could theoretically lie. A breaking response-shape change, judged acceptable now because nothing outside this repo's own tests consumed the old shape yet. |
 | 2026-08-25 | `get_certified_samples` is **one query**, called by both the certificate `POST` response and the new `GET` | The alternative — the `POST` route building its response from in-memory objects left over from creation, the `GET` route querying fresh — would let the two responses drift apart on a future refactor with no test catching it. A live check confirms they are byte-for-byte identical today; sharing the query is what keeps that true. |
+| 2026-08-25 | Added `GET /api/samples` (a listing endpoint) as part of "build the sample list screen," not as separate, unrequested scope | A list screen with nothing to list isn't a screen. The gap was already named in the previous phase's own open questions, anticipating exactly this. |
+| 2026-08-25 | `list_samples` deliberately **omits the current grade and certificates** from each row | Those need a per-sample lookup each; a hundred-row list would otherwise cost a hundred extra queries for facts the detail screen already shows on click. A test asserts the keys are genuinely absent, not just unused. |
+| 2026-08-25 | No filter UI built for `client_id`/`status`, even though both already work on the backend | There is no client-listing endpoint to populate a filter dropdown from. Building filter controls against a value set the API cannot yet supply would be UI for a use case that doesn't exist yet. |
+| 2026-08-25 | `StatusPill` **extracted and reused** for sample statuses, extending the existing three-tier colour system rather than inventing a second one | `assayed`/`reported` map to the same "good" tier `healthy` already used; `received` through `in_assay` map to the same "in progress" tier as `degraded`. Two vocabularies, one set of CSS tokens — matches this codebase's own "choose neutrals, don't default to them" discipline at the component level. |
+| 2026-08-25 | `.components` renamed to `.detail-grid` | The class was never really about "system components" — it was a dt/dd grid layout that a second, unrelated screen needed identically. A name tied to its first caller stops being honest the moment a second one arrives. |
+| 2026-08-25 | React Router's v7 future flags enabled immediately, not deferred | One line, zero behaviour change today, and it removes two console warnings that would otherwise sit in every future screenshot and demo recording of this app. |
 
 ---
 
@@ -590,8 +662,28 @@ issued it had already returned, in a second, independent request; and both
    byte-for-byte, and a sample's `GET` correctly showed `reported` and the
    certificate that named it after issuance. **The API Phase 1 needs is now
    complete; only React screens remain.**
-8. Sample list and detail screens in React over these endpoints — now
-   unblocked by the `GET` surface above.
+8. ~~**Sample list and detail screens in React.**~~ **Done 2026-08-25** —
+   `pages/SampleList.tsx`, `pages/SampleDetail.tsx`, routing landed for the
+   first time (`react-router-dom` had sat unused since Phase 0), the original
+   status screen relocated to `/status`. Required adding `GET /api/samples`
+   first — a list screen had nothing to list without it. 7 new backend tests
+   for the listing endpoint. Verified live: real seeded data rendering
+   correctly in both the table and detail views, a working certificate PDF
+   download fetched directly from the rendered page (not just present in
+   markup), the empty/no-result/no-certificate states, the 404 state
+   distinguished from a generic failure, and a clean production build.
+   **Phase 1 — the thinnest complete thread the original roadmap called
+   for — is done.**
+
+## Next actions (Phase 2 — fire assay batching)
+
+Per the original roadmap: furnace batches, crucibles with position
+constraints, flux recipes with matrix-based suggestion, and QC insertion
+policy. Not started. The natural first step is the same one every phase here
+has started with — read `domain/assay.py` and the batch/crucible sketch in
+the original plan artifact, then design the domain core before the schema,
+matching how `assay.py`/`sample_id.py`/`lifecycle.py` were each written pure
+and tested before anything touched a session.
 
 ## Open questions
 
@@ -634,16 +726,32 @@ issued it had already returned, in a second, independent request; and both
   endpoint could be exposed to clients directly rather than only to lab
   staff. Now applies to the new `GET /api/samples/{id}` and `GET
   /api/certificates/{id}` too — same gap, not newly introduced by them.
-- **No listing endpoint anywhere** — every `GET` is fetch-by-id. There is no
-  "every sample in submission X," "every certificate for client Y," or
-  "every result for a sample" (only the *current* one). The React
-  sample-list screen this phase's roadmap calls for will need at least one
-  of these, and none exists yet.
+- ~~**No listing endpoint anywhere.**~~ **Partly resolved 2026-08-25** —
+  `GET /api/samples` exists now, with `client_id`/`status` filters. Still
+  missing: "every certificate for client Y" and "every result for a sample"
+  (only the *current* one is readable anywhere).
+- **No client-listing endpoint, so the sample list has no filter UI.**
+  `GET /api/samples` already accepts `client_id`, but there is nowhere to
+  discover which client ids exist short of remembering one from creating it.
+  A minimal `GET /api/clients` would unblock a real filter control.
+- **No pagination on `GET /api/samples`.** `limit` exists (default 100, max
+  500) but there is no `offset`/cursor — past the limit, older samples are
+  simply unreachable through this endpoint. Not addressed because the
+  demo-scale data this system has held so far has never approached the
+  limit; revisit before seeding anything larger.
 - **`GET /api/samples/{id}` shows only the current fire assay result, not the
   supersession history.** A sample corrected twice shows only the final
   grade; the earlier ones are still in the database (append-only, as
   designed) but nothing reads them back as a chain the way a certificate's
   `supersedes_id` can at least be followed one link at a time.
+- **The React app sends no auth headers at all.** It relies entirely on
+  `dev_headers` mode's no-header-supplied default (least-privileged
+  `analyst`). There is no login screen, no token storage, and no path from
+  the browser client to `oidc` mode — building one is real scope (a token
+  exchange flow, storage, refresh) that nothing in Phase 1 needed since every
+  verification ran as a trusted local developer. Whichever role actually
+  needs to *sign a certificate* or *register a client* through the UI, rather
+  than curl, will force this question.
 - **Submission numbering.** `SUB-2026-0841` is invented. Needs the real
   convention before Phase 1 hardens it into stored data.
 - **Does a sample ever move between submissions?** Currently `submission_id` is

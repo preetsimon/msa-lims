@@ -211,3 +211,107 @@ class TestReadingASample:
         response = client.get(f"/api/samples/{received_sample_id}")
         ids = {c["id"] for c in response.json()["certificates"]}
         assert ids == {first_cert["id"], second_cert["id"]}
+
+
+class TestListingSamples:
+    def test_an_empty_lab_lists_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/samples")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_a_received_sample_appears_with_its_client_and_submission(
+        self, client: TestClient, received_sample_id: int
+    ) -> None:
+        response = client.get("/api/samples")
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        row = body[0]
+        assert row["id"] == received_sample_id
+        assert row["sample_id"] == "MSA-24-SO-00417"
+        assert row["status"] == "received"
+        assert row["client_name"] == "MSA Test Mining Co"
+        assert row["submission_number"].startswith("SUB-2026-")
+
+    def test_the_list_does_not_include_the_grade_or_certificates(
+        self, client: TestClient, received_sample_id: int
+    ) -> None:
+        """Deliberately lean: the list is one query, the detail view carries
+        the rest."""
+        row = client.get("/api/samples").json()[0]
+        assert "current_result" not in row
+        assert "certificates" not in row
+
+    def test_newest_sample_first(self, client: TestClient, registered_client_id: int) -> None:
+        for label in ("MSA-24-SO-00001", "MSA-24-SO-00002"):
+            client.post(
+                "/api/submissions",
+                json={
+                    "client_id": registered_client_id,
+                    "received_at": "2026-08-24T10:00:00Z",
+                    "samples": [{"sample_id": label, "sample_type": "soil"}],
+                },
+                headers=ANALYST,
+            )
+
+        body = client.get("/api/samples").json()
+        assert [row["sample_id"] for row in body] == ["MSA-24-SO-00002", "MSA-24-SO-00001"]
+
+    def test_filtering_by_status(
+        self, client: TestClient, registered_client_id: int, received_sample_id: int
+    ) -> None:
+        client.post(
+            "/api/submissions",
+            json={
+                "client_id": registered_client_id,
+                "received_at": "2026-08-24T10:00:00Z",
+                "samples": [{"sample_id": "MSA-24-SO-00099", "sample_type": "soil"}],
+            },
+            headers=ANALYST,
+        )
+        client.post(
+            "/api/fire-assay-results",
+            json={
+                "sample_id": received_sample_id,
+                "gold_bead_mg": "0.150",
+                "sample_weight_g": "30",
+                "analysed_at": "2026-08-24T14:00:00Z",
+            },
+            headers=ANALYST,
+        )
+
+        assayed = client.get("/api/samples", params={"status": "assayed"}).json()
+        assert [row["id"] for row in assayed] == [received_sample_id]
+
+        received = client.get("/api/samples", params={"status": "received"}).json()
+        assert [row["sample_id"] for row in received] == ["MSA-24-SO-00099"]
+
+    def test_filtering_by_client(self, client: TestClient, registered_client_id: int) -> None:
+        other_client_id = client.post(
+            "/api/clients", json={"code": "OTH", "name": "Other Mining Co"}, headers=MANAGER
+        ).json()["id"]
+        client.post(
+            "/api/submissions",
+            json={
+                "client_id": other_client_id,
+                "received_at": "2026-08-24T10:00:00Z",
+                "samples": [{"sample_id": "OTH-24-SO-00001", "sample_type": "soil"}],
+            },
+            headers=ANALYST,
+        )
+        client.post(
+            "/api/submissions",
+            json={
+                "client_id": registered_client_id,
+                "received_at": "2026-08-24T10:00:00Z",
+                "samples": [{"sample_id": "MSA-24-SO-00001", "sample_type": "soil"}],
+            },
+            headers=ANALYST,
+        )
+
+        body = client.get("/api/samples", params={"client_id": registered_client_id}).json()
+        assert [row["sample_id"] for row in body] == ["MSA-24-SO-00001"]
+
+    def test_an_invalid_status_value_is_refused(self, client: TestClient) -> None:
+        response = client.get("/api/samples", params={"status": "not-a-real-status"})
+        assert response.status_code == 422

@@ -40,3 +40,49 @@ export function formatMeasured(measured: MeasuredValue): string {
     ? `<${measured.detection_limit} ${measured.unit}`
     : `${measured.value} ${measured.unit}`;
 }
+
+/** One row of `GET /api/samples` — deliberately lean; see the backend's own
+ * `SampleListItemOut` docstring for why no grade or certificate list rides
+ * along here. */
+export interface SampleListItem {
+  id: number;
+  sample_id: string;
+  sample_type: string;
+  status: string;
+  client_name: string;
+  submission_number: string;
+}
+
+/** One certificate that names a sample — not the document itself, just
+ * enough to link to `GET /api/certificates/{id}` or download its PDF. */
+export interface CertificateReference {
+  id: number;
+  certificate_number: string;
+}
+
+export interface FireAssayResult {
+  id: number;
+  sample_id: number;
+  method: string;
+  gold_bead_mg: string;
+  sample_weight_g: string;
+  balance_sensitivity_mg: string | null;
+  au: MeasuredValue;
+  analysed_at: string;
+  supersedes_id: number | null;
+  superseded_reason: string | null;
+  notes: string | null;
+}
+
+export interface SampleDetail {
+  id: number;
+  sample_id: string;
+  sample_type: string;
+  status: string;
+  submission_id: number;
+  drill_hole_id: number | null;
+  from_depth_m: string | null;
+  to_depth_m: string | null;
+  current_result: FireAssayResult | null;
+  certificates: CertificateReference[];
+}

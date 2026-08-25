@@ -23,10 +23,25 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import Certificate, CertificateResult, FireAssayResult, Sample
+from msa_lims.db.models import (
+    Certificate,
+    CertificateResult,
+    Client,
+    FireAssayResult,
+    Sample,
+    Submission,
+)
+from msa_lims.domain.enums import SampleStatus
 from msa_lims.fire_assay_results.service import SampleNotFoundError, current_result
 
-__all__ = ["CertificateReference", "SampleDetail", "SampleNotFoundError", "get_sample_detail"]
+__all__ = [
+    "CertificateReference",
+    "SampleDetail",
+    "SampleListItem",
+    "SampleNotFoundError",
+    "get_sample_detail",
+    "list_samples",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,3 +83,42 @@ def get_sample_detail(session: Session, sample_id: int) -> SampleDetail:
     )
 
     return SampleDetail(sample=sample, current_result=result, certificates=certificates)
+
+
+@dataclass(frozen=True, slots=True)
+class SampleListItem:
+    sample: Sample
+    client_name: str
+    submission_number: str
+
+
+def list_samples(
+    session: Session,
+    *,
+    client_id: int | None = None,
+    status: SampleStatus | None = None,
+    limit: int = 100,
+) -> list[SampleListItem]:
+    """The most recent samples, newest first, one query — no per-row grade
+    lookup, deliberately: a list of a hundred samples fetching each one's
+    current result would be a hundred extra queries for a fact the detail
+    screen already shows. ``client_id`` and ``status`` are exposed for future
+    filtering; nothing calls them with a value yet.
+    """
+    stmt = (
+        select(Sample, Client.name, Submission.submission_number)
+        .join(Submission, Sample.submission_id == Submission.id)
+        .join(Client, Submission.client_id == Client.id)
+        .order_by(Sample.id.desc())
+        .limit(limit)
+    )
+    if client_id is not None:
+        stmt = stmt.where(Submission.client_id == client_id)
+    if status is not None:
+        stmt = stmt.where(Sample.status == status)
+
+    rows = session.execute(stmt).all()
+    return [
+        SampleListItem(sample=sample, client_name=client_name, submission_number=submission_number)
+        for sample, client_name, submission_number in rows
+    ]

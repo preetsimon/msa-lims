@@ -49,6 +49,7 @@ from msa_lims.domain.enums import (
     InstrumentStatus,
     InstrumentType,
     MatrixType,
+    QcMaterialType,
     Role,
     SampleStatus,
     SampleType,
@@ -544,6 +545,60 @@ class FluxRecipe(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
+class QcMaterial(Base, TimestampMixin):
+    """A quality-control material the lab keeps in stock and inserts into batches.
+
+    A CRM carries a certified gold grade (with its uncertainty) from the
+    certifying body's certificate; a blank is defined by having none — its
+    whole point is that nothing should come back. Both are recorded here as
+    stock reference data, mutable like ``flux_recipe``/``instrument``: a lot
+    is retired by ``is_active``, not deletion, because historical batches
+    still name it.
+
+    The certified grade's unit is deliberately fixed to ``g/t`` rather than
+    carried as a column: fire assay grades are ``g/t`` everywhere in this
+    system (see ``domain/units.py``), and a second unit vocabulary for one
+    column would be two conventions where one exists.
+
+    Duplicate insertions (``FIELD_DUPLICATE`` etc. in ``QcMaterialType``) are
+    *not* materials and have no row here — a duplicate re-inserts an existing
+    sample, so it names a sample, not a stock item. That path is deferred
+    (see PROGRESS.md); this table only holds what a technician physically
+    scoops from a jar.
+
+    The LIMS records insertion and measurement only. Judging a QC result —
+    pass, fail, warning limits, z-scores — is QC Sentinel's job on export;
+    there is deliberately no verdict vocabulary anywhere in this system.
+    """
+
+    __tablename__ = "qc_material"
+    __table_args__ = (
+        CheckConstraint(
+            "certified_au_value_g_t IS NULL OR certified_au_value_g_t >= 0",
+            name="certified_au_non_negative",
+        ),
+        CheckConstraint(
+            "certified_au_uncertainty_g_t IS NULL OR certified_au_uncertainty_g_t > 0",
+            name="certified_au_uncertainty_positive",
+        ),
+    )
+
+    id: Mapped[IdPk]
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    qc_type: Mapped[QcMaterialType] = mapped_column(
+        _enum(QcMaterialType, "qc_material_type"), index=True
+    )
+    lot_number: Mapped[str | None] = mapped_column(String(100))
+
+    #: Certified grade and its symmetric uncertainty, both ``g/t``. Null for
+    #: blanks — see the class docstring.
+    certified_au_value_g_t: Mapped[Decimal | None] = mapped_column(Numeric)
+    certified_au_uncertainty_g_t: Mapped[Decimal | None] = mapped_column(Numeric)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
 class Batch(Base, TimestampMixin):
     """One furnace run: a tray of crucibles fired together.
 
@@ -606,6 +661,10 @@ class Crucible(Base, TimestampMixin):
         CheckConstraint("position_row > 0", name="position_row_positive"),
         CheckConstraint("position_col > 0", name="position_col_positive"),
         CheckConstraint("sample_weight_g > 0", name="sample_weight_positive"),
+        CheckConstraint(
+            "(sample_id IS NOT NULL) <> (qc_material_id IS NOT NULL)",
+            name="exactly_one_of_sample_and_qc_material",
+        ),
         CheckConstraint("lead_button_weight_mg > 0", name="lead_button_weight_positive"),
         CheckConstraint("prill_weight_mg > 0", name="prill_weight_positive"),
         CheckConstraint("parting_acid_volume_ml > 0", name="parting_acid_volume_positive"),
@@ -614,7 +673,11 @@ class Crucible(Base, TimestampMixin):
 
     id: Mapped[IdPk]
     batch_id: Mapped[int] = mapped_column(ForeignKey("batch.id"), index=True)
-    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    #: The sample this crucible assays — or, for a QC insertion, null and
+    #: ``qc_material_id`` names the inserted material instead. The CHECK
+    #: constraint enforces exactly one of the two being set.
+    sample_id: Mapped[int | None] = mapped_column(ForeignKey("sample.id"), index=True)
+    qc_material_id: Mapped[int | None] = mapped_column(ForeignKey("qc_material.id"), index=True)
     flux_recipe_id: Mapped[int] = mapped_column(ForeignKey("flux_recipe.id"))
 
     position_row: Mapped[int] = mapped_column(Integer)

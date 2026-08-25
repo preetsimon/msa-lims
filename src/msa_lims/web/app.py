@@ -40,6 +40,7 @@ from msa_lims.fire_assay_results.service import (
     SampleNotFoundError,
 )
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError, FluxRecipeValidationError
+from msa_lims.qc_materials.service import QcMaterialNotFoundError, QcMaterialValidationError
 from msa_lims.submissions.service import SubmissionValidationError
 from msa_lims.web.routes import (
     batches,
@@ -49,6 +50,7 @@ from msa_lims.web.routes import (
     fire_assay_results,
     flux_recipes,
     health,
+    qc_materials,
     samples,
     submissions,
     whoami,
@@ -86,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(submissions.router)
     app.include_router(flux_recipes.router)
     app.include_router(batches.router)
+    app.include_router(qc_materials.router)
     _register_error_handlers(app)
     return app
 
@@ -124,6 +127,8 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     BatchNotFoundError: status.HTTP_404_NOT_FOUND,
     BatchValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     CrucibleValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    QcMaterialNotFoundError: status.HTTP_404_NOT_FOUND,
+    QcMaterialValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 
 

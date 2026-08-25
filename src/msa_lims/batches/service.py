@@ -31,6 +31,23 @@ measurements that witness it — a status advance with nothing behind it would
 be a claim about the world nobody made — and each is stored once, at the
 moment of the physical act, never overwritten: a result naming this crucible
 reads them back rather than being retyped numbers that could disagree.
+
+**A crucible holds a sample or a QC material — never both, and not neither**
+(the database carries the same rule as a CHECK constraint). The charge request
+names one or the other, exactly like a fire assay result names either a
+crucible or raw weighings. A QC insertion — a CRM, a blank from stock — is
+charged like any other crucible: same bench role, same batch-must-be-
+``CHARGING`` gate, same position rules, same flux scaling against its weighed-
+out charge. What differs is everything downstream of the furnace: no sample
+lifecycle moves, because no sample is involved; the bead lands on the crucible
+row through the same parting/weighing path; and nothing here judges it —
+grading and warning limits are QC Sentinel's job on export (Phase 5), not this
+system's. Insertion is *recorded*, not *enforced*: a batch may still fire
+without one. Duplicate-type QC (re-inserting an existing sample) is not
+modelled yet, so any insertion-counting rule written today would guard half
+the picture; recording honestly is the mechanical prerequisite any future
+enforcement policy would need, and inventing the policy itself is not this
+schema's call to make.
 """
 
 from __future__ import annotations
@@ -42,7 +59,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, Batch, Crucible, FluxRecipe, LabUser, Sample
+from msa_lims.db.models import AuditEvent, Batch, Crucible, FluxRecipe, LabUser, QcMaterial, Sample
 from msa_lims.domain.batch_lifecycle import (
     bulk_crucible_status,
     check_batch_transition,
@@ -54,6 +71,7 @@ from msa_lims.domain.flux import FluxAmounts, scale_flux_charge
 from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
 from msa_lims.fire_assay_results.service import CrucibleNotFoundError, SampleNotFoundError
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError
+from msa_lims.qc_materials.service import QcMaterialNotFoundError
 
 #: Sample statuses a crucible cannot be charged from — the terminal statuses
 #: and IN_ASSAY itself, which means the sample is already in another batch.
@@ -91,7 +109,11 @@ class BatchInput:
 @dataclass(frozen=True, slots=True)
 class CrucibleChargeInput:
     batch_id: int
-    sample_id: int
+    #: The sample this crucible assays — or leave unset and name
+    #: ``qc_material_id`` for a QC insertion. Exactly one of the two; see the
+    #: module docstring.
+    sample_id: int | None
+    qc_material_id: int | None
     flux_recipe_id: int
     position_row: int
     position_col: int
@@ -167,13 +189,30 @@ class BatchService:
                 + ", ".join(sorted(role.value for role in BENCH_ROLES))
             )
 
+        # The request names what goes into the slot — a sample or a QC
+        # material, one or the other, never both and not neither. Like the
+        # position and flux errors below, this is a request that cannot be
+        # carried out at all, so it refuses directly rather than collecting.
+        if (data.sample_id is None) == (data.qc_material_id is None):
+            raise CrucibleValidationError(
+                ["name a sample or a QC material — exactly one of the two"]
+            )
+
         batch = self._session.get(Batch, data.batch_id)
         if batch is None:
             raise BatchNotFoundError(f"no batch with id {data.batch_id}")
 
-        sample = self._session.get(Sample, data.sample_id)
-        if sample is None:
-            raise SampleNotFoundError(f"no sample with id {data.sample_id}")
+        sample: Sample | None = None
+        material: QcMaterial | None = None
+        if data.sample_id is not None:
+            sample = self._session.get(Sample, data.sample_id)
+            if sample is None:
+                raise SampleNotFoundError(f"no sample with id {data.sample_id}")
+        else:
+            assert data.qc_material_id is not None
+            material = self._session.get(QcMaterial, data.qc_material_id)
+            if material is None:
+                raise QcMaterialNotFoundError(f"no QC material with id {data.qc_material_id}")
 
         recipe = self._session.get(FluxRecipe, data.flux_recipe_id)
         if recipe is None:
@@ -202,13 +241,30 @@ class BatchService:
             sample_weight_g=data.sample_weight_g,
         )
 
-        problems = self._check_charge(batch, sample, data)
+        problems = self._check_batch_and_position(batch, data.position_row, data.position_col)
+        # State problems that depend on which kind of charge this is are
+        # collected, so a batch left PENDING *and* an already-charged sample
+        # are reported together rather than one hiding the other.
+        if sample is not None:
+            if sample.status in _NOT_CHARGEABLE:
+                problems.append(
+                    f"sample {sample.sample_id!r} is {sample.status.value} and cannot be charged"
+                )
+        else:
+            assert material is not None
+            if not material.is_active:
+                problems.append(
+                    f"QC material {material.name!r} is retired and cannot be charged; "
+                    "register its replacement as a new material"
+                )
         if problems:
             raise CrucibleValidationError(problems)
 
+        assert sample is not None or material is not None
         crucible = Crucible(
             batch_id=batch.id,
-            sample_id=sample.id,
+            sample_id=sample.id if sample is not None else None,
+            qc_material_id=material.id if material is not None else None,
             flux_recipe_id=recipe.id,
             position_row=data.position_row,
             position_col=data.position_col,
@@ -227,23 +283,31 @@ class BatchService:
         self._session.add(crucible)
         self._session.flush()
 
+        after: dict[str, object] = {
+            "batch_id": batch.id,
+            "position": f"{data.position_row}-{data.position_col}",
+        }
+        if sample is not None:
+            after["sample_id"] = sample.id
+        else:
+            assert material is not None
+            after["qc_material_id"] = material.id
         self._session.add(
             AuditEvent(
                 table_name="crucible",
                 record_id=crucible.id,
                 action="create",
-                after={
-                    "batch_id": batch.id,
-                    "sample_id": sample.id,
-                    "position": f"{data.position_row}-{data.position_col}",
-                },
+                after=after,
                 actor_id=charged_by.id,
             )
         )
-        sample.status = SampleStatus.IN_ASSAY
+        if sample is not None:
+            sample.status = SampleStatus.IN_ASSAY
         return crucible
 
-    def _check_charge(self, batch: Batch, sample: Sample, data: CrucibleChargeInput) -> list[str]:
+    def _check_batch_and_position(self, batch: Batch, row: int, col: int) -> list[str]:
+        """Refusals shared by both kinds of charge: the batch must be open
+        for charging, and the slot must be free."""
         problems: list[str] = []
 
         if batch.status is not BatchStatus.CHARGING:
@@ -251,22 +315,17 @@ class BatchService:
                 f"batch {batch.batch_number!r} is {batch.status.value}, not charging; "
                 "open it for charging before assigning crucibles"
             )
-        if sample.status in _NOT_CHARGEABLE:
-            problems.append(
-                f"sample {sample.sample_id!r} is {sample.status.value} and cannot be charged"
-            )
 
         occupied = self._session.scalar(
             select(Crucible).where(
                 Crucible.batch_id == batch.id,
-                Crucible.position_row == data.position_row,
-                Crucible.position_col == data.position_col,
+                Crucible.position_row == row,
+                Crucible.position_col == col,
             )
         )
         if occupied is not None:
             problems.append(
-                f"position {data.position_row}-{data.position_col} in batch "
-                f"{batch.batch_number!r} is already occupied"
+                f"position {row}-{col} in batch {batch.batch_number!r} is already occupied"
             )
         return problems
 

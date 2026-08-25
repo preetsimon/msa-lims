@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 2 in progress — furnace batching is built, verified live, wired to its outputs, and now carried through parting and weighing: a crucible's button/prill/acid and final bead are recorded at the bench, and a result naming the crucible derives every number from those records. Only QC insertion policy remains
+**Updated:** 2026-08-25 · **Phase:** 2 complete — furnace batching, result↔crucible wiring, per-crucible parting and weighing, and the QC insertion policy all built and verified live. A batch's tray carries client samples beside CRM/blank insertions from stock; every bead lands on its crucible row through one bench path. Phase 3 (lifecycle & prep) is next
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -13,30 +13,33 @@ first — it explains the decisions this document only tracks.
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
-| 2 · Fire assay batching | wk 5–7 | **In progress** — batching built and verified live; results wired to their crucibles; parting/weighing write paths landed; only QC insertion policy still open |
+| 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 429 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (the parting/weighing migration was checked
+**Health:** 470 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible (the QC-materials migration was checked
 with a full `downgrade base` / `upgrade head` round trip)
 · frontend builds and typechecks clean (TypeScript `strict` +
 `noUncheckedIndexedAccess`) · verified live through curl end to end: register
 a client, submission, and flux recipe; open a batch; charge a crucible with
 scaled reagent amounts; fire the batch through every furnace stage to
 `completed`, watching crucible status bulk-advance; record a crucible's
-parting and final weighing at the bench; and enter a fire assay result that
+parting and final weighing at the bench; enter a fire assay result that
 names its crucible alone — the portion and the bead coming back as the
 recorded 45 g charge and 0.225 mg weighing, nothing re-typed — with every
 refusal (re-typed numbers, premature parting, double parting, external role)
-demonstrated as a real status code. A post-Phase-1 audit (see its own section
+demonstrated as a real status code; register a CRM and charge it beside
+client samples in the same tray (both/neither refusals included), walk it
+through the furnace, part and weigh its bead, and prove a result can never
+name a QC crucible. A post-Phase-1 audit (see its own section
 below) found six defects, all fixed and tested; a five-item hardening pass
 followed it.
 **Phase 1 — the thinnest complete thread the original roadmap called
-for — is done. Phase 2's batching, result wiring, and per-crucible
-weighing are done; QC insertion policy remains.**
+for — is done. Phase 2 is done: batching, result wiring,
+per-crucible weighing, and recorded-not-enforced QC insertion.**
 
 ---
 
@@ -597,10 +600,51 @@ existing suite (which was already green: the findings below are all things
   and the service refuses a crucible that belongs to some *other* batch with
   a 404 — from this URL, that resource does not exist here.
 
+### QC insertion — `qc_materials/`, `batches/service.py`, `db/models.py`
+- **A crucible holds a sample or a QC material — never both, and not
+  neither.** `Crucible.sample_id` became nullable and gained a sibling
+  `qc_material_id`, with the exclusivity carried by a CHECK constraint at the
+  database and by an upfront refusal at the service: the charge request names
+  exactly one of the two, the same either/or discipline a fire assay result
+  already follows for crucible-vs-raw-weighings. The original `NOT NULL`
+  plan was honest for its moment — no QC tables existed, and a nullable column
+  nothing could populate would have been a half-built branch — but this pass
+  is what that note said it was waiting for.
+- **`qc_material` is stock reference data, mutable-tier.** A CRM carries its
+  certified gold grade *and* its uncertainty; a blank is defined by having
+  neither, and both sides of that rule are enforced together (a CRM without a
+  grade is refused naming what's missing; a blank carrying one is refused
+  naming the contradiction). The certified unit is fixed to `g/t` rather than
+  carried as a column — fire assay grades are `g/t` everywhere in this system,
+  and a second unit vocabulary for one column would be two conventions where
+  one exists. Lots retire via `is_active`, never deletion; a retired lot is
+  refused at charge time with the remedy named (register its replacement).
+- **Duplicate-type QC is deliberately not modelled.** `QcMaterialType`'s
+  field/prep/pulp duplicates re-insert an *existing sample* — they name a
+  sample, not a jar — so registration refuses them ("not a material") and no
+  stock row can exist for one. That insertion path is real remaining scope,
+  deferred with its reason stated.
+- **Insertion is recorded, not enforced** — the decision PROGRESS.md left
+  open. A batch may fire without a QC crucible in it; how many controls, of
+  which types, is lab QA policy this schema has no basis to invent, and half
+  the QC vocabulary (the duplicates) has no insertion path yet, so any
+  counting rule written today would guard an incomplete picture. Recording
+  honestly is the mechanical prerequisite any future enforcement would need.
+- **Everything downstream of the furnace is shared, deliberately.** A QC
+  charge gets the same bench-role gate, batch-must-be-`CHARGING` gate,
+  position rules, and flux scaling against its weighed-out charge as a sample
+  charge; fusion bulk-advances its status with the rest of the tray; parting
+  and weighing key on the crucible, not on what was in it. What differs:
+  charging moves no sample lifecycle (no sample exists), the audit event
+  carries `qc_material_id` instead of `sample_id`, and **a fire assay result
+  can never name a QC crucible** — refused at any stage with a message saying
+  why. Its bead is judged by QC Sentinel on export (Phase 5); there is
+  deliberately no verdict vocabulary here to judge it with.
+
 ### Database — `src/msa_lims/db/`
-- 14 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
+- 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
-  `certificate_result`, `flux_recipe`, `batch`, `crucible`.
+  `certificate_result`, `flux_recipe`, `batch`, `crucible`, `qc_material`.
 - `7172b2adeb7e` — initial schema.
 - `a64c168cff52` — audit events.
 - `b1d0c4e77a10` — **append-only grants**. Creates `msa_app` with no
@@ -623,6 +667,12 @@ existing suite (which was already green: the findings below are all things
   `prill_weight_mg`, `parting_acid_volume_ml`, `gold_bead_mg`, and their
   business timestamps) plus CHECK constraints, same schema-only rationale —
   `crucible` is already a mutable-tier table.
+- `1d81304e5265` / `b7c2f4a91d08` — the `qc_material` table plus
+  `Crucible.qc_material_id` (and `sample_id` going nullable, with the
+  exactly-one-of CHECK), then the **mutable** grants for `qc_material`, same
+  schema/mutability split as every table before it. The crucible columns ride
+  the schema migration with no grants companion — `crucible`'s mutable-tier
+  grants are table-level and already cover them.
 - Enums stored as VARCHAR with a CHECK rather than Postgres native enums, so
   removing a vocabulary value is not a table rewrite.
 - `submission.declared_sample_count` records what the client's paperwork claimed
@@ -640,16 +690,20 @@ existing suite (which was already green: the findings below are all things
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Twelve write endpoints, and five read endpoints:
+- Thirteen write endpoints, and five read endpoints:
   `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
   result and every certificate that names it), `GET /api/certificates/{id}`
   (metadata, sharing the exact certified-samples query the issuance response
   uses), `GET /api/certificates/{id}/pdf` (the raw document), and — new this
   phase — `GET /api/batches/{id}` (a batch and its crucibles, ordered the way
-  a technician reads a tray). `POST /api/fire-assay-results` was the first
+  a technician reads a tray).   `POST /api/fire-assay-results` was the first
   write to compute a response rather than only echo what it stored;
   `POST /api/batches/{id}/crucibles` is the second, computing scaled reagent
-  amounts from a recipe rather than storing raw input.
+  amounts from a recipe rather than storing raw input. The charge endpoint
+  now names *what* goes into the slot — `sample_id` or `qc_material_id`,
+  exactly one, enforced in the service and mirrored by a database CHECK;
+  `POST /api/qc-materials` registers the stock those insertions draw from,
+  gated by `MAY_CONFIGURE_LAB` like flux recipes.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -700,7 +754,7 @@ existing suite (which was already green: the findings below are all things
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 437
+### Tests — 470
 - **Unit** (192): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -729,7 +783,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (228, real Postgres): the append-only grants proven against
+- **Integration** (261, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -778,15 +832,34 @@ existing suite (which was already green: the findings below are all things
   full linear status walk with crucible status bulk-advancing at `FUSED`/
   `CUPELLED`, firing an empty batch refused, skipping a stage refused, batch
   detail ordering crucibles by tray position — both service-level and,
-  end-to-end through HTTP, the full open→charge→fire→complete walk and the
-  precondition/position/role refusals as real status codes; plus, new this
-  increment, parting and weighing (16 tests — parting recording button/prill/
-  acid and advancing a cupelled crucible, parting while still charged or
-  fused refused as the domain error, parting twice refused, weighing before
-  parting refused, a prep tech parting at the bench while a client is
-  refused, the transition audit event carrying the measurements, a crucible
-  from another batch 404-ing under its URL, and over HTTP the full
-  cupelled→parted→weighed walk with every refusal as a real status code).
+   end-to-end through HTTP, the full open→charge→fire→complete walk and the
+   precondition/position/role refusals as real status codes; plus parting and
+   weighing (16 tests — parting recording button/prill/
+   acid and advancing a cupelled crucible, parting while still charged or
+   fused refused as the domain error, parting twice refused, weighing before
+   parting refused, a prep tech parting at the bench while a client is
+   refused, the transition audit event carrying the measurements, a crucible
+   from another batch 404-ing under its URL, and over HTTP the full
+   cupelled→parted→weighed walk with every refusal as a real status code);
+   and, new this increment, QC insertion (33 tests — material registration
+   service-level (11: a CRM registered with its certified grade and audit
+   event, a duplicate name refused, an analyst refused, a CRM without its
+   grade refused, a blank carrying one refused naming the contradiction, both
+   CRM problems reported together, a blank without one registering fine,
+   duplicate types refused as "not a material", retirement in place proven
+   under the restricted application role, and the database's own CHECK
+   refusing a negative certified value) and over HTTP (6 — supervisor `201`,
+   analyst `403`, duplicate name, duplicate type, and both sides of the
+   certified-grade rule as real status codes); charging a QC crucible (8 —
+   flux scaled from its weighed-out charge, sample and QC slots side by side
+   in one tray, both-ids and neither-id refused, unknown material 404, a
+   retired lot refused with the remedy named, client role refused, the audit
+   event carrying `qc_material_id`); the furnace treating a QC slot like any
+   other (2 — bulk-advance at `FUSED`, parting and weighing landing the bead
+   on the row); result entry refusing a QC crucible at any stage (1, naming
+   both ids); and over HTTP (5 — charge `201` with `sample_id` null and
+   reagents scaled, both/neither 422, unknown material 404, pending-batch
+   422, and the full charge→fire→part→weigh walk for a QC slot)).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -955,6 +1028,27 @@ tier; and `audit_event` showed the full story in order — batch transition,
 crucible `cupelled → parted → weighed` with the bead weight in the payload,
 then the result's `create`. Demo data was truncated afterward.
 
+QC insertion verified live over a fresh curl chain: a supervisor registered
+CRM `OREAS 501d` (**201**, certified grade and uncertainty echoed back); an
+analyst registering one was refused (**403**); a blank carrying a certified
+value was refused with the contradiction named ("a blank has no certified
+grade; leave the certified value and uncertainty unset"); a
+`field_duplicate` registration was refused ("not a material; duplicates
+re-insert an existing sample"). A batch was opened, opened for charging, and
+the CRM charged at 45 g into slot 1-6 (**201**, `sample_id: null`,
+`qc_material_id: 1`, every reagent scaled by exactly 45/30 — litharge
+60 → `90.0`) beside a client sample charged into slot 2-1; naming both a
+sample and the material returned **422** ("exactly one of the two"), as did
+naming neither. The batch walked `in_fusion → cupelled`, the QC crucible's
+status bulk-advancing with the tray; a `prep_tech` parted it and an analyst
+weighed its **0.692 mg** bead onto the row. A fire assay result naming that
+QC crucible — even weighed — was refused (**422**, "crucible #1 holds a QC
+material (#1), not sample #1"), while the same request naming the *sample's*
+crucible derived its recorded charge and bead into exactly `5.000 g/t`,
+proving the shared path still composes. `audit_event` showed the QC
+crucible's `create` carrying `qc_material_id` and no sample id. Demo data
+was truncated afterward.
+
 ---
 
 ## Decision log
@@ -1018,6 +1112,11 @@ then the result's `create`. Demo data was truncated afterward.
 | 2026-08-25 | Hand-driven crucible moves are a **separate, explicitly-partial transition set**, not a second full state machine | Fusion and cupellation happen to the whole tray at once through batch transitions; parting and weighing happen to one crucible at a time through their endpoints. Modelling both kinds in one table would imply direct paths (say, `CHARGED → PARTED`) that no endpoint offers. The checker reuses `TransitionNotAllowedError`, so a wrong-stage parting is the same refusal family as a skipped furnace stage. |
 | 2026-08-25 | Parting and weighing are **bench work** (`BENCH_ROLES`), not result interpretation | Physical acts at the furnace and balance are the same kind of authority as charging — which a prep tech holds. Interpreting what was weighed stays behind `MAY_ENTER_RESULTS`; recording that it happened does not. |
 | 2026-08-25 | A result naming a **weighed** crucible derives its bead from the recorded weighing; before weighing, a typed bead remains honest input | Once the crucible's own weighing exists, accepting a second typed number would let the result contradict its provenance — identical to the portion rule. But until then there is genuinely nothing to derive from: refusing the typed bead would block every real assay, so the boundary is stated rather than papered over. |
+| 2026-08-25 | A crucible charge names **exactly one** of `sample_id`/`qc_material_id` — both and neither refused, the exclusivity also carried by a database CHECK | The fire-assay-result request already established this shape ("either a crucible or raw weighings — never both, and not neither"). One slot holds one thing; a request naming two would be ambiguous about what was assayed, and naming zero would be an empty crucible pretending to be charged. |
+| 2026-08-25 | QC insertion is **recorded, not enforced** — a batch may fire with no QC crucible in it (the open Phase 2 question, decided) | How many controls a batch needs, of which types, is lab QA policy this schema has no basis to invent — and half the QC vocabulary (`field`/`prep`/`pulp` duplicate insertions re-insert an existing *sample*) has no insertion path yet, so any counting rule written today would guard half the picture. Recording honestly is the mechanical prerequisite any future enforcement would need; the policy itself stays with the lab. |
+| 2026-08-25 | Duplicate-type QC is **refused at registration**, not given nullable stock rows | A field duplicate has no jar, no lot number, no certified grade — it is a *re-insertion of an existing sample*. Giving it a row shaped like stock would make `qc_material` lie about what it holds; the honest refusal names what duplicates actually are and defers their real insertion path. |
+| 2026-08-25 | A **retired** QC material cannot be charged into a new batch | Retirement means "this lot no longer guards work" — an expired or contaminated CRM inserted anyway would produce QC data everyone would have to remember to discount. The refusal names the remedy (register its replacement); historical batches still name the retired row, which is why retirement is `is_active`, never deletion. |
+| 2026-08-25 | A fire assay result can **never name a QC crucible**, at any stage | Result entry exists for samples; a QC insertion holds none. Its bead is judged by QC Sentinel on export (Phase 5), and there is deliberately no verdict vocabulary here to judge it with — letting one through would start this system silently grading its own controls under a sample's identity. |
 
 ---
 
@@ -1093,13 +1192,15 @@ then the result's `create`. Demo data was truncated afterward.
    bulk-advancing, and a fire assay result entered against the now-`in_assay`
    sample — proving this phase composes with Phase 1 rather than
    conflicting with it.
-2. **QC insertion policy.** No `crm_lots` or QC-material tables exist yet, and
-   `Crucible.sample_id` is `NOT NULL` — a QC crucible (a blank, a CRM, a
-   duplicate) has no row shape to occupy. Needs its own design pass: at
-   minimum a `QcMaterialType`-tagged crucible variant (already anticipated by
-   `domain/enums.py`'s `QcMaterialType` since Phase 0) and a decision about
-   whether QC insertion is enforced (a batch cannot fire without one) or
-   merely recorded.
+2. ~~**QC insertion policy.**~~ **Done 2026-08-25** — `qc_material` stock
+   table (CRM/blank/coarse blank, certified grade + uncertainty for CRMs,
+   mutable-tier grants), `Crucible.qc_material_id` with the exactly-one-of
+   CHECK (`sample_id` now nullable), charging through the same endpoint,
+   furnace/bench paths shared, and a fire assay result refused from ever
+   naming a QC crucible. Insertion is recorded, not enforced — see the
+   decision log. Duplicate-type QC (re-inserting an existing sample) remains
+   future scope. 33 new tests; verified live end to end — see "Verified
+   live." **Phase 2 is complete.**
 3. ~~**Wire `fire_assay_result` to the crucible it came from.**~~ **Done
    2026-08-25** — nullable `crucible_id` on the result (migration
    `cfef85e840d4`, schema-only); a named crucible derives the stored portion
@@ -1211,8 +1312,10 @@ then the result's `create`. Demo data was truncated afterward.
   needs a decision about ordering — does the hole's total depth get entered
   before or after all its samples, and can it be corrected once samples exist
   — that the drill-hole endpoint alone can't resolve.
-- ~~**QC insertion policy.**~~ Still open — see "Next actions" above; no
-  `crm_lots`/QC-material schema exists yet.
+- ~~**QC insertion policy.**~~ **Resolved 2026-08-25** — insertion is
+  recorded, not enforced; see the QC insertion section and the decision log.
+  Still open within it: the duplicate-type insertion path (re-inserting an
+  existing sample) has no schema or endpoint yet.
 - ~~**`fire_assay_result` is not wired to the crucible it came from.**~~
   **Resolved 2026-08-25** — a result may name its crucible, and when it does
   the stored portion *is* the recorded charge, not a re-typed number; see

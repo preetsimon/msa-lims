@@ -69,6 +69,7 @@ def charge_crucible(
         CrucibleChargeInput(
             batch_id=batch_id,
             sample_id=body.sample_id,
+            qc_material_id=body.qc_material_id,
             flux_recipe_id=body.flux_recipe_id,
             position_row=body.position_row,
             position_col=body.position_col,

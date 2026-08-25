@@ -22,10 +22,11 @@ from msa_lims.db.models import (
     FireAssayResult,
     FluxRecipe,
     Project,
+    QcMaterial,
     Sample,
     Submission,
 )
-from msa_lims.domain.enums import BatchStatus, MatrixType, SampleType
+from msa_lims.domain.enums import BatchStatus, MatrixType, QcMaterialType, SampleType
 from msa_lims.domain.values import MeasuredValue
 
 
@@ -479,6 +480,40 @@ class FluxRecipeOut(BaseModel):
         )
 
 
+class QcMaterialCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100, description="e.g. 'OREAS 501d'")
+    qc_type: QcMaterialType
+    lot_number: str | None = Field(default=None, max_length=100)
+    #: Required for a CRM, refused for a blank — a blank is defined by having
+    #: no certified grade. Enforced in the service so both sides of the rule
+    #: are reported together.
+    certified_au_value_g_t: Decimal | None = None
+    certified_au_uncertainty_g_t: Decimal | None = None
+    notes: str | None = None
+
+
+class QcMaterialOut(BaseModel):
+    id: int
+    name: str
+    qc_type: str
+    lot_number: str | None
+    certified_au_value_g_t: Decimal | None
+    certified_au_uncertainty_g_t: Decimal | None
+    is_active: bool
+
+    @classmethod
+    def from_model(cls, material: QcMaterial) -> QcMaterialOut:
+        return cls(
+            id=material.id,
+            name=material.name,
+            qc_type=material.qc_type.value,
+            lot_number=material.lot_number,
+            certified_au_value_g_t=material.certified_au_value_g_t,
+            certified_au_uncertainty_g_t=material.certified_au_uncertainty_g_t,
+            is_active=material.is_active,
+        )
+
+
 class BatchCreate(BaseModel):
     opened_at: datetime
     notes: str | None = None
@@ -489,7 +524,11 @@ class BatchStatusUpdate(BaseModel):
 
 
 class CrucibleChargeCreate(BaseModel):
-    sample_id: int
+    #: The sample this crucible assays — or, for a QC insertion, leave unset
+    #: and name ``qc_material_id`` instead. Exactly one of the two; the service
+    #: refuses both and neither alike.
+    sample_id: int | None = None
+    qc_material_id: int | None = None
     flux_recipe_id: int
     position_row: int = Field(gt=0)
     position_col: int = Field(gt=0)
@@ -517,7 +556,10 @@ class CrucibleWeighingCreate(BaseModel):
 class CrucibleOut(BaseModel):
     id: int
     batch_id: int
-    sample_id: int
+    #: Null for a QC insertion, where ``qc_material_id`` names what was
+    #: charged instead — the two are mutually exclusive at the database.
+    sample_id: int | None
+    qc_material_id: int | None
     flux_recipe_id: int
     position_row: int
     position_col: int
@@ -544,6 +586,7 @@ class CrucibleOut(BaseModel):
             id=crucible.id,
             batch_id=crucible.batch_id,
             sample_id=crucible.sample_id,
+            qc_material_id=crucible.qc_material_id,
             flux_recipe_id=crucible.flux_recipe_id,
             position_row=crucible.position_row,
             position_col=crucible.position_col,

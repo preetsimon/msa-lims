@@ -353,3 +353,124 @@ class TestRecordingPartingAndWeighingThroughHttp:
             headers=FIELD_CLIENT,
         )
         assert response.status_code == 403
+
+
+@pytest.fixture
+def crm_id(client: TestClient) -> int:
+    response = client.post(
+        "/api/qc-materials",
+        json={
+            "name": "OREAS 501d",
+            "qc_type": "crm",
+            "lot_number": "LOT-2026-A",
+            "certified_au_value_g_t": "1.54",
+            "certified_au_uncertainty_g_t": "0.06",
+        },
+        headers=SUPERVISOR,
+    )
+    return int(response.json()["id"])
+
+
+class TestChargingAQcCrucibleThroughHttp:
+    def charge_qc(
+        self,
+        client: TestClient,
+        batch_id: int,
+        crm_id: int,
+        recipe_id: int,
+        **overrides: object,
+    ) -> object:
+        body: dict[str, object] = {
+            "qc_material_id": crm_id,
+            "sample_id": None,
+            "flux_recipe_id": recipe_id,
+            "position_row": 2,
+            "position_col": 2,
+            "sample_weight_g": "45",
+            "charged_at": "2026-08-25T09:30:00Z",
+        }
+        body.update(overrides)
+        return client.post(f"/api/batches/{batch_id}/crucibles", json=body, headers=ANALYST)
+
+    def test_a_qc_material_charges_with_the_batch_open_for_charging(
+        self, client: TestClient, batch_id: int, crm_id: int, recipe_id: int
+    ) -> None:
+        client.patch(
+            f"/api/batches/{batch_id}/status", json={"status": "charging"}, headers=ANALYST
+        )
+        response = self.charge_qc(client, batch_id, crm_id, recipe_id)
+        assert response.status_code == 201
+        body = response.json()
+        assert body["qc_material_id"] == crm_id
+        assert body["sample_id"] is None
+        # Scaled from the 45 g charge against the recipe's 30 g nominal.
+        assert body["litharge_g"] == "90.0"
+
+    def test_naming_both_a_sample_and_a_material_is_422(
+        self,
+        client: TestClient,
+        batch_id: int,
+        crm_id: int,
+        recipe_id: int,
+        sample_id: int,
+    ) -> None:
+        client.patch(
+            f"/api/batches/{batch_id}/status", json={"status": "charging"}, headers=ANALYST
+        )
+        response = self.charge_qc(client, batch_id, crm_id, recipe_id, sample_id=sample_id)
+        assert response.status_code == 422
+
+    def test_an_unknown_material_is_404(
+        self, client: TestClient, batch_id: int, recipe_id: int
+    ) -> None:
+        client.patch(
+            f"/api/batches/{batch_id}/status", json={"status": "charging"}, headers=ANALYST
+        )
+        response = self.charge_qc(client, batch_id, crm_id=999_999, recipe_id=recipe_id)
+        assert response.status_code == 404
+
+    def test_a_qc_charge_into_a_pending_batch_is_422(
+        self, client: TestClient, batch_id: int, crm_id: int, recipe_id: int
+    ) -> None:
+        response = self.charge_qc(client, batch_id, crm_id, recipe_id)
+        assert response.status_code == 422
+
+    def test_a_qc_crucible_walks_the_furnace_and_parts_and_weighes(
+        self, client: TestClient, batch_id: int, crm_id: int, recipe_id: int
+    ) -> None:
+        """End to end over HTTP: the QC slot rides the same tray, and its bead
+        is recorded through the same bench paths."""
+        client.patch(
+            f"/api/batches/{batch_id}/status", json={"status": "charging"}, headers=ANALYST
+        )
+        charged = self.charge_qc(client, batch_id, crm_id, recipe_id).json()
+        crucible_id = int(charged["id"])
+
+        for stage in ("in_fusion", "fused", "in_cupellation", "cupelled"):
+            walked = client.patch(
+                f"/api/batches/{batch_id}/status", json={"status": stage}, headers=ANALYST
+            )
+            assert walked.status_code == 200
+
+        detail = client.get(f"/api/batches/{batch_id}").json()
+        assert detail["crucibles"][0]["status"] == "cupelled"
+
+        parted = client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/parting",
+            json={
+                "lead_button_weight_mg": "26.1",
+                "prill_weight_mg": "0.480",
+                "parting_acid_volume_ml": "5",
+                "parted_at": "2026-08-25T10:00:00Z",
+            },
+            headers=ANALYST,
+        )
+        assert parted.status_code == 200
+
+        weighed = client.post(
+            f"/api/batches/{batch_id}/crucibles/{crucible_id}/weighing",
+            json={"gold_bead_mg": "0.004", "weighed_at": "2026-08-25T11:00:00Z"},
+            headers=ANALYST,
+        )
+        assert weighed.status_code == 200
+        assert weighed.json()["status"] == "weighed"

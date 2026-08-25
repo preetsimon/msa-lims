@@ -21,12 +21,22 @@ from msa_lims.batches.service import (
     CrucibleWeighingInput,
     get_batch_detail,
 )
-from msa_lims.db.models import AuditEvent, Client, Crucible, FluxRecipe, LabUser, Sample, Submission
+from msa_lims.db.models import (
+    AuditEvent,
+    Client,
+    Crucible,
+    FluxRecipe,
+    LabUser,
+    QcMaterial,
+    Sample,
+    Submission,
+)
 from msa_lims.domain.batch_lifecycle import FurnacePositionError
 from msa_lims.domain.enums import (
     BatchStatus,
     CrucibleStatus,
     MatrixType,
+    QcMaterialType,
     Role,
     SampleStatus,
     SampleType,
@@ -34,6 +44,7 @@ from msa_lims.domain.enums import (
 from msa_lims.domain.flux import FluxCalculationError
 from msa_lims.domain.lifecycle import InsufficientRoleError, TransitionNotAllowedError
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError
+from msa_lims.qc_materials.service import QcMaterialNotFoundError
 
 pytestmark = pytest.mark.integration
 
@@ -115,6 +126,7 @@ def charge_input(**overrides: object) -> CrucibleChargeInput:
     defaults: dict[str, object] = {
         "batch_id": 1,
         "sample_id": 1,
+        "qc_material_id": None,
         "flux_recipe_id": 1,
         "position_row": 1,
         "position_col": 1,
@@ -124,6 +136,20 @@ def charge_input(**overrides: object) -> CrucibleChargeInput:
     }
     defaults.update(overrides)
     return CrucibleChargeInput(**defaults)  # type: ignore[arg-type]
+
+
+@pytest.fixture
+def crm(app_session: Session) -> QcMaterial:
+    material = QcMaterial(
+        name="OREAS 501d",
+        qc_type=QcMaterialType.CRM,
+        lot_number="LOT-2026-A",
+        certified_au_value_g_t=Decimal("1.54"),
+        certified_au_uncertainty_g_t=Decimal("0.06"),
+    )
+    app_session.add(material)
+    app_session.flush()
+    return material
 
 
 class TestOpeningABatch:
@@ -904,3 +930,317 @@ class TestBatchDetail:
     def test_an_unknown_batch_is_refused(self, app_session: Session) -> None:
         with pytest.raises(BatchNotFoundError):
             get_batch_detail(app_session, 999_999)
+
+
+class TestChargingAQcCrucible:
+    """The other kind of thing that goes into a furnace slot: a CRM or a
+    blank from stock. Insertion is recorded here; judging it is Sentinel's."""
+
+    def test_a_qc_material_is_charged_with_scaled_flux(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=None,
+                qc_material_id=crm.id,
+                flux_recipe_id=recipe.id,
+                sample_weight_g=Decimal("45"),  # 1.5x nominal
+                position_row=3,
+                position_col=4,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert crucible.status is CrucibleStatus.CHARGED
+        assert crucible.sample_id is None
+        assert crucible.qc_material_id == crm.id
+        # Same scaling a sample charge gets — the CRM is physically weighed
+        # out like any other charge.
+        assert crucible.litharge_g == Decimal("90")
+
+    def test_charging_qc_and_a_sample_into_one_slot_each(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+        a_sample: Sample,
+    ) -> None:
+        """One tray carries both kinds side by side."""
+        service = BatchService(app_session, **FURNACE)
+        qc_crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=None,
+                qc_material_id=crm.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        sample_crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=2,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert qc_crucible.qc_material_id == crm.id
+        assert sample_crucible.sample_id == a_sample.id
+
+    def test_naming_both_a_sample_and_a_material_is_refused(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+        a_sample: Sample,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(CrucibleValidationError, match="exactly one"):
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=a_sample.id,
+                    qc_material_id=crm.id,
+                    flux_recipe_id=recipe.id,
+                ),
+                charged_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_naming_neither_is_refused(
+        self, app_session: Session, analyst: LabUser, charging_batch, recipe: FluxRecipe
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(CrucibleValidationError, match="exactly one"):
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=None,
+                    qc_material_id=None,
+                    flux_recipe_id=recipe.id,
+                ),
+                charged_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_an_unknown_qc_material_is_refused_as_missing(
+        self, app_session: Session, analyst: LabUser, charging_batch, recipe: FluxRecipe
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(QcMaterialNotFoundError):
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=None,
+                    qc_material_id=999_999,
+                    flux_recipe_id=recipe.id,
+                ),
+                charged_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_retired_material_cannot_be_charged(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+    ) -> None:
+        crm.is_active = False
+        app_session.flush()
+
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(CrucibleValidationError, match="retired"):
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=None,
+                    qc_material_id=crm.id,
+                    flux_recipe_id=recipe.id,
+                ),
+                charged_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_client_role_may_not_charge_qc(
+        self,
+        app_session: Session,
+        client_role_user: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        with pytest.raises(InsufficientRoleError):
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=None,
+                    qc_material_id=crm.id,
+                    flux_recipe_id=recipe.id,
+                ),
+                charged_by=client_role_user,
+                actor_role=Role.CLIENT,
+            )
+
+    def test_the_qc_charge_writes_an_audit_event_naming_the_material(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=None,
+                qc_material_id=crm.id,
+                flux_recipe_id=recipe.id,
+                position_row=2,
+                position_col=2,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        event = app_session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.table_name == "crucible", AuditEvent.record_id == crucible.id
+            )
+        )
+        assert event is not None
+        assert event.after["qc_material_id"] == crm.id
+        assert "sample_id" not in event.after
+
+
+class TestQcCrucibleThroughTheFurnace:
+    def test_fusing_bulk_advances_a_qc_crucible_too(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+        a_sample: Sample,
+    ) -> None:
+        """A furnace fuses a whole tray at once — QC slots included."""
+        service = BatchService(app_session, **FURNACE)
+        qc_crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=None,
+                qc_material_id=crm.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=2,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        for target in (BatchStatus.IN_FUSION, BatchStatus.FUSED):
+            service.advance_status(
+                charging_batch.id, target=target, advanced_by=analyst, actor_role=Role.ANALYST
+            )
+        app_session.flush()
+        assert qc_crucible.status is CrucibleStatus.FUSED
+
+    def test_a_qc_crucible_parts_and_weighes_like_any_other(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+        a_sample: Sample,
+    ) -> None:
+        """Parting and weighing key on the crucible, not on what was in it —
+        the measurements land on the row either way, which is exactly what a
+        future export to Sentinel needs."""
+        service = BatchService(app_session, **FURNACE)
+        qc_crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=None,
+                qc_material_id=crm.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=6,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=2,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        for target in (
+            BatchStatus.IN_FUSION,
+            BatchStatus.FUSED,
+            BatchStatus.IN_CUPELLATION,
+            BatchStatus.CUPELLED,
+        ):
+            service.advance_status(
+                charging_batch.id, target=target, advanced_by=analyst, actor_role=Role.ANALYST
+            )
+        parted = service.record_parting(
+            charging_batch.id,
+            qc_crucible.id,
+            parting_input(),
+            parted_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert parted.status is CrucibleStatus.PARTED
+
+        weighed = service.record_weighing(
+            charging_batch.id,
+            qc_crucible.id,
+            weighing_input(gold_bead_mg=Decimal("0.004")),
+            weighed_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert weighed.status is CrucibleStatus.WEIGHED
+        assert weighed.gold_bead_mg == Decimal("0.004")

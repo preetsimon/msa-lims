@@ -38,12 +38,14 @@ contradict its own provenance. The request therefore carries either a
 crucible or raw weighings — per number, never both — and the stored row always
 shows which path produced it. A named crucible must belong to the same sample
 and must have made it at least as far as cupellation: a bead does not exist
-before cupellation, and a rejected fusion produces no bead to weigh. A
-crucible that has been *weighed* supplies the bead itself; one still only
-cupelled or parted takes a typed bead, because nothing on record can be read
-back yet. Result entry does not itself advance the crucible's status —
-parting and weighing are recorded at the bench by their own write paths, not
-as a side effect of typing the bead in.
+before cupellation, and a rejected fusion produces no bead to weigh. A QC
+insertion holds no sample at all, so it is refused here regardless of stage —
+its bead is judged by QC Sentinel on export (Phase 5), never entered as a
+sample's result. A crucible that has been *weighed* supplies the bead itself;
+one still only cupelled or parted takes a typed bead, because nothing on
+record can be read back yet. Result entry does not itself advance the
+crucible's status — parting and weighing are recorded at the bench by their
+own write paths, not as a side effect of typing the bead in.
 """
 
 from __future__ import annotations
@@ -309,10 +311,19 @@ class FireAssayResultService:
                 "named, its recorded charge is the portion assayed"
             )
         if crucible.sample_id != sample.id:
-            problems.append(
-                f"crucible #{crucible.id} was charged with sample #{crucible.sample_id}, "
-                f"not #{sample.id}"
-            )
+            if crucible.sample_id is None:
+                # A QC insertion: its bead belongs to the crucible row and is
+                # judged by QC Sentinel on export — it is never entered as a
+                # sample's result here.
+                problems.append(
+                    f"crucible #{crucible.id} holds a QC material (#{crucible.qc_material_id}), "
+                    f"not sample #{sample.id}; results are entered for sample crucibles only"
+                )
+            else:
+                problems.append(
+                    f"crucible #{crucible.id} was charged with sample #{crucible.sample_id}, "
+                    f"not #{sample.id}"
+                )
         if crucible.status not in _BEAD_BEARING:
             problems.append(
                 f"crucible #{crucible.id} is {crucible.status.value}; a bead exists only "

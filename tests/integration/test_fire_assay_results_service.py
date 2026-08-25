@@ -515,6 +515,7 @@ class CupelledChain:
             CrucibleChargeInput(
                 batch_id=batch.id,
                 sample_id=sample.id,
+                qc_material_id=None,
                 flux_recipe_id=recipe.id,
                 position_row=2,
                 position_col=3,
@@ -875,6 +876,90 @@ class TestWiringAResultToItsCrucible:
         with pytest.raises(FireAssayResultValidationError, match="gold_bead_mg is required"):
             service.create(
                 result_input(sample_id=a_sample.id, gold_bead_mg=None),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+
+class TestResultsNeverNameQcCrucibles:
+    """A QC insertion holds no sample, so no sample result can name it at any
+    stage — its bead is judged by QC Sentinel on export, not entered here."""
+
+    @staticmethod
+    def cupelled_qc_crucible(app_session: Session, analyst: LabUser) -> Crucible:
+        from msa_lims.batches.service import BatchInput, BatchService, CrucibleChargeInput
+        from msa_lims.db.models import FluxRecipe, QcMaterial
+        from msa_lims.domain.enums import BatchStatus, MatrixType, QcMaterialType
+
+        material = QcMaterial(
+            name="OREAS 501d",
+            qc_type=QcMaterialType.CRM,
+            certified_au_value_g_t=Decimal("1.54"),
+            certified_au_uncertainty_g_t=Decimal("0.06"),
+        )
+        app_session.add(material)
+        recipe = FluxRecipe(
+            name="Standard Silicate",
+            matrix_type=MatrixType.SILICATE,
+            nominal_portion_g=Decimal("30"),
+            litharge_g=Decimal("60"),
+            soda_ash_g=Decimal("90"),
+            borax_g=Decimal("30"),
+            silica_g=Decimal("15"),
+            flour_g=Decimal("3"),
+            nitre_g=Decimal("0"),
+        )
+        app_session.add(recipe)
+        app_session.flush()
+
+        batches = BatchService(app_session, furnace_rows=6, furnace_columns=6)
+        batch = batches.create_batch(
+            BatchInput(opened_at=datetime(2026, 8, 25, 8, 0, tzinfo=UTC)),
+            opened_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        batches.advance_status(
+            batch.id, target=BatchStatus.CHARGING, advanced_by=analyst, actor_role=Role.ANALYST
+        )
+        crucible = batches.charge_crucible(
+            CrucibleChargeInput(
+                batch_id=batch.id,
+                sample_id=None,
+                qc_material_id=material.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+                sample_weight_g=Decimal("30"),
+                charged_at=datetime(2026, 8, 25, 9, 0, tzinfo=UTC),
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        for target in (
+            BatchStatus.IN_FUSION,
+            BatchStatus.FUSED,
+            BatchStatus.IN_CUPELLATION,
+            BatchStatus.CUPELLED,
+        ):
+            batches.advance_status(
+                batch.id, target=target, advanced_by=analyst, actor_role=Role.ANALYST
+            )
+        app_session.flush()
+        return crucible
+
+    def test_a_result_naming_a_cupelled_qc_crucible_is_refused_naming_both(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        crucible = self.cupelled_qc_crucible(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="holds a QC material"):
+            service.create(
+                result_input(
+                    sample_id=a_sample.id,
+                    gold_bead_mg=Decimal("0.225"),
+                    sample_weight_g=None,
+                    crucible_id=crucible.id,
+                ),
                 analyst=analyst,
                 actor_role=Role.ANALYST,
             )

@@ -13,7 +13,15 @@ from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-from msa_lims.db.models import Client, DrillHole, FireAssayResult, Project, Sample, Submission
+from msa_lims.db.models import (
+    Certificate,
+    Client,
+    DrillHole,
+    FireAssayResult,
+    Project,
+    Sample,
+    Submission,
+)
 from msa_lims.domain.enums import SampleType
 
 
@@ -261,4 +269,45 @@ class FireAssayResultOut(BaseModel):
             supersedes_id=result.supersedes_id,
             superseded_reason=result.superseded_reason,
             notes=result.notes,
+        )
+
+
+class CertificateCreate(BaseModel):
+    client_id: int
+    sample_ids: list[int] = Field(min_length=1)
+    issued_at: datetime
+    notes: str | None = None
+    supersedes_id: int | None = Field(
+        default=None, description="Set to amend an existing certificate."
+    )
+    superseded_reason: str | None = Field(
+        default=None, description="Required when supersedes_id is set."
+    )
+
+
+class CertificateOut(BaseModel):
+    id: int
+    certificate_number: str
+    client_id: int
+    issued_by_id: int
+    issued_at: datetime
+    sample_count: int
+    pdf_sha256: str
+    supersedes_id: int | None
+    superseded_reason: str | None
+    notes: str | None
+
+    @classmethod
+    def from_model(cls, certificate: Certificate, *, sample_count: int) -> CertificateOut:
+        return cls(
+            id=certificate.id,
+            certificate_number=certificate.certificate_number,
+            client_id=certificate.client_id,
+            issued_by_id=certificate.issued_by_id,
+            issued_at=certificate.issued_at,
+            sample_count=sample_count,
+            pdf_sha256=certificate.pdf_sha256,
+            supersedes_id=certificate.supersedes_id,
+            superseded_reason=certificate.superseded_reason,
+            notes=certificate.notes,
         )

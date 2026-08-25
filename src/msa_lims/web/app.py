@@ -5,6 +5,11 @@ from __future__ import annotations
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from msa_lims.certificates.service import (
+    CertificateCorruptedError,
+    CertificateNotFoundError,
+    CertificateValidationError,
+)
 from msa_lims.clients.service import (
     ClientNotFoundError,
     ClientValidationError,
@@ -28,6 +33,7 @@ from msa_lims.fire_assay_results.service import (
 )
 from msa_lims.submissions.service import SubmissionValidationError
 from msa_lims.web.routes import (
+    certificates,
     clients,
     drill_holes,
     fire_assay_results,
@@ -63,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(clients.router)
     app.include_router(drill_holes.router)
     app.include_router(fire_assay_results.router)
+    app.include_router(certificates.router)
     app.include_router(submissions.router)
     _register_error_handlers(app)
     return app
@@ -89,6 +96,11 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     SampleNotFoundError: status.HTTP_404_NOT_FOUND,
     FireAssayResultValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SubmissionValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    CertificateNotFoundError: status.HTTP_404_NOT_FOUND,
+    CertificateValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # A stored PDF that no longer hashes to what its row claims is a data
+    # integrity failure, not something the caller did wrong.
+    CertificateCorruptedError: status.HTTP_500_INTERNAL_SERVER_ERROR,
 }
 
 

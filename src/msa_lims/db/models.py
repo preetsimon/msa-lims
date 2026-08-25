@@ -1,10 +1,10 @@
 """The persistent model.
 
 Scope note: this is the **spine** — the entities a sample needs to exist, be
-found, and (as of Phase 1's gravimetric fire assay result) be assayed. Prep
-stage tracking, furnace batching, and certificates are still absent rather
-than stubbed, so that no table here is shaped by a guess about a workflow that
-has not been built.
+found, be assayed, and (as of Phase 1's Certificate of Analysis) be reported.
+Prep stage tracking and furnace batching are still absent rather than stubbed,
+so that no table here is shaped by a guess about a workflow that has not been
+built.
 
 Three conventions run through everything below and are worth reading once:
 
@@ -31,6 +31,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -40,7 +41,7 @@ from sqlalchemy import Enum as SaEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from msa_lims.db.base import Base, IdPk, TimestampMixin
+from msa_lims.db.base import Base, IdPk, Sha256, TimestampMixin
 from msa_lims.domain.enums import (
     AssayMethod,
     InstrumentStatus,
@@ -415,3 +416,73 @@ class FireAssayResult(Base, TimestampMixin):
     superseded_reason: Mapped[str | None] = mapped_column(Text)
 
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class Certificate(Base, TimestampMixin):
+    """A signed Certificate of Analysis.
+
+    **Append-only**, same mechanism as ``audit_event`` and
+    ``fire_assay_result``. An amendment is a new row whose ``supersedes_id``
+    points at the certificate it corrects, with a required
+    ``superseded_reason`` — never an ``UPDATE`` to the original or its stored
+    PDF.
+
+    Unlike ``fire_assay_result``, there is **no "only one current
+    certificate" rule**: a client can hold many independent certificates over
+    time, one per batch of samples reported. Supersession only prevents a
+    single chain from branching — the certificate a specific correction
+    replaces must itself not already be superseded — it does not limit how
+    many separate certificates a client may have.
+
+    The PDF is stored inline (``pdf_bytes``) rather than in a dedicated
+    content-addressed blob store — a Phase 1 simplification (see
+    PROGRESS.md), not a design commitment; QC Sentinel's write-once,
+    hash-verified ``storage/blob.py`` is the natural next step if raw
+    exports or attachments ever need the same treatment here.
+    ``pdf_sha256`` is a real content hash of ``pdf_bytes``, re-verified on
+    every read (see ``web/routes/certificates.py``), so a row that has
+    somehow drifted from what it claims to contain is refused rather than
+    served.
+    """
+
+    __tablename__ = "certificate"
+    __table_args__ = (
+        CheckConstraint(
+            "supersedes_id IS NULL OR "
+            "(superseded_reason IS NOT NULL AND length(trim(superseded_reason)) > 0)",
+            name="supersession_states_reason",
+        ),
+    )
+
+    id: Mapped[IdPk]
+    certificate_number: Mapped[str] = mapped_column(String(30), unique=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("client.id"), index=True)
+    issued_by_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("certificate.id"))
+    superseded_reason: Mapped[str | None] = mapped_column(Text)
+
+    pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary)
+    pdf_sha256: Mapped[Sha256]
+
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class CertificateResult(Base, TimestampMixin):
+    """One sample's result, frozen into a certificate at the moment it was issued.
+
+    Points at the **specific** ``fire_assay_result`` row certified, not just
+    the sample. If that result is later superseded, this row still records
+    what the certificate actually reported — which is the entire reason a
+    certificate exists as a document rather than a live query: it is a
+    historical statement, not a view.
+    """
+
+    __tablename__ = "certificate_result"
+    __table_args__ = (UniqueConstraint("certificate_id", "sample_id", name="certificate_sample"),)
+
+    id: Mapped[IdPk]
+    certificate_id: Mapped[int] = mapped_column(ForeignKey("certificate.id"), index=True)
+    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    fire_assay_result_id: Mapped[int] = mapped_column(ForeignKey("fire_assay_result.id"))

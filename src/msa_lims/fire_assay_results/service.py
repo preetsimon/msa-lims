@@ -43,6 +43,8 @@ from msa_lims.db.models import AuditEvent, FireAssayResult, LabUser, Sample
 from msa_lims.domain.assay import gravimetric_grade
 from msa_lims.domain.enums import MAY_ENTER_RESULTS, AssayMethod, Role, SampleStatus
 from msa_lims.domain.lifecycle import InsufficientRoleError
+from msa_lims.domain.units import Unit
+from msa_lims.domain.values import MeasuredValue
 
 
 class SampleNotFoundError(ValueError):
@@ -70,12 +72,17 @@ class FireAssayResultInput:
     superseded_reason: str | None = None
 
 
-def _current_result(session: Session, sample_id: int) -> FireAssayResult | None:
+def current_result(session: Session, sample_id: int) -> FireAssayResult | None:
     """The row for this sample that nothing else supersedes, if any.
 
     Found by exclusion rather than a stored "is_current" flag: a row is
     current exactly when no other row's ``supersedes_id`` names it, so there
     is nothing to keep in sync when a new correction lands.
+
+    Exported (not module-private) because certificate issuance needs the
+    identical question answered the identical way — a certificate must
+    freeze the *current* result at the moment it is signed, not just any
+    result that happens to exist for the sample.
     """
     superseded_ids = select(FireAssayResult.supersedes_id).where(
         FireAssayResult.supersedes_id.is_not(None)
@@ -84,6 +91,24 @@ def _current_result(session: Session, sample_id: int) -> FireAssayResult | None:
         select(FireAssayResult)
         .where(FireAssayResult.sample_id == sample_id, FireAssayResult.id.not_in(superseded_ids))
         .order_by(FireAssayResult.id.desc())
+    )
+
+
+def measured_value(result: FireAssayResult) -> MeasuredValue:
+    """Reconstruct the domain value a stored row represents.
+
+    The four ``au_*`` columns are how a :class:`MeasuredValue` is carried in
+    the schema (see the ``FireAssayResult`` model docstring); this is the one
+    place that turns them back into the object, so formatting — a censored
+    value rendering as ``<0.01 g/t``, never as an empty or zero value — stays
+    identical everywhere a result is displayed, on a certificate or anywhere
+    else.
+    """
+    return MeasuredValue(
+        unit=Unit(result.au_unit),
+        value=result.au_value,
+        detection_limit=result.au_detection_limit,
+        censored=result.au_censored,
     )
 
 
@@ -104,7 +129,7 @@ class FireAssayResultService:
         if sample is None:
             raise SampleNotFoundError(f"no sample with id {data.sample_id}")
 
-        current = _current_result(self._session, sample.id)
+        current = current_result(self._session, sample.id)
         problems = self._check_supersession(data, sample, current)
         if problems:
             raise FireAssayResultValidationError(problems)

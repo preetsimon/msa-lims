@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 1 in progress (fire assay result entry done; certificate of analysis next)
+**Updated:** 2026-08-25 · **Phase:** 1 nearly complete (Certificate of Analysis done; a minimal `GET` surface and React screens are what remain)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,21 +12,24 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **In progress** — auth, all reference-data registration, submission intake, and fire assay result entry all done; certificate of analysis next |
+| 1 · The spine | wk 2–4 | **Nearly done** — auth, all reference-data registration, submission intake, fire assay result entry, and Certificate of Analysis issuance all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 259 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 295 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible · frontend builds and typechecks · verified
 live through the browser: Vite → proxy → FastAPI → Postgres, with the degraded
 path exercised. The full spine now runs client → project → drill hole →
-submission → **a fire assay result computed from a real weighing** entirely
-through HTTP, including a live-verified correction (supersession) and a live
-proof that Postgres itself refuses an `UPDATE` against `fire_assay_result`
-using the exact credentials the deployed application holds.
+submission → fire assay result → **a signed, downloadable Certificate of
+Analysis PDF** entirely through HTTP — including a live-verified amendment
+chain and a live proof that Postgres refuses an `UPDATE` against both
+`fire_assay_result` and `certificate` using the exact credentials the
+deployed application holds. Live verification also caught and fixed a real
+defect: an unrounded grade printing 34 digits of `Decimal` division onto the
+certificate.
 
 ---
 
@@ -226,22 +229,87 @@ using the exact credentials the deployed application holds.
   `MeasuredValue` exactly (`value`, `detection_limit`, `censored`, `unit`),
   so the existing `formatMeasured` helper renders a non-detect correctly the
   moment a screen exists to show one.
+- `current_result`/`measured_value` were promoted from module-private to
+  exported — `certificates/service.py` needs the identical "what is the
+  current result for this sample" question answered the identical way, and
+  the identical `MeasuredValue`-from-columns reconstruction, so a certificate
+  can never disagree with the API about what a sample's grade is.
+
+### Certificate of Analysis — `src/msa_lims/certificates/`
+- **`pdf.py`** — pure PDF rendering (no session, no clock; every fact printed
+  arrives as data), and **byte-deterministic** — verified directly by a unit
+  test that renders identical content twice and asserts identical bytes, not
+  assumed. Two things make it true: `reportlab.pdfgen.canvas.Canvas(...,
+  invariant=1)` disables the library's default of stamping an effectively-
+  random document ID into the trailer on every render; and only the PDF
+  spec's own standard 14 fonts are used, so nothing is embedded and nothing
+  about font substitution can vary by platform.
+- **`service.py`** — `POST /api/certificates`, restricted to
+  `MAY_SIGN_CERTIFICATE` (`lab_manager` only — defined back in Phase 0,
+  anticipating exactly this). A certificate covers an explicit list of
+  `sample_ids`, not an implicit "whole submission": real certificates
+  sometimes span multiple submissions or report a subset as results become
+  available, and tying the model to "one submission" would have been the
+  wrong shape for that.
+- **Every sample must have a current fire assay result, or the whole request
+  is refused** — collected into one list, same "report every problem"
+  pattern as submission intake. A certificate cannot state a result nothing
+  measured.
+- **`certificate` is append-only, `certificate_result` is append-only** — new
+  migration `2d5f8a17c930`, following through on `b1d0c4e77a10`'s own
+  comment. `certificate_result` freezes the *specific* `fire_assay_result`
+  row each sample certified at the moment of issuance — not just the sample
+  — so if that result is later superseded, the certificate still records
+  exactly what it actually reported. A certificate is a historical
+  statement, not a live query.
+- **Unlike `fire_assay_result`, there is no "only one current document"
+  rule.** A client can hold many independent certificates over time — one
+  per batch reported. Supersession only prevents one specific chain from
+  branching (the anti-branching rule fire assay results already established),
+  never how many separate certificates a client may have.
+- **Issuing a certificate is the first Phase 1 write path that actually goes
+  through `domain.lifecycle.check_transition`'s real, already-modelled
+  `ASSAYED → REPORTED` transition** — fire assay result entry's own docstring
+  named this transition as unreachable at the time it was written, because
+  nothing existed yet to reach it from. This is where it becomes reachable.
+  Re-certifying an already-`REPORTED` sample (the amendment case) leaves its
+  status untouched.
+- **The PDF is stored inline (`pdf_bytes`, `pdf_sha256`), not in a dedicated
+  content-addressed blob store** — an explicit Phase 1 simplification, not a
+  design commitment (see the model docstring and the open questions below).
+  `pdf_sha256` is a *real* content hash, re-verified on every read by
+  `GET /api/certificates/{id}/pdf` — mirrors Sentinel's raw-export download,
+  which re-verifies its own content hash for the identical reason: a client
+  handed a silently altered certificate would have no way to know.
+- **`GET /api/certificates/{id}/pdf` is this system's first `GET` endpoint.**
+  Every write endpoint before it was POST-only. A signed document is the
+  first thing worth fetching again later, which is what finally motivated
+  building one.
+- **A real defect, found and fixed during live verification, not left for
+  later:** a grade whose bead-to-portion division does not terminate
+  (0.160 mg over 30 g) was printing the full 34-digit `Decimal` division
+  artifact straight onto the certificate — `5.333333333333333333333333333333333
+  g/t`. `certificates/service.py`'s `_display_grade` now rounds to three
+  decimal places with `ROUND_HALF_EVEN` (matching `domain/units.py`'s own
+  documented rounding convention) *only at the point a human reads the
+  number* — the stored `fire_assay_result.au_value` keeps full precision,
+  correct for recalculation and audit.
 
 ### Database — `src/msa_lims/db/`
-- 9 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
-  `instrument`, `lab_user`, `audit_event`, `fire_assay_result`.
+- 11 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
+  `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
+  `certificate_result`.
 - `7172b2adeb7e` — initial schema.
 - `a64c168cff52` — audit events.
 - `b1d0c4e77a10` — **append-only grants**. Creates `msa_app` with no
   UPDATE/DELETE on `audit_event`, and deliberately **no `ALTER DEFAULT
   PRIVILEGES`**: a table added in a later migration gets no grants until someone
   decides, in a reviewable diff, whether it is mutable or append-only.
-- `450d413603cf` — the `fire_assay_result` table.
-- `9a1c2e6f4b3d` — its append-only grants, in their own migration rather than
-  folded into `450d413603cf`, because grants and schema are reviewed as
-  separate decisions everywhere else in this repo (see `b1d0c4e77a10` vs.
-  `7172b2adeb7e`/`a64c168cff52`) and a new table should be a deliberate,
-  visible choice about mutability, not a side effect of adding columns.
+- `450d413603cf` / `9a1c2e6f4b3d` — the `fire_assay_result` table and its
+  append-only grants, in separate migrations (schema and mutability are
+  reviewed as separate decisions everywhere in this repo).
+- `f73c45982855` / `2d5f8a17c930` — the `certificate` and `certificate_result`
+  tables and their append-only grants, same split.
 - Enums stored as VARCHAR with a CHECK rather than Postgres native enums, so
   removing a vocabulary value is not a table rewrite.
 - `submission.declared_sample_count` records what the client's paperwork claimed
@@ -259,9 +327,11 @@ using the exact credentials the deployed application holds.
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Six write endpoints exist now, all POST-only — nothing has a `GET` yet
-  except `/health` and `/api/me`. `POST /api/fire-assay-results` is the
-  first that computes a response rather than only echoing what it stored.
+- Seven write endpoints exist now. `POST /api/fire-assay-results` was the
+  first that computes a response rather than only echoing what it stored;
+  `GET /api/certificates/{id}/pdf` is the first `GET` endpoint in the whole
+  system — every other read still means reading a POST response or querying
+  the database directly.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -272,29 +342,35 @@ using the exact credentials the deployed application holds.
   with `formatMeasured` so a non-detect cannot be rendered as its null value.
 - One screen so far: system status, which exists to prove the whole path.
 
-### Tests — 259
-- **Unit** (143): units and dimensions, censored values, assay arithmetic,
+### Tests — 295
+- **Unit** (154): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals (including the `format_hole_id`/
   `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
   state machine, OIDC token verification against a real self-signed keypair,
   the auth dependency exercised through a real FastAPI app (`TestClient`)
-  across dev-header and OIDC modes.
+  across dev-header and OIDC modes, Certificate of Analysis PDF
+  byte-determinism (identical content twice → identical bytes; different
+  content → different bytes; an 80-sample page-break case), and the grade-
+  rounding fix (a non-terminating division rounds to three decimal places
+  under `ROUND_HALF_EVEN`; a clean value is unaffected; a non-detect's
+  detection limit is never rounded; the stored full-precision value is
+  untouched by rendering).
 - **Property** (17, Hypothesis): conversion round-trips within working
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (99, real Postgres): the append-only grants proven against the
-  actual application role; submission intake against the service directly and
-  through the real HTTP app (26 tests); client and project registration
-  against the service directly and through HTTP (21 tests); drill hole
-  registration against the service directly and through HTTP (16 tests,
-  including the hole-canonicalisation-matches-a-drill-sample proof); fire
-  assay result entry against the service directly and through HTTP (26 tests
-  — the computed grade, the ASSAYED transition, every supersession refusal
-  including anti-branching and cross-sample supersession, and — proven
-  directly against the real `msa_app` role, the same pattern
-  `test_append_only.py` established for `audit_event` — that Postgres itself
-  refuses both `UPDATE` and `DELETE` against `fire_assay_result`).
+- **Integration** (124, real Postgres): the append-only grants proven against
+  the actual application role; submission intake against the service directly
+  and through the real HTTP app (26 tests); client and project registration
+  (21 tests); drill hole registration (16 tests, including the
+  hole-canonicalisation-matches-a-drill-sample proof); fire assay result entry
+  (26 tests — the computed grade, the ASSAYED transition, every supersession
+  refusal including anti-branching, and a direct proof that Postgres refuses
+  `UPDATE`/`DELETE` against `fire_assay_result`); Certificate of Analysis
+  issuance (25 tests — issuance, the ASSAYED→REPORTED transition, every
+  validation refusal including cross-client isolation and anti-branching on
+  the amendment chain, the hash-verified download, and a direct proof that
+  Postgres refuses `UPDATE`/`DELETE` against `certificate` too).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -353,6 +429,28 @@ table fire_assay_result` — not a service-layer promise, a database-enforced
 one, checked live exactly as `test_append_only.py` checks it for
 `audit_event`.
 
+Certificate of Analysis issuance verified live end to end, and this pass is
+what caught the grade-rounding defect described above before it shipped. A
+`lab_manager` issues a certificate for a sample with a `0.150` mg bead
+(**201**, `COA-2026-0001`, a real 64-character `pdf_sha256`); downloading
+`GET /api/certificates/1/pdf` returns bytes whose independently-computed
+`sha256` matched the header exactly; the sample's status in the database
+changed from `assayed` to `reported`; an `analyst` attempting to issue a
+certificate is refused with **403**. Re-run with a bead weight that does
+**not** divide evenly (`0.160` mg over `30` g) first reproduced the defect —
+the downloaded PDF showed `5.333333333333333333333333333333333 g/t` — and
+after the fix, the identical live sequence showed a clean `5.333 g/t` while
+`GET /api/fire-assay-results`' own JSON kept the full stored precision,
+confirming the fix is display-only. The amendment path was then verified: the
+underlying result was superseded with a corrected bead weight, the
+certificate was re-issued referencing the original by `supersedes_id` with a
+stated reason (**201**, `COA-2026-0002`, PDF showing "This certificate
+supersedes COA-2026-0001. Reason: …"), and a second attempt to supersede the
+now-superseded original was refused with **422**. Finally, with the deployed
+application's own `msa_app` credentials, a direct `psql`
+`UPDATE certificate SET notes='tampered'` was refused with
+`permission denied for table certificate`.
+
 ---
 
 ## Decision log
@@ -382,6 +480,11 @@ one, checked live exactly as `test_append_only.py` checks it for
 | 2026-08-25 | Superseding a row that is not currently the chain's head is **refused**, not permitted as a branch | Mirrors QC Sentinel's rule against double-replacement in a re-assay chain. Allowing it would let two different "corrections" of the same original both claim to be current, and nothing in the schema says which one wins. |
 | 2026-08-25 | Entering a sample's first result moves it straight to `ASSAYED`, **bypassing `domain/lifecycle.py`'s `Transition` table** rather than adding a fake transition to it | The legal path to `ASSAYED` requires `IN_ASSAY`, which nothing can reach yet — furnace batching doesn't exist. Adding a permissive `RECEIVED → ASSAYED` row to the shared `TRANSITIONS` tuple would misrepresent a real legal path once Phase 2 lands. A narrow, honestly-documented guard local to this service says exactly what it is: a Phase 1 simplification, not lab policy. |
 | 2026-08-25 | The append-only grants for `fire_assay_result` are their **own migration** (`9a1c2e6f4b3d`), not folded into the table-creation migration | Matches the existing split between `b1d0c4e77a10` and the schema migrations before it: schema and mutability are separate decisions, each visible on its own in the migration history. |
+| 2026-08-25 | A certificate covers an **explicit list of `sample_ids`**, not an implicit "every sample in submission X" | Real certificates sometimes span multiple submissions or report a ready subset while other samples are still pending. Tying the model to one submission would have made those the wrong shape rather than merely unsupported. |
+| 2026-08-25 | **No "only one current certificate per client" rule**, unlike `fire_assay_result`'s "only one current result per sample" | A client legitimately holds many independent certificates over time — one per batch reported. Supersession only guards a single chain against branching; it was never meant to cap how many documents a client has. |
+| 2026-08-25 | The PDF is stored **inline** (`pdf_bytes` + `pdf_sha256`) rather than in a dedicated content-addressed blob store | A full write-once, hash-verified blob store (mirroring QC Sentinel's `storage/blob.py`) is real infrastructure this Phase does not yet need anywhere else. `pdf_sha256` still gives genuine content-addressing and read-time verification without building the abstraction before a second use case (raw exports, attachments) exists to justify it. |
+| 2026-08-25 | Issuing a certificate **actually calls** `domain.lifecycle.check_transition` for the `ASSAYED → REPORTED` move, rather than bypassing it the way fire assay result entry had to | The legal path exists and is reachable here (the sample is genuinely `ASSAYED` by this point) — this is exactly the scenario `check_transition` was built for, unlike result entry's `RECEIVED → ASSAYED` shortcut, which had no real transition to route through. |
+| 2026-08-25 | A computed grade is **rounded only at the point a certificate presents it to a person** (`ROUND_HALF_EVEN`, 3 decimal places), never in the stored `fire_assay_result.au_value` | Caught live: a non-terminating division (0.160 mg / 30 g) printed 34 digits of `Decimal` artifact on a signed document. Rounding in the domain calculation itself would have silently discarded real precision for the common case where the division *does* terminate cleanly; rounding only at display time keeps the stored, audit-relevant value exact while fixing what a human actually reads. |
 
 ---
 
@@ -415,12 +518,18 @@ one, checked live exactly as `test_append_only.py` checks it for
    a correction with a recalculated grade, an anti-branching refusal, and the
    database itself refusing a tampering attempt with the deployed
    application's own credentials.
-6. Certificate of analysis: versioned row, byte-deterministic PDF, amended
-   never overwritten.
-7. Sample list and detail screens in React over those endpoints. With six
-   POST-only endpoints now built and nothing to read them back with, a
-   minimal `GET /api/samples/{id}` (or similar) is close to a prerequisite
-   for this, not purely a frontend concern.
+6. ~~**Certificate of analysis: versioned row, byte-deterministic PDF, amended
+   never overwritten.**~~ **Done 2026-08-25** — `POST /api/certificates`,
+   `GET /api/certificates/{id}/pdf` (the system's first `GET` endpoint), both
+   verified live. 31 new tests, including a unit-level determinism proof and
+   a direct proof against the real application role that Postgres refuses
+   `UPDATE`/`DELETE`. Live verification caught and fixed a real grade-
+   rounding defect before it shipped — see the decision log.
+7. Sample list and detail screens in React over these endpoints. With seven
+   write endpoints now built and only one narrow `GET` (a certificate's PDF,
+   by id, no metadata listing), a minimal `GET /api/samples/{id}` and
+   `GET /api/certificates/{id}` (JSON metadata, not just the PDF) are close
+   to a prerequisite for this, not purely a frontend concern.
 
 ## Open questions
 
@@ -438,12 +547,27 @@ one, checked live exactly as `test_append_only.py` checks it for
   future contamination or calibration-drift investigation has nothing to
   trace back to a specific piece of equipment. Deferred because `instrument`
   currently only tracks calibration due-dates, not per-weighing readings.
-- **No `GET` endpoint exists for a fire assay result, or anything else.**
-  Every one of the six write endpoints so far is POST-only. Confirming a
-  write worked currently means reading the POST response or querying the
-  database directly, which is what every test here still does. This is now
-  flagged as close to a prerequisite for the React sample-detail screen, not
-  purely a nice-to-have.
+- **No `GET` endpoint exists for a fire assay result, a submission, or a
+  certificate's metadata** — only a certificate's raw PDF, by id. Confirming
+  most writes worked still means reading the POST response or querying the
+  database directly. Close to a prerequisite for the React sample-detail
+  screen, not purely a nice-to-have.
+- **The PDF's inline `pdf_bytes` storage is a named simplification, not a
+  commitment.** If raw ICP exports or attachments are ever added, a real
+  content-addressed blob store (mirroring QC Sentinel's `storage/blob.py`) is
+  the natural point to build one and migrate `certificate` onto it — not
+  before, since nothing else needs it yet.
+- **No automatic detection that a certificate has gone stale.** If a
+  `fire_assay_result` a certificate already certified is later superseded,
+  nothing flags the certificate as needing an amendment — a person has to
+  notice and issue one manually (which works, and is tested), but the system
+  does not surface the staleness itself.
+- **No client-scoped authorisation on certificate download.** Any
+  authenticated actor — including the `client` role — can `GET` any
+  certificate's PDF by id. There is no per-client row-level scoping anywhere
+  in this system yet; a real client portal would need it before this
+  endpoint could be exposed to clients directly rather than only to lab
+  staff.
 - **Submission numbering.** `SUB-2026-0841` is invented. Needs the real
   convention before Phase 1 hardens it into stored data.
 - **Does a sample ever move between submissions?** Currently `submission_id` is

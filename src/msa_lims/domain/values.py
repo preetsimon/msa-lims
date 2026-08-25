@@ -110,9 +110,23 @@ class MeasuredValue:
             raise ValueParseError("empty result")
 
         if match := _NON_DETECT.match(text):
-            return cls.non_detect(_decimal(match.group("limit")), unit)
+            limit = _decimal(match.group("limit"))
+            if limit <= 0:
+                # "<0" claims the result is below nothing, which bounds
+                # nothing; a detection limit is a positive quantity by
+                # definition.
+                raise ValueParseError(
+                    f"a non-detect limit must be greater than zero, got {token!r}"
+                )
+            return cls.non_detect(limit, unit)
         if _NUMBER.match(text):
-            return cls.detected(_decimal(text), unit)
+            value = _decimal(text)
+            if value < 0:
+                # A mass fraction or concentration cannot read below zero; a
+                # negative token is a sign error or a mangled export, and
+                # either way it must not become a stored result.
+                raise ValueParseError(f"a measured result cannot be negative: {token!r}")
+            return cls.detected(value, unit)
         raise ValueParseError(
             f"cannot read {token!r} as a result; non-detects must carry their limit, as in '<0.01'"
         )

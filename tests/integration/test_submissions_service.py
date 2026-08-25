@@ -277,6 +277,57 @@ class TestValidation:
                 actor_role=Role.ANALYST,
             )
 
+    def test_several_samples_from_one_unregistered_hole_report_it_once(
+        self,
+        service: SubmissionService,
+        analyst: LabUser,
+        a_client: Client,
+        a_project: Project,
+    ) -> None:
+        """One missing hole is one problem to fix. Six copies of the same
+        message would bury any *other* problem in the batch under it."""
+        with pytest.raises(SubmissionValidationError) as caught:
+            service.create(
+                submission_input(
+                    client_id=a_client.id,
+                    project_id=a_project.id,
+                    samples=(
+                        SampleInput("MSA-24-099-1_2", SampleType.CORE),
+                        SampleInput("MSA-24-099-2_3", SampleType.CORE),
+                        SampleInput("MSA-24-099-3_4", SampleType.CORE),
+                        # a different, also-unregistered hole: its own problem
+                        SampleInput("MSA-24-098-5_6", SampleType.CORE),
+                    ),
+                ),
+                received_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+        assert len(caught.value.problems) == 2
+        assert sum("MSA-24-099" in p for p in caught.value.problems) == 1
+
+    def test_drill_samples_without_a_project_report_the_submission_problem_once(
+        self,
+        service: SubmissionService,
+        analyst: LabUser,
+        a_client: Client,
+    ) -> None:
+        with pytest.raises(SubmissionValidationError) as caught:
+            service.create(
+                submission_input(
+                    client_id=a_client.id,
+                    samples=(
+                        SampleInput("MSA-24-001-1_2", SampleType.CORE),
+                        SampleInput("MSA-24-001-2_3", SampleType.CORE),
+                    ),
+                ),
+                received_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+        assert len(caught.value.problems) == 1
+        # both affected labels are named on the one problem
+        assert "MSA-24-001-1_2" in caught.value.problems[0]
+        assert "MSA-24-001-2_3" in caught.value.problems[0]
+
     def test_a_project_from_another_client_is_refused(
         self,
         service: SubmissionService,

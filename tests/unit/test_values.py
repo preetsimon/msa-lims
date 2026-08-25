@@ -37,6 +37,17 @@ class TestParsing:
         with pytest.raises(ValueParseError, match="empty"):
             MeasuredValue.parse("   ", Unit.G_PER_TONNE)
 
+    def test_a_negative_result_is_refused(self) -> None:
+        """A mass fraction cannot read below zero; a negative token is a sign
+        error or a mangled export, never a measurement."""
+        with pytest.raises(ValueParseError, match="negative"):
+            MeasuredValue.parse("-3", Unit.G_PER_TONNE)
+
+    def test_a_zero_detection_limit_is_refused(self) -> None:
+        """'<0' claims the result is below nothing, which bounds nothing."""
+        with pytest.raises(ValueError, match="greater than zero"):
+            MeasuredValue.parse("<0", Unit.G_PER_TONNE)
+
 
 class TestTheRefusalToFlatten:
     def test_a_non_detect_has_no_float(self) -> None:

@@ -74,6 +74,18 @@ def gravimetric_grade(
     _require_positive(sample_weight_g, "sample weight")
     if gold_bead_mg < 0:
         raise AssayCalculationError(f"bead weight cannot be negative: {gold_bead_mg} mg")
+    if gold_bead_mg == 0 and balance_sensitivity_mg is None:
+        # A zero reading with no stated sensitivity cannot be told apart from
+        # one below what the balance can resolve — and reporting it as a
+        # detected 0 g/t would flatten exactly the distinction
+        # MeasuredValue exists to keep. Stating the sensitivity turns the same
+        # reading into a non-detect at the grade that sensitivity corresponds
+        # to, which is the honest shape of "we weighed nothing".
+        raise AssayCalculationError(
+            "a bead weighing zero requires balance_sensitivity_mg to be stated: "
+            "without it the reading cannot be distinguished from one below "
+            "detection, so no grade can be reported"
+        )
 
     with localcontext() as ctx:
         ctx.prec = CONVERSION_PRECISION

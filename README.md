@@ -38,7 +38,7 @@ would be one careless `session.merge()` from being untrue.
 python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev,pdf,oidc]"
 docker compose up -d                     # postgres :5435
 .venv/bin/alembic upgrade head           # schema + append-only grants
-.venv/bin/python -m pytest               # 127 tests
+.venv/bin/python -m pytest               # unit + property + integration
 ```
 
 The `Makefile` wraps these as `make install`, `make services`, `make migrate`
@@ -82,7 +82,8 @@ browser sees one origin and there is no CORS configuration to get wrong.
 
 ## Status
 
-**Phase 0 complete** — walking skeleton. Domain core, spine schema, append-only
-grants, health endpoint, and the React shell all run end to end. Phase 1 builds
-the first complete thread: register a submission, enter a result, issue a
-certificate.
+**Phase 1 complete** — the spine: auth, client/project/drill-hole registration,
+submission intake, fire assay result entry (append-only with supersession),
+Certificate of Analysis issuance with a byte-deterministic, hash-verified PDF,
+sample/certificate lookup, and the sample list/detail React screens. See
+[PROGRESS.md](PROGRESS.md) for what exists and what is next.

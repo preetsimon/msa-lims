@@ -234,18 +234,31 @@ class SubmissionService:
         project: Project | None,
         cache: dict[str, DrillHole],
     ) -> list[str]:
+        """Resolve every drill sample's hole, one problem per distinct failure.
+
+        Grouped by hole first: a batch of six samples from the same
+        unregistered hole is one problem the front desk has to fix, not six
+        copies of it.
+        """
         problems: list[str] = []
+        by_hole: dict[str, list[str]] = defaultdict(list)
         for _item, identity in parsed:
-            if not identity.is_drill_sample:
-                continue
-            hole_id = identity.hole_id
+            if identity.is_drill_sample:
+                by_hole[identity.hole_id].append(identity.raw)
+
+        if not by_hole:
+            return problems
+
+        if project is None:
+            labels = sorted(label for labels in by_hole.values() for label in labels)
+            problems.append(
+                f"drill sample(s) {', '.join(repr(label) for label in labels)} name no "
+                "project on the submission; a drill hole must belong to a project"
+            )
+            return problems
+
+        for hole_id in sorted(by_hole):
             if hole_id in cache:
-                continue
-            if project is None:
-                problems.append(
-                    f"sample {identity.raw!r} is a drill sample but the submission names "
-                    "no project; a drill hole must belong to a project"
-                )
                 continue
             hole = self._session.scalar(
                 select(DrillHole).where(

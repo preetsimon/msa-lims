@@ -88,6 +88,24 @@ class TestGravimetricGrade:
         with pytest.raises(AssayCalculationError, match="negative"):
             gravimetric_grade(gold_bead_mg=Decimal("-0.1"), sample_weight_g=Decimal("30"))
 
+    def test_a_zero_bead_without_sensitivity_is_refused(self) -> None:
+        """A 0 mg reading with no stated sensitivity cannot be told apart
+        from one below what the balance resolves — reporting it as a detected
+        0 g/t would flatten the distinction MeasuredValue exists to keep."""
+        with pytest.raises(AssayCalculationError, match="balance_sensitivity_mg"):
+            gravimetric_grade(gold_bead_mg=Decimal("0"), sample_weight_g=Decimal("30"))
+
+    def test_a_zero_bead_with_sensitivity_is_a_non_detect(self) -> None:
+        """The remedy the refusal names: state the sensitivity and the same
+        reading becomes a non-detect at the grade it corresponds to."""
+        grade = gravimetric_grade(
+            gold_bead_mg=Decimal("0"),
+            sample_weight_g=Decimal("30"),
+            balance_sensitivity_mg=Decimal("0.001"),
+        )
+        assert grade.censored
+        assert grade.detection_limit is not None
+
 
 class TestSilverByDifference:
     def test_silver_is_what_parting_removed(self) -> None:

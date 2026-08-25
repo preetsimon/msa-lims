@@ -30,6 +30,34 @@ from reportlab.pdfgen import canvas
 PAGE_WIDTH, PAGE_HEIGHT = letter
 MARGIN = 0.75 * inch
 
+#: Long free text is wrapped at the printable width rather than drawn as one
+#: line: a supersession reason or a note that runs past the right edge is
+#: content silently missing from a signed document.
+_TEXT_FONT = "Helvetica-Oblique"
+_TEXT_SIZE = 9
+_TEXT_LEADING = 0.14 * inch
+
+
+def _wrap_lines(c: canvas.Canvas, text: str, max_width: float) -> list[str]:
+    """Break ``text`` into lines that fit ``max_width`` in the text font.
+
+    Uses :meth:`stringWidth` on the standard 14 fonts, which are part of the
+    PDF spec itself — so the wrapping is exact and byte-deterministic, not an
+    average-character-width guess.
+    """
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}" if current else word
+        if current and c.stringWidth(candidate, _TEXT_FONT, _TEXT_SIZE) > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
 
 @dataclass(frozen=True, slots=True)
 class CertifiedSample:
@@ -90,43 +118,61 @@ def render_pdf(content: CertificateContent) -> bytes:
     y -= 0.35 * inch
 
     if content.supersedes_number:
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawString(
-            left,
-            y,
+        c.setFont(_TEXT_FONT, _TEXT_SIZE)
+        statement = (
             f"This certificate supersedes {content.supersedes_number}. "
-            f"Reason: {content.superseded_reason}",
+            f"Reason: {content.superseded_reason}"
         )
-        y -= 0.3 * inch
+        for line in _wrap_lines(c, statement, right - left):
+            c.drawString(left, y, line)
+            y -= _TEXT_LEADING
+        y -= 0.16 * inch
 
     # -- results table --------------------------------------------------
     col_sample = left
     col_method = left + 2.6 * inch
     col_au = left + 4.6 * inch
 
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(col_sample, y, "Sample")
-    c.drawString(col_method, y, "Method")
-    c.drawString(col_au, y, "Au")
-    y -= 0.05 * inch
-    c.line(left, y, right, y)
-    y -= 0.2 * inch
+    def draw_table_header() -> None:
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(col_sample, y, "Sample")
+        c.drawString(col_method, y, "Method")
+        c.drawString(col_au, y, "Au")
 
-    c.setFont("Helvetica", 9)
+    def draw_header_rule() -> None:
+        c.setFont("Helvetica", 9)
+        y_rule = y - 0.05 * inch
+        c.line(left, y_rule, right, y_rule)
+
+    draw_table_header()
+    draw_header_rule()
+    y -= 0.25 * inch
+
     for sample in content.samples:
         if y < MARGIN + 0.5 * inch:
             c.showPage()
             c.setFont("Helvetica", 9)
             y = PAGE_HEIGHT - MARGIN
+            # A continuation page carries the same column headings as the
+            # first: a table that loses its header mid-document forces the
+            # reader to flip back to interpret a column of numbers.
+            draw_table_header()
+            draw_header_rule()
+            y -= 0.25 * inch
+        c.setFont("Helvetica", 9)
         c.drawString(col_sample, y, sample.sample_id)
         c.drawString(col_method, y, sample.method)
         c.drawString(col_au, y, sample.au_display)
         y -= 0.2 * inch
 
     if content.notes:
-        y -= 0.2 * inch
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawString(left, y, f"Notes: {content.notes}")
+        if y < MARGIN + _TEXT_LEADING:
+            c.showPage()
+            y = PAGE_HEIGHT - MARGIN
+        c.setFont(_TEXT_FONT, _TEXT_SIZE)
+        for line in _wrap_lines(c, f"Notes: {content.notes}", right - left):
+            c.drawString(left, y, line)
+            y -= _TEXT_LEADING
 
     c.showPage()
     c.save()

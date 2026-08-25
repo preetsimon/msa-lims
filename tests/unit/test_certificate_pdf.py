@@ -73,3 +73,29 @@ class TestContent:
         )
         pdf = render_pdf(a_content(samples=samples))
         assert pdf.startswith(b"%PDF-")
+
+    def test_long_reason_and_notes_are_rendered_deterministically(self) -> None:
+        """Free text long enough to need wrapping (it would otherwise run off
+        the right edge of the signed document) still renders, identically
+        twice — wrapping must not reintroduce nondeterminism."""
+        reason = (
+            "the original doré bead weight was transcribed from the wrong "
+            "balance ticket during data entry and the corrected weighing is "
+            "recorded under result 41208 with the re-weighing witnessed by "
+            "the supervisor on duty that afternoon"
+        )
+        notes = (
+            "Results below the detection limit are reported as <limit. This "
+            "certificate supersedes the original issued on 24 August after "
+            "the laboratory's internal review identified the transcription "
+            "error described above. Accepted analytical tolerances apply."
+        )
+        content = a_content(
+            supersedes_number="COA-2026-0001",
+            superseded_reason=reason,
+            notes=notes,
+        )
+        first = render_pdf(content)
+        second = render_pdf(content)
+        assert first == second
+        assert first.startswith(b"%PDF-")

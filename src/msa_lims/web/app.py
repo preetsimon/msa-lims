@@ -38,6 +38,7 @@ from msa_lims.web.routes import (
     drill_holes,
     fire_assay_results,
     health,
+    samples,
     submissions,
     whoami,
 )
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(drill_holes.router)
     app.include_router(fire_assay_results.router)
     app.include_router(certificates.router)
+    app.include_router(samples.router)
     app.include_router(submissions.router)
     _register_error_handlers(app)
     return app

@@ -85,11 +85,17 @@ class CertificateCorruptedError(RuntimeError):
     """
 
 
-def get_pdf(session: Session, certificate_id: int) -> tuple[Certificate, bytes]:
-    """The certificate row and its PDF bytes, hash-verified on the way out."""
+def get_certificate(session: Session, certificate_id: int) -> Certificate:
+    """The row, or a clear refusal — the one lookup every read path here shares."""
     certificate = session.get(Certificate, certificate_id)
     if certificate is None:
         raise CertificateNotFoundError(f"no certificate with id {certificate_id}")
+    return certificate
+
+
+def get_pdf(session: Session, certificate_id: int) -> tuple[Certificate, bytes]:
+    """The certificate row and its PDF bytes, hash-verified on the way out."""
+    certificate = get_certificate(session, certificate_id)
 
     actual = hashlib.sha256(certificate.pdf_bytes).hexdigest()
     if actual != certificate.pdf_sha256:
@@ -97,6 +103,48 @@ def get_pdf(session: Session, certificate_id: int) -> tuple[Certificate, bytes]:
             f"certificate {certificate_id} has drifted from its recorded hash"
         )
     return certificate, certificate.pdf_bytes
+
+
+@dataclass(frozen=True, slots=True)
+class CertifiedSampleInfo:
+    """One sample this certificate covers, read back from ``certificate_result``.
+
+    ``fire_assay_result_id`` and ``grade`` reflect the *specific* result row
+    frozen at issuance — see the module docstring — not whatever the sample's
+    current result happens to be now. If that result was later superseded,
+    this is still what the certificate actually said.
+    """
+
+    sample_id: int
+    sample_label: str
+    fire_assay_result_id: int
+    method: str
+    grade: MeasuredValue
+
+
+def get_certified_samples(session: Session, certificate_id: int) -> list[CertifiedSampleInfo]:
+    """Every sample a certificate covers, in the order they were certified.
+
+    Used by both the issuance response and the detail `GET` — one query, one
+    shape, so the two can never show a certificate's contents differently.
+    """
+    rows = session.execute(
+        select(CertificateResult, Sample, FireAssayResult)
+        .join(Sample, CertificateResult.sample_id == Sample.id)
+        .join(FireAssayResult, CertificateResult.fire_assay_result_id == FireAssayResult.id)
+        .where(CertificateResult.certificate_id == certificate_id)
+        .order_by(CertificateResult.id)
+    ).all()
+    return [
+        CertifiedSampleInfo(
+            sample_id=sample.id,
+            sample_label=sample.sample_id,
+            fire_assay_result_id=result.id,
+            method=result.method.value,
+            grade=measured_value(result),
+        )
+        for _certificate_result, sample, result in rows
+    ]
 
 
 class CertificateValidationError(ValueError):

@@ -96,7 +96,9 @@ class TestIssuingACertificate:
         assert response.status_code == 201
         body = response.json()
         assert body["certificate_number"].startswith("COA-2026-")
-        assert body["sample_count"] == 1
+        assert len(body["samples"]) == 1
+        assert body["samples"][0]["sample_label"] == "MSA-24-SO-00417"
+        assert body["samples"][0]["au"]["value"] == "5.000"
         assert len(body["pdf_sha256"]) == 64
 
     def test_an_analyst_is_refused_with_403(
@@ -169,6 +171,67 @@ class TestIssuingACertificate:
         sample = session.get(Sample, sample_id)
         assert sample is not None
         assert sample.status is SampleStatus.REPORTED
+
+
+class TestReadingACertificate:
+    def test_metadata_matches_the_issuance_response(
+        self, client: TestClient, assayed_sample_and_client: tuple[int, int]
+    ) -> None:
+        """The GET and the POST response are built from the exact same
+        certified-samples query, so they must never disagree."""
+        client_id, sample_id = assayed_sample_and_client
+        issued = client.post(
+            "/api/certificates",
+            json={
+                "client_id": client_id,
+                "sample_ids": [sample_id],
+                "issued_at": "2026-08-24T15:00:00Z",
+            },
+            headers=MANAGER,
+        ).json()
+
+        response = client.get(f"/api/certificates/{issued['id']}")
+        assert response.status_code == 200
+        assert response.json() == issued
+
+    def test_an_unknown_certificate_id_is_404(self, client: TestClient) -> None:
+        response = client.get("/api/certificates/999999")
+        assert response.status_code == 404
+
+    def test_an_amended_certificate_shows_its_supersession_chain(
+        self, client: TestClient, assayed_sample_and_client: tuple[int, int]
+    ) -> None:
+        client_id, sample_id = assayed_sample_and_client
+        first = client.post(
+            "/api/certificates",
+            json={
+                "client_id": client_id,
+                "sample_ids": [sample_id],
+                "issued_at": "2026-08-24T15:00:00Z",
+            },
+            headers=MANAGER,
+        ).json()
+        second = client.post(
+            "/api/certificates",
+            json={
+                "client_id": client_id,
+                "sample_ids": [sample_id],
+                "issued_at": "2026-08-24T16:00:00Z",
+                "supersedes_id": first["id"],
+                "superseded_reason": "client requested re-issue",
+            },
+            headers=MANAGER,
+        ).json()
+
+        response = client.get(f"/api/certificates/{second['id']}")
+        body = response.json()
+        assert body["supersedes_id"] == first["id"]
+        assert body["superseded_reason"] == "client requested re-issue"
+
+        # The original, read back independently, does not claim the
+        # amendment as its own -- supersedes_id only ever points backward.
+        original = client.get(f"/api/certificates/{first['id']}").json()
+        assert original["supersedes_id"] is None
 
 
 class TestDownloadingThePdf:

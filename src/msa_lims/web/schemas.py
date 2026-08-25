@@ -23,6 +23,7 @@ from msa_lims.db.models import (
     Submission,
 )
 from msa_lims.domain.enums import SampleType
+from msa_lims.domain.values import MeasuredValue
 
 
 class ClientCreate(BaseModel):
@@ -184,6 +185,14 @@ class SampleOut(BaseModel):
         )
 
 
+class CertificateReferenceOut(BaseModel):
+    """One certificate that names a sample — not the whole document, just
+    enough to link to it via ``GET /api/certificates/{id}``."""
+
+    id: int
+    certificate_number: str
+
+
 class SubmissionOut(BaseModel):
     id: int
     submission_number: str
@@ -216,6 +225,17 @@ class MeasuredValueOut(BaseModel):
     detection_limit: str | None
     censored: bool
     unit: str
+
+    @classmethod
+    def from_domain(cls, measured: MeasuredValue) -> MeasuredValueOut:
+        return cls(
+            value=None if measured.value is None else str(measured.value),
+            detection_limit=(
+                None if measured.detection_limit is None else str(measured.detection_limit)
+            ),
+            censored=measured.censored,
+            unit=measured.unit.value,
+        )
 
 
 class FireAssayResultCreate(BaseModel):
@@ -285,29 +305,77 @@ class CertificateCreate(BaseModel):
     )
 
 
+class CertifiedSampleOut(BaseModel):
+    """One sample a certificate covers, and the specific result it certified —
+    see ``certificates/service.py``'s ``CertifiedSampleInfo`` for why this is
+    the frozen-at-issuance result, not necessarily the sample's current one."""
+
+    sample_id: int
+    sample_label: str
+    fire_assay_result_id: int
+    method: str
+    au: MeasuredValueOut
+
+
 class CertificateOut(BaseModel):
     id: int
     certificate_number: str
     client_id: int
     issued_by_id: int
     issued_at: datetime
-    sample_count: int
     pdf_sha256: str
     supersedes_id: int | None
     superseded_reason: str | None
     notes: str | None
+    samples: list[CertifiedSampleOut]
 
     @classmethod
-    def from_model(cls, certificate: Certificate, *, sample_count: int) -> CertificateOut:
+    def from_model(
+        cls, certificate: Certificate, *, samples: list[CertifiedSampleOut]
+    ) -> CertificateOut:
         return cls(
             id=certificate.id,
             certificate_number=certificate.certificate_number,
             client_id=certificate.client_id,
             issued_by_id=certificate.issued_by_id,
             issued_at=certificate.issued_at,
-            sample_count=sample_count,
             pdf_sha256=certificate.pdf_sha256,
             supersedes_id=certificate.supersedes_id,
             superseded_reason=certificate.superseded_reason,
             notes=certificate.notes,
+            samples=samples,
+        )
+
+
+class SampleDetailOut(BaseModel):
+    id: int
+    sample_id: str
+    sample_type: str
+    status: str
+    submission_id: int
+    drill_hole_id: int | None
+    from_depth_m: Decimal | None
+    to_depth_m: Decimal | None
+    current_result: FireAssayResultOut | None
+    certificates: list[CertificateReferenceOut]
+
+    @classmethod
+    def from_model(
+        cls,
+        sample: Sample,
+        *,
+        current_result: FireAssayResultOut | None,
+        certificates: list[CertificateReferenceOut],
+    ) -> SampleDetailOut:
+        return cls(
+            id=sample.id,
+            sample_id=sample.sample_id,
+            sample_type=sample.sample_type.value,
+            status=sample.status.value,
+            submission_id=sample.submission_id,
+            drill_hole_id=sample.drill_hole_id,
+            from_depth_m=sample.from_depth_m,
+            to_depth_m=sample.to_depth_m,
+            current_result=current_result,
+            certificates=certificates,
         )

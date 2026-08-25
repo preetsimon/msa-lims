@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 1 nearly complete (Certificate of Analysis done; a minimal `GET` surface and React screens are what remain)
+**Updated:** 2026-08-25 · **Phase:** 1 API-complete (sample and certificate `GET` endpoints done; React screens are what remain)
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks.
@@ -12,24 +12,23 @@ first — it explains the decisions this document only tracks.
 | Phase | Window | State |
 |---|---|---|
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
-| 1 · The spine | wk 2–4 | **Nearly done** — auth, all reference-data registration, submission intake, fire assay result entry, and Certificate of Analysis issuance all built and verified live |
+| 1 · The spine | wk 2–4 | **API-complete** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, and sample/certificate lookup all built and verified live; only React screens remain |
 | 2 · Fire assay batching | wk 5–7 | Not started |
 | 3 · Lifecycle & prep | wk 8–9 | Not started |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 295 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 304 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible · frontend builds and typechecks · verified
 live through the browser: Vite → proxy → FastAPI → Postgres, with the degraded
 path exercised. The full spine now runs client → project → drill hole →
 submission → fire assay result → **a signed, downloadable Certificate of
-Analysis PDF** entirely through HTTP — including a live-verified amendment
-chain and a live proof that Postgres refuses an `UPDATE` against both
-`fire_assay_result` and `certificate` using the exact credentials the
-deployed application holds. Live verification also caught and fixed a real
-defect: an unrounded grade printing 34 digits of `Decimal` division onto the
-certificate.
+Analysis PDF**, and both a sample and a certificate can be **read back**
+afterward — entirely through HTTP. Live verification confirmed the `POST` and
+`GET` responses for a certificate are byte-for-byte identical, and caught and
+fixed a real defect earlier in the phase: an unrounded grade printing 34
+digits of `Decimal` division onto the certificate.
 
 ---
 
@@ -295,6 +294,45 @@ certificate.
   number* — the stored `fire_assay_result.au_value` keeps full precision,
   correct for recalculation and audit.
 
+### Sample and certificate lookup — `src/msa_lims/samples/`, `certificates/service.py`
+- **`GET /api/samples/{id}`** and **`GET /api/certificates/{id}`** — the
+  first `GET` endpoints for anything beyond a certificate's raw PDF. Every
+  write endpoint before these could only be confirmed by reading its own
+  POST response or querying the database directly, which every test still
+  did until now.
+- **`samples/service.py`'s `get_sample_detail`** assembles a sample, its
+  *current* fire assay result (via the same `current_result` fire assay
+  result entry already exports), and every certificate that names it — found
+  by querying `certificate_result` directly, not by inferring from the
+  sample's status. A `REPORTED` sample whose certificate was later
+  superseded is still `REPORTED`; the certificate list is what actually
+  answers "which documents mention this sample," and every certificate that
+  ever certified it stays listed even after an amendment, not just the
+  current one.
+- **`SampleNotFoundError` was *not* hoisted to `samples/service.py`** despite
+  matching the "the module that owns the entity owns the error" pattern
+  `ClientNotFoundError` and `ProjectNotFoundError` established — it stays in
+  `fire_assay_results/service.py`, and `samples/service.py` imports it from
+  there. `samples/service.py` already depends on that module for
+  `current_result`; hoisting the exception the other direction would have
+  created an import cycle (`fire_assay_results` needing `samples` right back)
+  for no benefit the existing one-way dependency doesn't already give.
+- **`get_certified_samples` is one query, shared by both the `POST` response
+  and the new `GET`** — added to `certificates/service.py` alongside a new
+  `get_certificate` helper (`get_pdf` now calls it too, rather than
+  duplicating the lookup). A live check confirmed the `POST` and `GET`
+  responses for the same certificate are byte-for-byte identical JSON, not
+  just similarly shaped.
+- **`CertificateOut`'s shape was corrected, not just extended.** It
+  previously carried a `sample_count` int that the route computed from
+  `len(request.sample_ids)` — a number that was never actually verified
+  against what got written. It's replaced with a real `samples` list read
+  back from `certificate_result`, each entry carrying the sample label, the
+  specific `fire_assay_result_id` frozen at issuance, and its grade. This is
+  a breaking change to the response shape; acceptable now because nothing
+  outside this repo's own tests consumed it yet — the kind of correction to
+  make before something external depends on the wart, not after.
+
 ### Database — `src/msa_lims/db/`
 - 11 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
@@ -327,11 +365,13 @@ certificate.
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Seven write endpoints exist now. `POST /api/fire-assay-results` was the
-  first that computes a response rather than only echoing what it stored;
-  `GET /api/certificates/{id}/pdf` is the first `GET` endpoint in the whole
-  system — every other read still means reading a POST response or querying
-  the database directly.
+- Seven write endpoints, and now three read endpoints:
+  `GET /api/certificates/{id}/pdf` (the raw document), `GET
+  /api/certificates/{id}` (its metadata, sharing the exact certified-samples
+  query the issuance response uses), and `GET /api/samples/{id}` (a sample's
+  current result and every certificate that names it). `POST
+  /api/fire-assay-results` was the first write to compute a response rather
+  than only echo what it stored.
 
 ### Frontend — `frontend/`
 - React 18 + TypeScript + Vite, `strict` plus `noUncheckedIndexedAccess` and
@@ -342,7 +382,7 @@ certificate.
   with `formatMeasured` so a non-detect cannot be rendered as its null value.
 - One screen so far: system status, which exists to prove the whole path.
 
-### Tests — 295
+### Tests — 304
 - **Unit** (154): units and dimensions, censored values, assay arithmetic,
   sample labels and intervals (including the `format_hole_id`/
   `canonical_hole_id` identity with a parsed sample's own `hole_id`), the
@@ -359,7 +399,7 @@ certificate.
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (124, real Postgres): the append-only grants proven against
+- **Integration** (133, real Postgres): the append-only grants proven against
   the actual application role; submission intake against the service directly
   and through the real HTTP app (26 tests); client and project registration
   (21 tests); drill hole registration (16 tests, including the
@@ -370,7 +410,12 @@ certificate.
   issuance (25 tests — issuance, the ASSAYED→REPORTED transition, every
   validation refusal including cross-client isolation and anti-branching on
   the amendment chain, the hash-verified download, and a direct proof that
-  Postgres refuses `UPDATE`/`DELETE` against `certificate` too).
+  Postgres refuses `UPDATE`/`DELETE` against `certificate` too); sample and
+  certificate lookup (9 tests — a fresh sample with no result or
+  certificates, the current result surfacing after a correction supersedes
+  the original, every certificate a sample was ever named on staying listed
+  after an amendment, a 404 for each unknown id, and the `POST`/`GET`
+  responses for one certificate asserted byte-for-byte equal).
 
 ### Verified live
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
@@ -451,6 +496,15 @@ application's own `msa_app` credentials, a direct `psql`
 `UPDATE certificate SET notes='tampered'` was refused with
 `permission denied for table certificate`.
 
+Sample and certificate lookup verified live, end to end: `GET
+/api/samples/{id}` on a freshly submitted sample returns `current_result:
+null` and `certificates: []`; after a fire assay result and a certificate are
+issued against it, the same `GET` shows `status: "reported"`, the current
+grade, and the certificate it was named on; `GET /api/certificates/{id}`
+returned a JSON body **byte-for-byte identical** to what the `POST` that
+issued it had already returned, in a second, independent request; and both
+`GET /api/samples/999999` and `GET /api/certificates/999999` return **404**.
+
 ---
 
 ## Decision log
@@ -485,6 +539,9 @@ application's own `msa_app` credentials, a direct `psql`
 | 2026-08-25 | The PDF is stored **inline** (`pdf_bytes` + `pdf_sha256`) rather than in a dedicated content-addressed blob store | A full write-once, hash-verified blob store (mirroring QC Sentinel's `storage/blob.py`) is real infrastructure this Phase does not yet need anywhere else. `pdf_sha256` still gives genuine content-addressing and read-time verification without building the abstraction before a second use case (raw exports, attachments) exists to justify it. |
 | 2026-08-25 | Issuing a certificate **actually calls** `domain.lifecycle.check_transition` for the `ASSAYED → REPORTED` move, rather than bypassing it the way fire assay result entry had to | The legal path exists and is reachable here (the sample is genuinely `ASSAYED` by this point) — this is exactly the scenario `check_transition` was built for, unlike result entry's `RECEIVED → ASSAYED` shortcut, which had no real transition to route through. |
 | 2026-08-25 | A computed grade is **rounded only at the point a certificate presents it to a person** (`ROUND_HALF_EVEN`, 3 decimal places), never in the stored `fire_assay_result.au_value` | Caught live: a non-terminating division (0.160 mg / 30 g) printed 34 digits of `Decimal` artifact on a signed document. Rounding in the domain calculation itself would have silently discarded real precision for the common case where the division *does* terminate cleanly; rounding only at display time keeps the stored, audit-relevant value exact while fixing what a human actually reads. |
+| 2026-08-25 | `SampleNotFoundError` **stays** in `fire_assay_results/service.py`; `samples/service.py` imports it rather than the reverse | Breaks precedent (`ClientNotFoundError`/`ProjectNotFoundError` were both hoisted to the module owning the entity) deliberately: `samples/service.py` already depends on `fire_assay_results/service.py` for `current_result`, and hoisting the exception the other way would have created an import cycle for no benefit the one-way dependency doesn't already give. |
+| 2026-08-25 | `CertificateOut.sample_count` **replaced** with a real `samples` list read back from `certificate_result`, not kept alongside it | The int was computed from `len(request.sample_ids)` at issuance time and never actually verified against what got written — a number that could theoretically lie. A breaking response-shape change, judged acceptable now because nothing outside this repo's own tests consumed the old shape yet. |
+| 2026-08-25 | `get_certified_samples` is **one query**, called by both the certificate `POST` response and the new `GET` | The alternative — the `POST` route building its response from in-memory objects left over from creation, the `GET` route querying fresh — would let the two responses drift apart on a future refactor with no test catching it. A live check confirms they are byte-for-byte identical today; sharing the query is what keeps that true. |
 
 ---
 
@@ -525,11 +582,16 @@ application's own `msa_app` credentials, a direct `psql`
    a direct proof against the real application role that Postgres refuses
    `UPDATE`/`DELETE`. Live verification caught and fixed a real grade-
    rounding defect before it shipped — see the decision log.
-7. Sample list and detail screens in React over these endpoints. With seven
-   write endpoints now built and only one narrow `GET` (a certificate's PDF,
-   by id, no metadata listing), a minimal `GET /api/samples/{id}` and
-   `GET /api/certificates/{id}` (JSON metadata, not just the PDF) are close
-   to a prerequisite for this, not purely a frontend concern.
+7. ~~**`GET /api/samples/{id}` and `GET /api/certificates/{id}`.**~~ **Done
+   2026-08-25** — a sample's current result and every certificate that names
+   it; a certificate's full metadata including its certified samples, sharing
+   the exact query the issuance response uses. 9 new tests. Verified live:
+   the `POST` and `GET` responses for one certificate matched
+   byte-for-byte, and a sample's `GET` correctly showed `reported` and the
+   certificate that named it after issuance. **The API Phase 1 needs is now
+   complete; only React screens remain.**
+8. Sample list and detail screens in React over these endpoints — now
+   unblocked by the `GET` surface above.
 
 ## Open questions
 
@@ -547,11 +609,14 @@ application's own `msa_app` credentials, a direct `psql`
   future contamination or calibration-drift investigation has nothing to
   trace back to a specific piece of equipment. Deferred because `instrument`
   currently only tracks calibration due-dates, not per-weighing readings.
-- **No `GET` endpoint exists for a fire assay result, a submission, or a
-  certificate's metadata** — only a certificate's raw PDF, by id. Confirming
-  most writes worked still means reading the POST response or querying the
-  database directly. Close to a prerequisite for the React sample-detail
-  screen, not purely a nice-to-have.
+- ~~**No `GET` endpoint exists for a fire assay result, a submission, or a
+  certificate's metadata.**~~ **Partly resolved 2026-08-25** — a sample's
+  detail view now surfaces its current result inline (`GET
+  /api/samples/{id}`), and a certificate's metadata is readable (`GET
+  /api/certificates/{id}`). Still no standalone `GET` for a fire assay result
+  by its own id, or for a submission's own metadata (only reachable via the
+  sample it produced, or the original `POST` response) — neither has
+  surfaced an actual need yet.
 - **The PDF's inline `pdf_bytes` storage is a named simplification, not a
   commitment.** If raw ICP exports or attachments are ever added, a real
   content-addressed blob store (mirroring QC Sentinel's `storage/blob.py`) is
@@ -567,7 +632,18 @@ application's own `msa_app` credentials, a direct `psql`
   certificate's PDF by id. There is no per-client row-level scoping anywhere
   in this system yet; a real client portal would need it before this
   endpoint could be exposed to clients directly rather than only to lab
-  staff.
+  staff. Now applies to the new `GET /api/samples/{id}` and `GET
+  /api/certificates/{id}` too — same gap, not newly introduced by them.
+- **No listing endpoint anywhere** — every `GET` is fetch-by-id. There is no
+  "every sample in submission X," "every certificate for client Y," or
+  "every result for a sample" (only the *current* one). The React
+  sample-list screen this phase's roadmap calls for will need at least one
+  of these, and none exists yet.
+- **`GET /api/samples/{id}` shows only the current fire assay result, not the
+  supersession history.** A sample corrected twice shows only the final
+  grade; the earlier ones are still in the database (append-only, as
+  designed) but nothing reads them back as a chain the way a certificate's
+  `supersedes_id` can at least be followed one link at a time.
 - **Submission numbering.** `SUB-2026-0841` is invented. Needs the real
   convention before Phase 1 hardens it into stored data.
 - **Does a sample ever move between submissions?** Currently `submission_id` is

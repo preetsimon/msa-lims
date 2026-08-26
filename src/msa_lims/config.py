@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # classical assay ton is 29.1666… g. Configurable because it is a per-lab
     # choice, and recorded on every batch so a change does not rewrite history.
     default_assay_portion_g: str = "30.0"
+    # The contamination threshold QC dossier blanks are flagged against (g/t).
+    # Advisory only — a flag here records that a blank came back above the
+    # lab's line; deciding what that means is QC Sentinel's job. Configurable
+    # because it is lab QA policy, not chemistry.
+    blank_max_grade_g_t: str = "0.05"
     # Furnace tray geometry. The batch builder draws this grid, and a position
     # outside it is refused.
     furnace_rows: int = 6

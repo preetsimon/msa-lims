@@ -668,6 +668,36 @@ class QcMaterial(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text)
 
 
+class StoredBlob(Base, TimestampMixin):
+    """One immutable, content-addressed blob in the lab's evidence store.
+
+    This is the content-addressed blob store PROGRESS.md's open questions
+    have named since Phase 1 — built now because QC dossiers are its second
+    consumer (the certificate PDF was always the first), and a store with
+    one user is an indirection nobody can justify keeping honest.
+
+    Addressed by ``sha256`` — the primary key *is* the content hash — so a
+    row's existence asserts its own integrity the way
+    ``certificate.pdf_sha256`` does for inline PDFs: identical content
+    deduplicates to one row, altered content is a different address and can
+    never overwrite another. Write-once by construction at the application
+    layer (``storage/blob.py`` inserts only when absent) **and** by grant:
+    this table joins ``b1d0c4e77a10``'s append-only tier, so the deployed
+    role cannot UPDATE or DELETE a stored byte any more than it can a result.
+
+    ``content_type`` is advisory MIME metadata for download paths; nothing
+    parses it.
+    """
+
+    __tablename__ = "stored_blob"
+
+    #: The content's own sha256, hex — both primary key and address.
+    sha256: Mapped[Sha256] = mapped_column(primary_key=True)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    content_type: Mapped[str] = mapped_column(String(64))
+    byte_count: Mapped[int]
+
+
 class Batch(Base, TimestampMixin):
     """One furnace run: a tray of crucibles fired together.
 
@@ -690,6 +720,16 @@ class Batch(Base, TimestampMixin):
     opened_by_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+
+    #: The sealed QC dossier for this batch's run — the sha256 of the blob
+    #: holding it (see ``StoredBlob``), and when it was generated. Null until
+    #: a dossier is first requested: generation is read-triggered and
+    #: idempotent (``qc_dossiers/service.py``), so a batch that never had QC
+    #: reviewed never carries one. The pointer is what makes "the dossier
+    #: Sentinel received" a stable, re-downloadable fact rather than a fresh
+    #: computation every time.
+    qc_dossier_sha256: Mapped[Sha256 | None]
+    qc_dossier_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     crucibles: Mapped[list[Crucible]] = relationship(back_populates="batch")
 

@@ -107,6 +107,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/batches/{batch_id}/qc-dossier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Batch Qc Dossier
+         * @description This completed batch's sealed QC dossier — audit idea #5's contract.
+         *
+         *     Nested under the batch like parting and weighing: a dossier is one view
+         *     of one batch, not an entity of its own. Generation is idempotent and
+         *     content-addressed; fetching twice without new measurements returns the
+         *     same seal and writes nothing new (see `qc_dossiers/service.py`). The
+         *     threshold flags are advisory — recording that a blank came back above the
+         *     lab's line; judging what that means is QC Sentinel's job.
+         */
+        get: operations["read_batch_qc_dossier_api_batches__batch_id__qc_dossier_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/batches/{batch_id}/status": {
         parameters: {
             query?: never;
@@ -1234,6 +1261,78 @@ export interface components {
             /** Submission Number */
             submission_number: string;
         };
+        /**
+         * QcAdvisoryOut
+         * @description One advisory observation — a flag, never a verdict (see
+         *     `domain/qc.py`).
+         */
+        QcAdvisoryOut: {
+            /** Code */
+            code: string;
+            /** Detail */
+            detail: string;
+        };
+        /**
+         * QcAuOut
+         * @description The reconstructed grade, shaped exactly like every other rendering of
+         *     a `MeasuredValue` on the wire.
+         */
+        QcAuOut: {
+            /** Censored */
+            censored: boolean;
+            /** Detection Limit */
+            detection_limit: string | null;
+            /** Unit */
+            unit: string;
+            /** Value */
+            value: string;
+        };
+        /** QcBatchRef */
+        QcBatchRef: {
+            /** Batch Number */
+            batch_number: string;
+            /** Id */
+            id: number;
+        };
+        /**
+         * QcDossierOut
+         * @description One completed batch's sealed QC dossier, plus the seal over it.
+         *
+         *     Every value is rendered as a string where it is a `Decimal` in the
+         *     database — the seal is computed over exactly these bytes, so a float here
+         *     would make an independently recomputed seal disagree for no reason a
+         *     reader could see. See `qc_dossiers/service.py`.
+         */
+        QcDossierOut: {
+            batch: components["schemas"]["QcBatchRef"];
+            /** Batch Flags */
+            batch_flags: components["schemas"]["QcAdvisoryOut"][];
+            /** Entries */
+            entries: components["schemas"]["QcEntryOut"][];
+            /** Seal */
+            seal: string;
+        };
+        /** QcEntryOut */
+        QcEntryOut: {
+            /** Advisories */
+            advisories: components["schemas"]["QcAdvisoryOut"][];
+            au: components["schemas"]["QcAuOut"] | null;
+            /** Certified Au Uncertainty G T */
+            certified_au_uncertainty_g_t: string | null;
+            /** Certified Au Value G T */
+            certified_au_value_g_t: string | null;
+            /** Crucible Status */
+            crucible_status: string;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            material: components["schemas"]["QcMaterialRef"];
+            /** Portion G */
+            portion_g: string;
+            /** Position */
+            position: string;
+            /** Z Score */
+            z_score: string | null;
+        };
         /** QcMaterialCreate */
         QcMaterialCreate: {
             /** Certified Au Uncertainty G T */
@@ -1261,6 +1360,17 @@ export interface components {
             id: number;
             /** Is Active */
             is_active: boolean;
+            /** Lot Number */
+            lot_number: string | null;
+            /** Name */
+            name: string;
+            /** Qc Type */
+            qc_type: string;
+        };
+        /** QcMaterialRef */
+        QcMaterialRef: {
+            /** Id */
+            id: number;
             /** Lot Number */
             lot_number: string | null;
             /** Name */
@@ -1802,6 +1912,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CrucibleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_batch_qc_dossier_api_batches__batch_id__qc_dossier_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QcDossierOut"];
                 };
             };
             /** @description Validation Error */

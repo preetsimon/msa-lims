@@ -943,3 +943,66 @@ class ProvenanceOut(_SealedModel):
     @classmethod
     def from_payload(cls, payload: dict[str, object], *, seal: str) -> ProvenanceOut:
         return cls.model_validate({**payload, "seal": seal})
+
+
+class QcAdvisoryOut(_SealedModel):
+    """One advisory observation — a flag, never a verdict (see
+    `domain/qc.py`)."""
+
+    code: str
+    detail: str
+
+
+class QcAuOut(_SealedModel):
+    """The reconstructed grade, shaped exactly like every other rendering of
+    a `MeasuredValue` on the wire."""
+
+    value: str
+    detection_limit: str | None
+    censored: bool
+    unit: str
+
+
+class QcEntryOut(_SealedModel):
+    material: QcMaterialRef
+    position: str
+    crucible_status: str
+    portion_g: str
+    gold_bead_mg: str | None
+    au: QcAuOut | None
+    certified_au_value_g_t: str | None
+    certified_au_uncertainty_g_t: str | None
+    z_score: str | None
+    advisories: list[QcAdvisoryOut]
+
+
+class QcMaterialRef(_SealedModel):
+    id: int
+    name: str
+    qc_type: str
+    lot_number: str | None
+
+
+class QcBatchRef(_SealedModel):
+    id: int
+    batch_number: str
+
+
+class QcDossierOut(_SealedModel):
+    """One completed batch's sealed QC dossier, plus the seal over it.
+
+    Every value is rendered as a string where it is a `Decimal` in the
+    database — the seal is computed over exactly these bytes, so a float here
+    would make an independently recomputed seal disagree for no reason a
+    reader could see. See `qc_dossiers/service.py`.
+    """
+
+    batch: QcBatchRef
+    entries: list[QcEntryOut]
+    batch_flags: list[QcAdvisoryOut]
+    #: `sha256` over the canonical rendering of every field above.
+    seal: str
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, object], *, seal: str) -> QcDossierOut:
+        return cls.model_validate({**payload, "seal": seal})

@@ -13,7 +13,12 @@ across both finishes, a reading above the calibration range refused outright)
 and the **provenance dossier** (audit idea #3: `GET /api/samples/{id}/provenance`
 assembles a sample's whole evidence chain read-only and seals it with a sha256
 any recipient can recompute offline). The solution finish is the first real
-slice of Phase 4
+slice of Phase 4. Latest this pass: **idea #5 — the sealed QC dossier**
+(`GET /api/batches/{id}/qc-dossier`): a completed batch's QC evidence
+assembled read-only, flagged advisories-only (a CRM z-score, a blank over the
+lab's contamination threshold — never a verdict), sealed with a recomputable
+sha256, and persisted in the new content-addressed blob store (`stored_blob`,
+append-only by grant) that Phase 1's inline-PDF note said it was waiting on
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -39,10 +44,10 @@ numbers cheat sheet — lives in
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 584 tests passing (plus a Schemathesis contract-fuzz run kept
+**Health:** 602 tests passing (plus a Schemathesis contract-fuzz run kept
 separate, see below) · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (the solution-finish migration was
-checked with a full `downgrade base` / `upgrade head` round trip)
+apply from empty and are reversible (the QC-dossier migrations were checked
+with a full `downgrade base` / `upgrade head` round trip)
 · frontend builds and typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
 verified live through curl end to end, Phase 1 and 2's own chain plus: a
 soil sample refused the pulp shortcut by name (`"only a pulp may skip
@@ -946,9 +951,10 @@ existing suite (which was already green: the findings below are all things
   recipe/material excluded by `active_only`'s default).
 
 ### Database — `src/msa_lims/db/`
-- 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
+- 16 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
-  `certificate_result`, `flux_recipe`, `batch`, `crucible`, `qc_material`.
+  `certificate_result`, `flux_recipe`, `batch`, `crucible`, `qc_material`,
+  `stored_blob`.
 - `7172b2adeb7e` — initial schema.
 - `a64c168cff52` — audit events.
 - `b1d0c4e77a10` — **append-only grants**. Creates `msa_app` with no
@@ -1004,7 +1010,7 @@ existing suite (which was already green: the findings below are all things
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Fifteen write endpoints, and ten read endpoints:
+- Fifteen write endpoints, and eleven read endpoints:
   `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
   result and every certificate that names it), `GET /api/certificates/{id}`
   (metadata, sharing the exact certified-samples query the issuance response
@@ -1015,9 +1021,10 @@ existing suite (which was already green: the findings below are all things
   charge form needs, both `active_only=True` by default since a retired row
   is refused at charge time regardless —
   `GET /api/audit/verify`, the only read endpoint that answers a question
-  about the database's own integrity rather than about lab work, and — new
-  this increment — `GET /api/samples/{id}/provenance`, the sealed evidence
-  dossier. On the write side,
+  about the database's own integrity rather than about lab work,
+  `GET /api/samples/{id}/provenance`, the sealed evidence dossier, and — new
+  this increment — `GET /api/batches/{id}/qc-dossier`, the sealed QC dossier
+  of a completed batch. On the write side,
   `POST /api/fire-assay-results/solution-finish` joins its gravimetric
   sibling as the second entry path into the one result table.
   `POST /api/fire-assay-results` was
@@ -1287,8 +1294,47 @@ existing suite (which was already green: the findings below are all things
   status transitions, because no `PrepRecord` rows exist yet — stated in the
   module docstring rather than implied away.
 
-### Tests — 584
-- **Unit** (236): units and dimensions, censored values (including the audit's
+### The sealed QC dossier — `qc_dossiers/`, `domain/qc.py`, `storage/blob.py`, migrations `d38f8b50f074` + `6f4c9a2be7d1`
+- **Audit idea #5, the Sentinel seam's contract side.** `GET
+  /api/batches/{id}/qc-dossier` assembles a completed batch's QC evidence —
+  each CRM and blank charged beside client samples, with position, portion,
+  bead weight, reconstructed grade, and certified value ± uncertainty — into
+  one canonical document, seals it (`sha256` over `domain/canonical.py`
+  rendering, the same serialiser the audit chain and provenance seal use),
+  stores those exact bytes in the new content-addressed blob store, and
+  points the batch row at them.
+- **Advisory, never verdicts.** `domain/qc.py` computes exactly two things:
+  a CRM's z-score — `(measured − certified) / uncertainty`, exact Decimal,
+  `None` with a flag for a non-detect CRM (comparable to nothing; no z is
+  invented from the censoring limit) — and whether a blank cleared the lab's
+  configured contamination threshold (strictly-above flags; at-threshold is
+  quiet, because flagging routine detectable-but-tiny gold would train
+  readers to ignore flags). No pass/fail anywhere: judging stays Sentinel's
+  on export, and the seal deliberately covers measurements only — nothing
+  that looks like a conclusion.
+- **The blob store is real infrastructure now, not an indirection.**
+  `stored_blob`'s primary key *is* the content sha256, so identical
+  evidence deduplicates and altered content cannot impersonate another row;
+  it joins the append-only grant tier (`6f4c9a2be7d1`) because an UPDATE
+  would make a row lie about its own address — proven by test under the
+  restricted role. No sequence grant: the natural key needs none. This is
+  the second consumer Phase 1's inline-PDF open question said it was waiting
+  for; migrating certificates onto it remains available future work, not
+  attempted now.
+- **Read-triggered persistence, idempotent by construction.** A fetch that
+  finds unchanged facts returns the same seal, deduplicates to the existing
+  blob, and writes no second audit event; genuinely new measurements hash to
+  a new address, one fresh blob, one `amend` event — whose required reason
+  the schema itself demands and the service supplies honestly ("regenerated
+  after new measurements; previous seal …") — while the superseded dossier
+  stays stored and reachable under its own hash, like a superseded result.
+- **A batch must be `COMPLETED`** (**409**, the same refusal family as every
+  other state conflict): a dossier describes a finished run. Zero insertions
+  yields an explicit `no_qc_inserted` batch flag rather than silence —
+  insertion is recorded, not enforced, so "no controls ran" must be sayable.
+
+### Tests — 602
+- **Unit** (246): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
   refusal and its non-detect remedy), sample labels and intervals (including
@@ -1322,7 +1368,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (348, real Postgres): the append-only grants proven against
+- **Integration** (356, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -1449,7 +1495,22 @@ existing suite (which was already green: the findings below are all things
    the seal recomputing over the exact payload returned, a 404, `client`
    refused **403**, superseded results present with their reasons); and
    canonical JSON (8 unit: sorted keys, Decimal stringification, unicode
-   stability, and the sha256 agreeing across dict construction orders).
+   stability, and the sha256 agreeing across dict construction orders);
+   and — new this increment — the QC dossier (18 unit: the z-score exact at
+   ±1/−2 and flagged `None` on a non-detect CRM or invalid uncertainty; the
+   blank quiet at and below threshold, flagged above with both numbers
+   named, the non-detect blank the good case; a non-positive threshold
+   refused; grade-reconstruction plumbing pinned through the real domain
+   function — plus 8 integration over HTTP: the full sealed dossier for a
+   tray carrying samples + CRM + blank (z exactly +2 against certified
+   4.90 ± 0.05 from an exactly-5 g/t weighing; the blank flagged above
+   threshold), offline seal recomputation from the fetched document alone,
+   refetch idempotence (same seal, no new blob, no second audit event), new
+   facts moving the pointer with `create` then `amend` events while both
+   blobs stay reachable, the unweighed slot's honest flag, an unfinished
+   batch **409**, unknown batch **404**, client **403**, a QC-less batch
+   saying `no_qc_inserted` instead of implying review, and Postgres itself
+   refusing `UPDATE` on `stored_blob` under the application role).
 - **Contract fuzz** (2 collected tests): one dynamically exercising all 24
   operations × up to 10 generated examples each (not a fixed assertion
   count in the usual sense) — Schemathesis-generated schema-valid and
@@ -1702,6 +1763,21 @@ was refused the dossier (**403**), and `GET /api/audit/verify` reported
 flipped a status inside one row, whereupon the same endpoint named
 `broke_at_id` and the reason. Demo data was truncated afterward.
 
+The sealed QC dossier verified live over a fresh curl chain: a tray of two
+samples plus an `OREAS 501d` CRM (certified 4.90 ± 0.05 g/t) and a silica
+blank, walked the full physical path to `completed`, every slot parted and
+weighed. The first dossier fetch returned **200** with exactly two entries —
+the CRM grading exactly `5.000 g/t` from its recorded 45 g charge and
+0.225 mg bead, z **+2.0** on the nose; the blank grading `0.400 g/t` from
+0.012 mg over 30 g, flagged `blank_above_threshold` against the lab's
+configured line — and its seal recomputed byte-identically in a standalone
+script holding nothing but the fetched JSON. Refetching wrote nothing: one
+blob stayed one blob, no second audit event. The batch row carried the
+pointer with a `create` event naming the seal; a `client` role was refused
+(**403**); an unknown batch answered **404**; and `GET /api/audit/verify`
+stayed `valid` across all 23 events including the new ones. Demo data was
+truncated afterward.
+
 The two fuzz-found fixes verified live directly: `POST /api/qc-materials`
 with `certified_au_uncertainty_g_t: "0"` on a CRM now returns **422** naming
 the field (`"Input should be greater than 0"`) instead of crashing into the
@@ -1903,6 +1979,10 @@ very next call. Demo data was truncated from the dev database afterward.
 | 2026-08-26 | The upper calibration limit **gates entry but is not stored** | It contributes nothing to the number on the row — its only use is deciding whether the row may exist — and it describes the calibration method, not this result. Storing it here would be an instrument record growing in the wrong table; it belongs on the method/instrument registry when one exists. |
 | 2026-08-26 | The dossier's **seal is a hash, not a signature** — stated in the module docstring, not implied away | A sha256 over canonical JSON proves the bundle is internally consistent; it says nothing about who authored it. Claiming more than that would be exactly the trust-theatre the append-only design avoids. Binding dossiers to signing keys is idea #2's scope, with its own ceremony. |
 | 2026-08-26 | Canonical JSON lives in one shared module (`domain/canonical.py`) from its second consumer onward | The dossier seal and the audit chain's `entry_hash` both need "the same bytes every time" serialization. Two independently-written serialisers that happen to agree today are one edit away from silently disagreeing — the exact failure class `format_hole_id`'s extraction already solved for hole labels. |
+| 2026-08-26 | QC analytics live in `domain/qc.py` and **stop at advisories** — z-scores and threshold flags, no pass/fail | The LIMS records insertion and measurement; judging is Sentinel's job on export. A verdict vocabulary here would invite the LIMS to gate its own results on math it also computed — the conflict of interest the two-system split exists to prevent. Even the flag wording ("above the lab's threshold") states a fact, not a conclusion. |
+| 2026-08-26 | Dossier persistence is **read-triggered and content-addressed**, not a separate "generate" command | A GET that assembles evidence is read-only in spirit; persisting the exact bytes it sealed (and only when they changed) makes "the dossier Sentinel received" a stable re-downloadable fact without inventing workflow. Idempotence falls out of addressing: unchanged facts → same hash → nothing to do. A POST would add authority for zero additional honesty. |
+| 2026-08-26 | `stored_blob`'s primary key **is** the content sha256, and it joins the append-only grant tier with **no sequence grant** | An UPDATE would make a row lie about its own address — the one corruption shape content-addressing exists to make impossible, so the grant backs the structure. Superseded dossiers stay reachable under their old hashes the way superseded results stay on record. No autoincrement means no sequence to grant. |
+| 2026-08-26 | An amended dossier's audit event supplies its own reason: *"regenerated after new measurements; previous seal …"* | The schema requires every `amend` to state why — and this amendment genuinely knows why: the content changed, and the previous address names itself. Auto-generating an honest mechanical reason beats either blocking on a human for a machine-derivable fact or weakening a constraint other amendments genuinely need. |
 
 ---
 
@@ -2103,6 +2183,15 @@ very next call. Demo data was truncated from the dev database afterward.
    chain across both finishes. Migration `63137adc5266`, checked with a full
    downgrade/upgrade round trip. ~20 new tests across domain, service and
    HTTP; verified live end to end — see "Verified live."
+9. ~~**Idea #5, "Sentinel's Contract" — the sealed QC dossier and the blob
+   store.**~~ **Done 2026-08-26** — `GET /api/batches/{id}/qc-dossier`,
+   `domain/qc.py`'s advisory-only z-scores and blank flags,
+   content-addressed `stored_blob` (append-only by grant), batch pointer +
+   audit events on change. Migrations `d38f8b50f074` + `6f4c9a2be7d1`,
+   round-trip checked. 26 new tests; verified live end to end including
+   offline seal recomputation and refetch idempotence — see "Verified
+   live." **Remaining from the sketch: Thompson–Howarth precision (needs the
+   duplicate-insertion path) and the Sentinel push itself (Phase 5).**
 
 ## Open questions
 

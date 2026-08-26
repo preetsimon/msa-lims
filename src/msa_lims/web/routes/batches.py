@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi import APIRouter, status
 
 from msa_lims.batches.service import (
@@ -12,6 +14,11 @@ from msa_lims.batches.service import (
     CrucibleWeighingInput,
     get_batch_detail,
     list_batches,
+)
+from msa_lims.qc_dossiers.service import (
+    build_qc_dossier,
+    dossier_payload,
+    persist_dossier,
 )
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep, SettingsDep
 from msa_lims.web.schemas import (
@@ -24,6 +31,7 @@ from msa_lims.web.schemas import (
     CruciblePartingCreate,
     CrucibleSlotOut,
     CrucibleWeighingCreate,
+    QcDossierOut,
 )
 
 router = APIRouter(prefix="/api", tags=["batches"])
@@ -186,3 +194,28 @@ def read_batch(
         furnace_rows=settings.furnace_rows,
         furnace_columns=settings.furnace_columns,
     )
+
+
+@router.get("/batches/{batch_id}/qc-dossier", response_model=QcDossierOut)
+def read_batch_qc_dossier(
+    batch_id: int,
+    session: SessionDep,
+    settings: SettingsDep,
+    actor: InternalActorDep,
+    reviewer: LabUserDep,
+) -> QcDossierOut:
+    """This completed batch's sealed QC dossier — audit idea #5's contract.
+
+    Nested under the batch like parting and weighing: a dossier is one view
+    of one batch, not an entity of its own. Generation is idempotent and
+    content-addressed; fetching twice without new measurements returns the
+    same seal and writes nothing new (see `qc_dossiers/service.py`). The
+    threshold flags are advisory — recording that a blank came back above the
+    lab's line; judging what that means is QC Sentinel's job.
+    """
+    dossier = build_qc_dossier(
+        session, batch_id=batch_id, blank_threshold_g_t=Decimal(settings.blank_max_grade_g_t)
+    )
+    seal = persist_dossier(session, dossier, actor_id=reviewer.id)
+    session.commit()
+    return QcDossierOut.from_payload(dossier_payload(dossier), seal=seal)

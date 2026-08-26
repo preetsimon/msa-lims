@@ -96,3 +96,73 @@ def blank_advisory(measured: MeasuredValue, *, threshold_g_t: Decimal) -> Adviso
             f"blank graded {value} g/t, above the {threshold_g_t} g/t contamination threshold",
         )
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicatePairStats:
+    """What one original/duplicate crucible pair says about precision.
+
+    ``rpd_percent`` is the relative percent difference the industry standard
+    reports for duplicate pairs (Abzalov 2008's formulation alongside
+    Thompson–Howarth's): |dup − orig| ÷ mean × 100. The pair's mean and
+    absolute difference are also returned as the canonical (x, y) point of a
+    Thompson–Howarth plot, so an export can feed the chart directly without
+    recomputation.
+    """
+
+    mean_g_t: Decimal
+    abs_diff_g_t: Decimal
+    rpd_percent: Decimal
+
+
+def duplicate_pair_advisory(
+    original: MeasuredValue | None,
+    duplicate: MeasuredValue | None,
+    *,
+    max_rpd_percent: Decimal,
+) -> tuple[DuplicatePairStats | None, Advisory | None]:
+    """Compare one duplicate against its original, advisories only.
+
+    Either side being ungraded (``None`` — unweighed, or a weight the domain
+    refused to grade blind) or non-detect yields no statistics and names why:
+    a censored half makes RPD meaningless, and inventing a number from the
+    censoring limit would be manufacturing data. A zero mean (both sides
+    grading exactly 0) divides by nothing — refused the same way.
+
+    An RPD strictly above ``max_rpd_percent`` raises
+    ``duplicate_rpd_above_max``; at or below is quiet, for the same reason a
+    blank at threshold stays quiet.
+    """
+    if max_rpd_percent <= 0:
+        raise ValueError(f"max RPD must be positive, got {max_rpd_percent}")
+    if original is None or not original.is_detected:
+        return None, Advisory(
+            "original_not_graded",
+            "the original has no detected grade in this batch; there is nothing "
+            "to compare the duplicate against",
+        )
+    if duplicate is None or not duplicate.is_detected:
+        return None, Advisory(
+            "duplicate_not_graded",
+            "the duplicate has no detected grade on record yet",
+        )
+    with localcontext() as ctx:
+        ctx.prec = CONVERSION_PRECISION
+        o = original.require_detected("the duplicate comparison")
+        d = duplicate.require_detected("the duplicate comparison")
+        mean = (o + d) / 2
+        if mean == 0:
+            return None, Advisory(
+                "pair_mean_zero",
+                "both grades are exactly zero; a relative difference is undefined",
+            )
+        abs_diff = abs(d - o)
+        rpd = abs_diff / mean * 100
+        stats = DuplicatePairStats(mean_g_t=mean, abs_diff_g_t=abs_diff, rpd_percent=rpd)
+    if rpd > max_rpd_percent:
+        return stats, Advisory(
+            "duplicate_rpd_above_max",
+            f"duplicate differs by {rpd} % from its original, above the "
+            f"{max_rpd_percent} % maximum",
+        )
+    return stats, None

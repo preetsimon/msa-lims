@@ -101,6 +101,24 @@ class QcMaterialType(Enum):
     PULP_DUPLICATE = "pulp_duplicate"
 
 
+#: The three ``QcMaterialType`` members that are **not** stock materials: a
+#: duplicate does not come from a jar, it re-inserts an existing *sample* into
+#: its own extra crucible. They live here so a crucible's ``insertion_type``
+#: column can carry exactly this vocabulary and nothing else — a crucible can
+#: hold a duplicate of a sample, never "a CRM of a sample."
+class DuplicateInsertionType(Enum):
+    FIELD_DUPLICATE = "field_duplicate"
+    PREP_DUPLICATE = "prep_duplicate"
+    PULP_DUPLICATE = "pulp_duplicate"
+
+
+#: The stock materials, for gates that must distinguish "scooped from a jar"
+#: from "re-inserted an existing sample."
+MATERIAL_TYPES: frozenset[QcMaterialType] = frozenset(
+    {QcMaterialType.CRM, QcMaterialType.BLANK, QcMaterialType.COARSE_BLANK}
+)
+
+
 class AssayMethod(Enum):
     """How the gold finish was determined.
 

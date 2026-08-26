@@ -36,6 +36,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy import Enum as SaEnum
 from sqlalchemy.dialects.postgresql import JSONB
@@ -46,6 +47,7 @@ from msa_lims.domain.enums import (
     AssayMethod,
     BatchStatus,
     CrucibleStatus,
+    DuplicateInsertionType,
     InstrumentStatus,
     InstrumentType,
     MatrixType,
@@ -766,13 +768,30 @@ class Crucible(Base, TimestampMixin):
     __tablename__ = "crucible"
     __table_args__ = (
         UniqueConstraint("batch_id", "position_row", "position_col", name="batch_position"),
-        UniqueConstraint("batch_id", "sample_id", name="batch_sample"),
+        # One *primary* charge per sample per batch. A duplicate insertion
+        # deliberately shares its sample with the primary slot — that is what
+        # a duplicate is — so the old flat UNIQUE(batch_id, sample_id) became
+        # a partial index the moment duplicates could exist.
+        Index(
+            "uq_crucible_batch_primary_sample",
+            "batch_id",
+            "sample_id",
+            unique=True,
+            postgresql_where=text("insertion_type IS NULL"),
+        ),
         CheckConstraint("position_row > 0", name="position_row_positive"),
         CheckConstraint("position_col > 0", name="position_col_positive"),
         CheckConstraint("sample_weight_g > 0", name="sample_weight_positive"),
         CheckConstraint(
             "(sample_id IS NOT NULL) <> (qc_material_id IS NOT NULL)",
             name="exactly_one_of_sample_and_qc_material",
+        ),
+        # A duplicate names a sample; a stock QC material never does, and a
+        # normal assay carries no insertion type. Stated as two halves so a
+        # violation says which pairing is wrong.
+        CheckConstraint(
+            "insertion_type IS NULL OR (sample_id IS NOT NULL AND qc_material_id IS NULL)",
+            name="insertion_type_requires_sample_only",
         ),
         CheckConstraint("lead_button_weight_mg > 0", name="lead_button_weight_positive"),
         CheckConstraint("prill_weight_mg > 0", name="prill_weight_positive"),
@@ -787,6 +806,15 @@ class Crucible(Base, TimestampMixin):
     #: constraint enforces exactly one of the two being set.
     sample_id: Mapped[int | None] = mapped_column(ForeignKey("sample.id"), index=True)
     qc_material_id: Mapped[int | None] = mapped_column(ForeignKey("qc_material.id"), index=True)
+    #: Null for an ordinary charge of a sample or a stock QC material; one of
+    #: :class:`~msa_lims.domain.enums.DuplicateInsertionType` when this
+    #: crucible re-inserts a sample that is already charged elsewhere in the
+    #: tray. Duplicates ride every bench path (parting, weighing) exactly
+    #: like any other crucible — see ``qc_dossiers/service.py`` for how their
+    #: measurements become pair statistics.
+    insertion_type: Mapped[DuplicateInsertionType | None] = mapped_column(
+        _enum(DuplicateInsertionType, "crucible_insertion_type")
+    )
     flux_recipe_id: Mapped[int] = mapped_column(ForeignKey("flux_recipe.id"))
 
     position_row: Mapped[int] = mapped_column(Integer)

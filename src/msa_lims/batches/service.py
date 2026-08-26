@@ -69,9 +69,20 @@ from msa_lims.domain.batch_lifecycle import (
     check_crucible_transition,
     check_position,
 )
-from msa_lims.domain.enums import BatchStatus, CrucibleStatus, Role, SampleStatus
+from msa_lims.domain.enums import (
+    BatchStatus,
+    CrucibleStatus,
+    DuplicateInsertionType,
+    Role,
+    SampleStatus,
+)
 from msa_lims.domain.flux import FluxAmounts, scale_flux_charge
-from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError, check_transition
+from msa_lims.domain.lifecycle import (
+    BENCH_ROLES,
+    InsufficientRoleError,
+    TransitionNotAllowedError,
+    check_transition,
+)
 from msa_lims.fire_assay_results.service import CrucibleNotFoundError, SampleNotFoundError
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError
 from msa_lims.qc_materials.service import QcMaterialNotFoundError
@@ -117,6 +128,9 @@ class CrucibleChargeInput:
     sample_weight_g: Decimal
     charged_at: datetime
     notes: str | None = None
+    #: Set only alongside ``sample_id``: this crucicle re-inserts a sample
+    #: already charged elsewhere in the tray (a field/prep/pulp duplicate).
+    insertion_type: DuplicateInsertionType | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +220,10 @@ class BatchService:
             raise CrucibleValidationError(
                 ["name a sample or a QC material — exactly one of the two"]
             )
+        if data.insertion_type is not None and data.qc_material_id is not None:
+            raise CrucibleValidationError(
+                ["a duplicate insertion re-inserts a sample; name sample_id, not a QC material"]
+            )
 
         batch = self._session.get(Batch, data.batch_id)
         if batch is None:
@@ -217,18 +235,29 @@ class BatchService:
             sample = self._session.get(Sample, data.sample_id)
             if sample is None:
                 raise SampleNotFoundError(f"no sample with id {data.sample_id}")
-            # The real transition, not a bypass — see the module docstring.
-            # Raises TransitionNotAllowedError (409) for a sample not yet
-            # READY_FOR_ASSAY; InsufficientRoleError cannot actually trigger
-            # here since this transition's allowed_roles is BENCH_ROLES,
-            # already checked above, but is not caught so a future change to
-            # either role set fails loudly instead of silently.
-            check_transition(
-                source=sample.status,
-                target=SampleStatus.IN_ASSAY,
-                sample_type=sample.sample_type,
-                role=actor_role,
-            )
+            if data.insertion_type is None:
+                # The real transition, not a bypass — see the module docstring.
+                # Raises TransitionNotAllowedError (409) for a sample not yet
+                # READY_FOR_ASSAY; InsufficientRoleError cannot actually trigger
+                # here since this transition's allowed_roles is BENCH_ROLES,
+                # already checked above, but is not caught so a future change to
+                # either role set fails loudly instead of silently.
+                check_transition(
+                    source=sample.status,
+                    target=SampleStatus.IN_ASSAY,
+                    sample_type=sample.sample_type,
+                    role=actor_role,
+                )
+            elif sample.status is not SampleStatus.IN_ASSAY:
+                # A duplicate rides along with its original: the sample must
+                # genuinely be mid-assay, which only its primary charge can
+                # have caused. Nothing here may move the lifecycle — the
+                # original's charge owns that.
+                raise TransitionNotAllowedError(
+                    f"sample {sample.sample_id!r} is {sample.status.value}; a "
+                    f"{data.insertion_type.value} rides along with a sample already "
+                    "in assay — charge its original crucible first"
+                )
         else:
             assert data.qc_material_id is not None
             material = self._session.get(QcMaterial, data.qc_material_id)
@@ -276,6 +305,7 @@ class BatchService:
             batch_id=batch.id,
             sample_id=sample.id if sample is not None else None,
             qc_material_id=material.id if material is not None else None,
+            insertion_type=data.insertion_type,
             flux_recipe_id=recipe.id,
             position_row=data.position_row,
             position_col=data.position_col,
@@ -300,6 +330,8 @@ class BatchService:
         }
         if sample is not None:
             after["sample_id"] = sample.id
+            if data.insertion_type is not None:
+                after["insertion_type"] = data.insertion_type.value
         else:
             assert material is not None
             after["qc_material_id"] = material.id
@@ -311,7 +343,9 @@ class BatchService:
             actor_id=charged_by.id,
             after=after,
         )
-        if sample is not None:
+        if sample is not None and data.insertion_type is None:
+            # Only a primary charge moves the lifecycle; a duplicate rides
+            # along with the IN_ASSAY status its original already caused.
             sample.status = SampleStatus.IN_ASSAY
         return crucible
 

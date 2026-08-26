@@ -637,6 +637,11 @@ class CrucibleChargeCreate(BaseModel):
     #: refuses both and neither alike.
     sample_id: int | None = None
     qc_material_id: int | None = None
+    #: Set only alongside ``sample_id`` to charge this crucible as a duplicate
+    #: insertion of a sample that is already charged elsewhere in the tray.
+    #: The stock types (crm/blank/coarse_blank) are deliberately not offered:
+    #: those name a jar, not a sample, and have their own field.
+    insertion_type: Literal["field_duplicate", "prep_duplicate", "pulp_duplicate"] | None = None
     flux_recipe_id: int
     position_row: int = Field(gt=0)
     position_col: int = Field(gt=0)
@@ -668,6 +673,8 @@ class CrucibleOut(BaseModel):
     #: charged instead — the two are mutually exclusive at the database.
     sample_id: int | None
     qc_material_id: int | None
+    #: Set when this slot re-inserts an already-charged sample (a duplicate).
+    insertion_type: str | None
     flux_recipe_id: int
     position_row: int
     position_col: int
@@ -695,6 +702,9 @@ class CrucibleOut(BaseModel):
             batch_id=crucible.batch_id,
             sample_id=crucible.sample_id,
             qc_material_id=crucible.qc_material_id,
+            insertion_type=crucible.insertion_type.value
+            if crucible.insertion_type is not None
+            else None,
             flux_recipe_id=crucible.flux_recipe_id,
             position_row=crucible.position_row,
             position_col=crucible.position_col,
@@ -753,6 +763,8 @@ class CrucibleSlotOut(BaseModel):
     qc_material_id: int | None
     qc_material_name: str | None
     qc_material_type: str | None
+    #: Set when this slot re-inserts an already-charged sample (a duplicate).
+    insertion_type: str | None
 
     @classmethod
     def from_model(
@@ -773,6 +785,9 @@ class CrucibleSlotOut(BaseModel):
             qc_material_id=crucible.qc_material_id,
             qc_material_name=qc_material_name,
             qc_material_type=qc_material_type,
+            insertion_type=crucible.insertion_type.value
+            if crucible.insertion_type is not None
+            else None,
         )
 
 
@@ -999,6 +1014,7 @@ class QcDossierOut(_SealedModel):
 
     batch: QcBatchRef
     entries: list[QcEntryOut]
+    duplicates: list[QcDuplicateOut]
     batch_flags: list[QcAdvisoryOut]
     #: `sha256` over the canonical rendering of every field above.
     seal: str
@@ -1006,3 +1022,37 @@ class QcDossierOut(_SealedModel):
     @classmethod
     def from_payload(cls, payload: dict[str, object], *, seal: str) -> QcDossierOut:
         return cls.model_validate({**payload, "seal": seal})
+
+
+class QcSampleRef(_SealedModel):
+    id: int
+    label: str
+
+
+class QcAuPair(_SealedModel):
+    value: str
+    detection_limit: str | None
+    censored: bool
+    unit: str
+
+
+class QcDuplicateStatsOut(_SealedModel):
+    """The canonical pair statistics: RPD plus the Thompson–Howarth (x, y)
+    point — mean against absolute difference."""
+
+    mean_g_t: str
+    abs_diff_g_t: str
+    rpd_percent: str
+
+
+class QcDuplicateOut(_SealedModel):
+    sample: QcSampleRef
+    insertion_type: str
+    position: str
+    crucible_status: str
+    portion_g: str
+    gold_bead_mg: str | None
+    au: QcAuPair | None
+    original_au: QcAuPair | None
+    stats: QcDuplicateStatsOut | None
+    advisories: list[QcAdvisoryOut]

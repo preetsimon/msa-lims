@@ -15,6 +15,7 @@ from msa_lims.batches.service import (
     get_batch_detail,
     list_batches,
 )
+from msa_lims.domain.enums import DuplicateInsertionType
 from msa_lims.qc_dossiers.service import (
     build_qc_dossier,
     dossier_payload,
@@ -80,6 +81,9 @@ def charge_crucible(
             batch_id=batch_id,
             sample_id=body.sample_id,
             qc_material_id=body.qc_material_id,
+            insertion_type=DuplicateInsertionType(body.insertion_type)
+            if body.insertion_type is not None
+            else None,
             flux_recipe_id=body.flux_recipe_id,
             position_row=body.position_row,
             position_col=body.position_col,
@@ -214,7 +218,10 @@ def read_batch_qc_dossier(
     lab's line; judging what that means is QC Sentinel's job.
     """
     dossier = build_qc_dossier(
-        session, batch_id=batch_id, blank_threshold_g_t=Decimal(settings.blank_max_grade_g_t)
+        session,
+        batch_id=batch_id,
+        blank_threshold_g_t=Decimal(settings.blank_max_grade_g_t),
+        max_duplicate_rpd_percent=Decimal(settings.max_duplicate_rpd_percent),
     )
     seal = persist_dossier(session, dossier, actor_id=reviewer.id)
     session.commit()

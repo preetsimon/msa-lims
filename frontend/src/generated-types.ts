@@ -677,6 +677,8 @@ export interface components {
             charged_at: string;
             /** Flux Recipe Id */
             flux_recipe_id: number;
+            /** Insertion Type */
+            insertion_type?: ("field_duplicate" | "prep_duplicate" | "pulp_duplicate") | null;
             /** Notes */
             notes?: string | null;
             /** Position Col */
@@ -709,6 +711,8 @@ export interface components {
             gold_bead_mg: string | null;
             /** Id */
             id: number;
+            /** Insertion Type */
+            insertion_type: string | null;
             /** Lead Button Weight Mg */
             lead_button_weight_mg: string | null;
             /** Litharge G */
@@ -780,6 +784,8 @@ export interface components {
         CrucibleSlotOut: {
             /** Id */
             id: number;
+            /** Insertion Type */
+            insertion_type: string | null;
             /** Position Col */
             position_col: number;
             /** Position Row */
@@ -1287,6 +1293,17 @@ export interface components {
             /** Value */
             value: string;
         };
+        /** QcAuPair */
+        QcAuPair: {
+            /** Censored */
+            censored: boolean;
+            /** Detection Limit */
+            detection_limit: string | null;
+            /** Unit */
+            unit: string;
+            /** Value */
+            value: string;
+        };
         /** QcBatchRef */
         QcBatchRef: {
             /** Batch Number */
@@ -1307,10 +1324,44 @@ export interface components {
             batch: components["schemas"]["QcBatchRef"];
             /** Batch Flags */
             batch_flags: components["schemas"]["QcAdvisoryOut"][];
+            /** Duplicates */
+            duplicates: components["schemas"]["QcDuplicateOut"][];
             /** Entries */
             entries: components["schemas"]["QcEntryOut"][];
             /** Seal */
             seal: string;
+        };
+        /** QcDuplicateOut */
+        QcDuplicateOut: {
+            /** Advisories */
+            advisories: components["schemas"]["QcAdvisoryOut"][];
+            au: components["schemas"]["QcAuPair"] | null;
+            /** Crucible Status */
+            crucible_status: string;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Insertion Type */
+            insertion_type: string;
+            original_au: components["schemas"]["QcAuPair"] | null;
+            /** Portion G */
+            portion_g: string;
+            /** Position */
+            position: string;
+            sample: components["schemas"]["QcSampleRef"];
+            stats: components["schemas"]["QcDuplicateStatsOut"] | null;
+        };
+        /**
+         * QcDuplicateStatsOut
+         * @description The canonical pair statistics: RPD plus the Thompson–Howarth (x, y)
+         *     point — mean against absolute difference.
+         */
+        QcDuplicateStatsOut: {
+            /** Abs Diff G T */
+            abs_diff_g_t: string;
+            /** Mean G T */
+            mean_g_t: string;
+            /** Rpd Percent */
+            rpd_percent: string;
         };
         /** QcEntryOut */
         QcEntryOut: {
@@ -1388,6 +1439,13 @@ export interface components {
          * @enum {string}
          */
         QcMaterialType: "crm" | "blank" | "coarse_blank" | "field_duplicate" | "prep_duplicate" | "pulp_duplicate";
+        /** QcSampleRef */
+        QcSampleRef: {
+            /** Id */
+            id: number;
+            /** Label */
+            label: string;
+        };
         /** SampleCreate */
         SampleCreate: {
             /** Alteration Code */

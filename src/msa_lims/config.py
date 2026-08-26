@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # lab's line; deciding what that means is QC Sentinel's job. Configurable
     # because it is lab QA policy, not chemistry.
     blank_max_grade_g_t: str = "0.05"
+    # The maximum relative percent difference a duplicate pair may show before
+    # the dossier flags it. Advisory only, like the blank threshold: the flag
+    # records that a pair diverged; deciding what that means about precision —
+    # Thompson–Howarth regression over accumulated pairs included — is QC
+    # Sentinel's side of the seam.
+    max_duplicate_rpd_percent: str = "20"
     # Furnace tray geometry. The batch builder draws this grid, and a position
     # outside it is refused.
     furnace_rows: int = 6

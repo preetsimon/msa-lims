@@ -13,12 +13,18 @@ across both finishes, a reading above the calibration range refused outright)
 and the **provenance dossier** (audit idea #3: `GET /api/samples/{id}/provenance`
 assembles a sample's whole evidence chain read-only and seals it with a sha256
 any recipient can recompute offline). The solution finish is the first real
-slice of Phase 4. Latest this pass: **idea #5 — the sealed QC dossier**
+slice of Phase 4. Then **idea #5 — the sealed QC dossier**
 (`GET /api/batches/{id}/qc-dossier`): a completed batch's QC evidence
 assembled read-only, flagged advisories-only (a CRM z-score, a blank over the
 lab's contamination threshold — never a verdict), sealed with a recomputable
 sha256, and persisted in the new content-addressed blob store (`stored_blob`,
-append-only by grant) that Phase 1's inline-PDF note said it was waiting on
+append-only by grant) that Phase 1's inline-PDF note said it was waiting on.
+And the duplicate-insertion path now exists too — field/prep/pulp duplicates
+re-insert an already-charged sample into its own crucible, ride every bench
+path, and surface in the dossier as exact pair statistics (mean, absolute
+difference, RPD) flagged against the lab's configured maximum — closing the
+gap idea #5's own entry named and unblocking Thompson–Howarth-style pair data
+for export
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -44,7 +50,7 @@ numbers cheat sheet — lives in
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 602 tests passing (plus a Schemathesis contract-fuzz run kept
+**Health:** 615 tests passing (plus a Schemathesis contract-fuzz run kept
 separate, see below) · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible (the QC-dossier migrations were checked
 with a full `downgrade base` / `upgrade head` round trip)
@@ -977,6 +983,11 @@ existing suite (which was already green: the findings below are all things
   `prill_weight_mg`, `parting_acid_volume_ml`, `gold_bead_mg`, and their
   business timestamps) plus CHECK constraints, same schema-only rationale —
   `crucible` is already a mutable-tier table.
+- `c152c0ac35dc` — `crucible.insertion_type` plus the partial unique index
+  `uq_crucible_batch_primary_sample` replacing flat `UNIQUE(batch_id,
+  sample_id)` — a duplicate deliberately shares its sample with the primary
+  slot. Schema-only; `crucible` is mutable-tier. The downgrade documents
+  that it requires zero duplicate rows rather than deleting evidence to fit.
 - `1d81304e5265` / `b7c2f4a91d08` — the `qc_material` table plus
   `Crucible.qc_material_id` (and `sample_id` going nullable, with the
   exactly-one-of CHECK), then the **mutable** grants for `qc_material`, same
@@ -1333,8 +1344,40 @@ existing suite (which was already green: the findings below are all things
   yields an explicit `no_qc_inserted` batch flag rather than silence —
   insertion is recorded, not enforced, so "no controls ran" must be sayable.
 
-### Tests — 602
-- **Unit** (246): units and dimensions, censored values (including the audit's
+### Duplicate insertions — `domain/qc.py`, `batches/service.py`, migration `c152c0ac35dc`
+- **The duplicate half of the QC vocabulary finally has its path.**
+  `Crucible.insertion_type` (`field_duplicate`/`prep_duplicate`/
+  `pulp_duplicate` — its own enum, not the full material vocabulary, because
+  a crucible can hold a duplicate *of a sample*, never "a CRM of a sample")
+  marks a crucible that re-inserts a sample already charged elsewhere in the
+  tray. Charging one is bench work like any other charge: same role gate,
+  same `CHARGING` gate, same position rules, same flux scaling.
+- **The lifecycle belongs to the original's charge alone.** A duplicate
+  requires its sample to genuinely be `IN_ASSAY` — refused (**409**) at every
+  earlier status with the remedy named ("charge its original crucible
+  first") — and never moves the sample's status itself. The database carries
+  the shape: the flat `UNIQUE(batch_id, sample_id)` became a *partial*
+  unique index over primary charges only (a duplicate deliberately shares
+  its sample with the primary slot; that is what a duplicate is), plus a CHECK
+  pairing `insertion_type` to sample-only charges.
+- **No new result path — deliberately.** A duplicate's result entered through
+  `fire_assay_results` would collide with the one-current-result-per-sample
+  invariant that supersession exists to protect. Instead the duplicate rides
+  the same parting/weighing bench paths as everything else; its bead lands on
+  its own crucible row; and the dossier derives its grade exactly the way it
+  does for CRM/blank entries.
+- **Pair statistics are exact, batch-local, and advisory.** The dossier pairs
+  each duplicate against its sample's primary charge *in the same run*,
+  graded identically: mean and absolute difference (the canonical
+  Thompson–Howarth plot point), RPD percent (Abzalov's companion statistic),
+  flagged when strictly above the configured maximum — quiet at it, for the
+  same reason a blank at threshold stays quiet. A missing original, an
+  ungraded side, or a zero mean yields a named flag instead of invented
+  numbers; full T-H percentile regression over accumulated pairs stays
+  Sentinel-side, now fed by these canonical points.
+
+### Tests — 615
+- **Unit** (257): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
   refusal and its non-detect remedy), sample labels and intervals (including
@@ -1368,7 +1411,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (356, real Postgres): the append-only grants proven against
+- **Integration** (358, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -1496,8 +1539,8 @@ existing suite (which was already green: the findings below are all things
    refused **403**, superseded results present with their reasons); and
    canonical JSON (8 unit: sorted keys, Decimal stringification, unicode
    stability, and the sha256 agreeing across dict construction orders);
-   and — new this increment — the QC dossier (18 unit: the z-score exact at
-   ±1/−2 and flagged `None` on a non-detect CRM or invalid uncertainty; the
+   and — new this increment — QC analytics and duplicates (29 unit: the
+   z-score exact at ±1/−2 and flagged `None` on a non-detect CRM or invalid uncertainty; the
    blank quiet at and below threshold, flagged above with both numbers
    named, the non-detect blank the good case; a non-positive threshold
    refused; grade-reconstruction plumbing pinned through the real domain
@@ -1510,7 +1553,15 @@ existing suite (which was already green: the findings below are all things
    blobs stay reachable, the unweighed slot's honest flag, an unfinished
    batch **409**, unknown batch **404**, client **403**, a QC-less batch
    saying `no_qc_inserted` instead of implying review, and Postgres itself
-   refusing `UPDATE` on `stored_blob` under the application role).
+   refusing `UPDATE` on `stored_blob` under the application role); plus
+   duplicate insertions (6 integration: refused at `received` and again at
+   `ready_for_assay` with the remedy named (**409** both), riding alongside
+   its charged original with the sample's status untouched, a duplicate +
+   `qc_material_id` combination refused **422**, the dossier pairing an
+   exactly-5 g/t original with an exactly-3 g/t duplicate into mean 4 /
+   RPD exactly 50 % flagged against the 20 % max with the offline seal still
+   recomputing, an unweighed duplicate flagged `not_yet_weighed` with no
+   invented stats, and the tray slot naming its `insertion_type`).
 - **Contract fuzz** (2 collected tests): one dynamically exercising all 24
   operations × up to 10 generated examples each (not a fixed assertion
   count in the usual sense) — Schemathesis-generated schema-valid and
@@ -1983,6 +2034,10 @@ very next call. Demo data was truncated from the dev database afterward.
 | 2026-08-26 | Dossier persistence is **read-triggered and content-addressed**, not a separate "generate" command | A GET that assembles evidence is read-only in spirit; persisting the exact bytes it sealed (and only when they changed) makes "the dossier Sentinel received" a stable re-downloadable fact without inventing workflow. Idempotence falls out of addressing: unchanged facts → same hash → nothing to do. A POST would add authority for zero additional honesty. |
 | 2026-08-26 | `stored_blob`'s primary key **is** the content sha256, and it joins the append-only grant tier with **no sequence grant** | An UPDATE would make a row lie about its own address — the one corruption shape content-addressing exists to make impossible, so the grant backs the structure. Superseded dossiers stay reachable under their old hashes the way superseded results stay on record. No autoincrement means no sequence to grant. |
 | 2026-08-26 | An amended dossier's audit event supplies its own reason: *"regenerated after new measurements; previous seal …"* | The schema requires every `amend` to state why — and this amendment genuinely knows why: the content changed, and the previous address names itself. Auto-generating an honest mechanical reason beats either blocking on a human for a machine-derivable fact or weakening a constraint other amendments genuinely need. |
+| 2026-08-26 | A duplicate **requires its sample genuinely `IN_ASSAY`** and never moves the lifecycle itself | The original's charge owns the sample's status; a duplicate is a passenger, not a second driver. Requiring `IN_ASSAY` means the ride is physically real — something already charged this sample into a furnace — and refusing earlier statuses (with the remedy named) beats inventing which of three statuses "counts as started." |
+| 2026-08-26 | Duplicates get **no result-entry path**; their grades derive from their own weighings in the dossier | A second current-result row per sample would break the supersession invariant that keeps one truth per sample. But the measurement was never going to be lost: parting/weighing key on the crucible, not on what it holds, so the bead lands on the duplicate's own row and the dossier derives its grade identically to a CRM's — one derivation function, shared. |
+| 2026-08-26 | Pair comparison is **batch-local** — against the primary charge in the same tray, not the sample's reported result | Labs insert duplicates inside the run they control; comparing within it measures *this furnace's* precision before any reporting happens. Comparing against a possibly-not-yet-existing current result would couple QC evidence to certificate workflow and silently skip pairs in unreported batches. Missing-original is a flag, never a silent skip. |
+| 2026-08-26 | RPD now, full Thompson–Howarth regression **Sentinel-side** | The dossier emits the canonical plot points (mean vs absolute difference) plus the industry's companion statistic (RPD), but percentile control lines are fitted over *accumulated* pairs — history Sentinel holds and judges. Computing policy-laden precision verdicts here would put half a judging engine on the recording side of the seam. |
 
 ---
 
@@ -2190,8 +2245,11 @@ very next call. Demo data was truncated from the dev database afterward.
    audit events on change. Migrations `d38f8b50f074` + `6f4c9a2be7d1`,
    round-trip checked. 26 new tests; verified live end to end including
    offline seal recomputation and refetch idempotence — see "Verified
-   live." **Remaining from the sketch: Thompson–Howarth precision (needs the
-   duplicate-insertion path) and the Sentinel push itself (Phase 5).**
+   live." ~~**Remaining from the sketch: Thompson–Howarth precision (needs the
+   duplicate-insertion path)**~~ — the duplicate path itself landed this pass
+   (see "Duplicate insertions" above); RPD and canonical T-H plot points are
+   in the dossier, full regression over accumulated pairs stays Sentinel-side.
+   The Sentinel push itself remains Phase 5.
 
 ## Open questions
 

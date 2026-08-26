@@ -431,3 +431,248 @@ class TestQcDossier:
         finally:
             raw.rollback()
             raw.close()
+
+
+class TestDuplicateInsertions:
+    """Duplicates re-insert an already-charged sample; they ride the bench
+    paths and surface in the dossier as pair statistics."""
+
+    def _seed(self, client: TestClient) -> dict[str, int]:
+        cid = client.post(
+            "/api/clients",
+            json={"code": "MSA", "name": "MSA Dossier Mining Co"},
+            headers=SUPERVISOR,
+        ).json()["id"]
+        sub = client.post(
+            "/api/submissions",
+            json={
+                "client_id": cid,
+                "received_at": "2026-08-25T10:00:00Z",
+                "samples": [{"sample_id": "MSA-24-SO-00901", "sample_type": "soil"}],
+            },
+            headers=ANALYST,
+        ).json()
+        sample = int(sub["samples"][0]["id"])
+        recipe = client.post("/api/flux-recipes", json=RECIPE, headers=SUPERVISOR).json()["id"]
+        batch = client.post(
+            "/api/batches", json={"opened_at": "2026-08-25T15:00:00Z"}, headers=ANALYST
+        ).json()["id"]
+        _walk_to(client, batch, ("charging",))
+        return {"sample": sample, "recipe": recipe, "batch": batch}
+
+    def _prep(self, client: TestClient, sample: int) -> None:
+        for target in ("in_prep", "ready_for_assay"):
+            walked = client.patch(
+                f"/api/samples/{sample}/status", json={"target": target}, headers=ANALYST
+            )
+            assert walked.status_code == 200
+
+    def _charge(
+        self,
+        client: TestClient,
+        batch: int,
+        *,
+        sample: int,
+        row: int,
+        col: int,
+        portion: str,
+        insertion_type: str | None = None,
+        recipe: int | None = None,
+    ) -> object:
+        body: dict[str, object] = {
+            "sample_id": sample,
+            "qc_material_id": None,
+            "flux_recipe_id": recipe,
+            "position_row": row,
+            "position_col": col,
+            "sample_weight_g": portion,
+            "charged_at": "2026-08-25T15:30:00Z",
+        }
+        if insertion_type is not None:
+            body["insertion_type"] = insertion_type
+        return client.post(f"/api/batches/{batch}/crucibles", json=body, headers=ANALYST)
+
+    def test_a_duplicate_requires_its_original_in_assay_first(self, client: TestClient) -> None:
+        ids = self._seed(client)
+        self._prep(client, ids["sample"])
+        response = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=2,
+            col=1,
+            portion="30",
+            insertion_type="field_duplicate",
+            recipe=ids["recipe"],
+        )
+        assert response.status_code == 409
+        assert "charge its original crucible first" in response.json()["detail"]
+
+    def test_a_duplicate_rides_alongside_its_charged_original(
+        self, client: TestClient, session: Session
+    ) -> None:
+        from msa_lims.db.models import Sample as SampleRow
+        from msa_lims.domain.enums import SampleStatus
+
+        ids = self._seed(client)
+        self._prep(client, ids["sample"])
+        primary = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=1,
+            col=1,
+            portion="30",
+            recipe=ids["recipe"],
+        )
+        assert primary.status_code == 201
+        duplicate = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=2,
+            col=1,
+            portion="30",
+            insertion_type="field_duplicate",
+            recipe=ids["recipe"],
+        )
+        assert duplicate.status_code == 201
+        body = duplicate.json()
+        assert body["insertion_type"] == "field_duplicate"
+        # The lifecycle belongs to the original's charge alone.
+        row = session.get(SampleRow, ids["sample"])
+        assert row is not None and row.status is SampleStatus.IN_ASSAY
+
+    def test_insertion_type_with_a_qc_material_is_refused(self, client: TestClient) -> None:
+        ids = self._seed(client)
+        material = client.post(
+            "/api/qc-materials",
+            json={"name": "Silica Blank", "qc_type": "blank"},
+            headers=SUPERVISOR,
+        ).json()["id"]
+        response = client.post(
+            f"/api/batches/{ids['batch']}/crucibles",
+            json={
+                "sample_id": None,
+                "qc_material_id": material,
+                "insertion_type": "field_duplicate",
+                "flux_recipe_id": ids["recipe"],
+                "position_row": 1,
+                "position_col": 9,
+                "sample_weight_g": "30",
+                "charged_at": "2026-08-25T15:30:00Z",
+            },
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+
+    def test_the_dossier_pairs_a_weighed_duplicate_with_its_original(
+        self, client: TestClient
+    ) -> None:
+        """0.150 mg and 0.090 mg over 30 g portions grade exactly 5 and 3 g/t:
+        mean 4, difference 2, RPD exactly 50 % — flagged against the 20 % max."""
+        ids = self._seed(client)
+        self._prep(client, ids["sample"])
+        primary = int(
+            self._charge(
+                client,
+                ids["batch"],
+                sample=ids["sample"],
+                row=1,
+                col=1,
+                portion="30",
+                recipe=ids["recipe"],
+            ).json()["id"]
+        )
+        duplicate = int(
+            self._charge(
+                client,
+                ids["batch"],
+                sample=ids["sample"],
+                row=2,
+                col=1,
+                portion="30",
+                insertion_type="field_duplicate",
+                recipe=ids["recipe"],
+            ).json()["id"]
+        )
+        _walk_to(client, ids["batch"], ("in_fusion", "fused", "in_cupellation", "cupelled"))
+        _part_and_weigh(client, ids["batch"], primary, "0.150")
+        _part_and_weigh(client, ids["batch"], duplicate, "0.090")
+        _walk_to(client, ids["batch"], ("completed",))
+
+        document = client.get(f"/api/batches/{ids['batch']}/qc-dossier", headers=ANALYST).json()
+        assert len(document["duplicates"]) == 1
+        dup = document["duplicates"][0]
+        assert dup["sample"]["label"] == "MSA-24-SO-00901"
+        assert Decimal(dup["au"]["value"]) == Decimal("3")  # 0.090 mg / 30 g
+        assert Decimal(dup["original_au"]["value"]) == Decimal("5")
+        assert Decimal(dup["stats"]["mean_g_t"]) == Decimal("4")
+        assert Decimal(dup["stats"]["rpd_percent"]) == Decimal("50")
+        assert any(a["code"] == "duplicate_rpd_above_max" for a in dup["advisories"])
+
+        # The seal still recomputes over the whole document including pairs.
+        assert offline_seal(document) == document["seal"]
+
+    def test_an_unweighed_duplicate_is_flagged_not_graded(self, client: TestClient) -> None:
+        ids = self._seed(client)
+        self._prep(client, ids["sample"])
+        primary = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=1,
+            col=1,
+            portion="30",
+            recipe=ids["recipe"],
+        )
+        assert primary.status_code == 201
+        duplicate = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=2,
+            col=1,
+            portion="30",
+            insertion_type="prep_duplicate",
+            recipe=ids["recipe"],
+        )
+        assert duplicate.status_code == 201
+        _walk_to(client, ids["batch"], ("in_fusion", "fused", "in_cupellation", "cupelled"))
+        _part_and_weigh(client, ids["batch"], int(primary.json()["id"]), "0.150")
+        _walk_to(client, ids["batch"], ("completed",))
+
+        document = client.get(f"/api/batches/{ids['batch']}/qc-dossier", headers=ANALYST).json()
+        dup = document["duplicates"][0]
+        assert dup["au"] is None
+        assert any(a["code"] == "not_yet_weighed" for a in dup["advisories"])
+        assert dup["stats"] is None
+
+    def test_the_tray_slot_names_its_insertion_type(self, client: TestClient) -> None:
+        ids = self._seed(client)
+        self._prep(client, ids["sample"])
+        primary = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=1,
+            col=1,
+            portion="30",
+            recipe=ids["recipe"],
+        )
+        assert primary.status_code == 201
+        duplicate = self._charge(
+            client,
+            ids["batch"],
+            sample=ids["sample"],
+            row=2,
+            col=1,
+            portion="30",
+            insertion_type="pulp_duplicate",
+            recipe=ids["recipe"],
+        )
+        assert duplicate.status_code == 201
+        detail = client.get(f"/api/batches/{ids['batch']}", headers=ANALYST).json()
+        slots = {(s["position_row"], s["position_col"]): s for s in detail["crucibles"]}
+        assert slots[(1, 1)]["insertion_type"] is None
+        assert slots[(2, 1)]["insertion_type"] == "pulp_duplicate"

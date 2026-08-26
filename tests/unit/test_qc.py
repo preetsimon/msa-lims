@@ -108,3 +108,87 @@ class TestReconstructionFeedsTheAdvisories:
         )
         assert z == Decimal("2")
         assert advisory is None
+
+
+class TestDuplicatePairAdvisory:
+    def test_stats_are_exact_and_terminate(self) -> None:
+        """5 and 3 g/t: mean 4, difference 2, RPD exactly 50 % — flagged."""
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        stats, advisory = duplicate_pair_advisory(
+            detected("5"), detected("3"), max_rpd_percent=Decimal("20")
+        )
+        assert stats is not None
+        assert stats.mean_g_t == Decimal("4")
+        assert stats.abs_diff_g_t == Decimal("2")
+        assert stats.rpd_percent == Decimal("50")
+        assert advisory is not None
+        assert advisory.code == "duplicate_rpd_above_max"
+
+    def test_below_the_max_is_quiet(self) -> None:
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        stats, advisory = duplicate_pair_advisory(
+            detected("5"), detected("4.8"), max_rpd_percent=Decimal("20")
+        )
+        assert stats is not None
+        assert stats.mean_g_t == Decimal("4.9")
+        assert stats.abs_diff_g_t == Decimal("0.2")
+        assert advisory is None
+
+    def test_at_the_max_is_quiet_and_strictly_above_flags(self) -> None:
+        """11 vs 9 over a 20 % max is exactly 20 % -- quiet. 10 vs 7.5 is
+        28.57… % -- flagged, with the exact rational rendering preserved."""
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        stats, advisory = duplicate_pair_advisory(
+            detected("11"), detected("9"), max_rpd_percent=Decimal("20")
+        )
+        assert stats is not None
+        assert stats.rpd_percent == Decimal("20")
+        assert advisory is None
+
+        stats, advisory = duplicate_pair_advisory(
+            detected("10"), detected("7.5"), max_rpd_percent=Decimal("20")
+        )
+        assert stats is not None
+        assert stats.rpd_percent > Decimal("20")
+        assert advisory is not None
+        assert advisory.code == "duplicate_rpd_above_max"
+
+    def test_a_censored_half_yields_no_invented_statistics(self) -> None:
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        stats, advisory = duplicate_pair_advisory(
+            detected("5"), non_detect("0.01"), max_rpd_percent=Decimal("20")
+        )
+        assert stats is None
+        assert advisory is not None
+        assert advisory.code == "duplicate_not_graded"
+
+    def test_an_ungraded_original_is_named_as_such(self) -> None:
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        stats, advisory = duplicate_pair_advisory(
+            None, detected("5"), max_rpd_percent=Decimal("20")
+        )
+        assert stats is None
+        assert advisory is not None
+        assert advisory.code == "original_not_graded"
+
+    def test_a_zero_mean_refuses_to_divide(self) -> None:
+        """Both grading exactly 0 makes RPD 0/0; the honest answer is 'no
+        statistics', not a lucky number."""
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        zero = MeasuredValue.detected(Decimal("0"), Unit.G_PER_TONNE)
+        stats, advisory = duplicate_pair_advisory(zero, zero, max_rpd_percent=Decimal("20"))
+        assert stats is None
+        assert advisory is not None
+        assert advisory.code == "pair_mean_zero"
+
+    def test_a_non_positive_max_refuses(self) -> None:
+        from msa_lims.domain.qc import duplicate_pair_advisory
+
+        with pytest.raises(ValueError):
+            duplicate_pair_advisory(detected("5"), detected("5"), max_rpd_percent=Decimal("0"))

@@ -33,12 +33,18 @@ from sqlalchemy.orm import Session
 
 from msa_lims.batches.service import BatchNotFoundError
 from msa_lims.db.audit import record_audit_event
-from msa_lims.db.models import Batch, Crucible, QcMaterial
+from msa_lims.db.models import Batch, Crucible, QcMaterial, Sample
 from msa_lims.domain.assay import AssayCalculationError, gravimetric_grade
 from msa_lims.domain.canonical import canonical_json, canonical_sha256
-from msa_lims.domain.enums import BatchStatus, QcMaterialType
+from msa_lims.domain.enums import BatchStatus, DuplicateInsertionType, QcMaterialType
 from msa_lims.domain.lifecycle import TransitionNotAllowedError
-from msa_lims.domain.qc import Advisory, blank_advisory, crm_z_score
+from msa_lims.domain.qc import (
+    Advisory,
+    DuplicatePairStats,
+    blank_advisory,
+    crm_z_score,
+    duplicate_pair_advisory,
+)
 from msa_lims.domain.values import MeasuredValue
 from msa_lims.storage.blob import ensure_blob
 
@@ -75,11 +81,29 @@ class QcEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class QcDuplicateEntry:
+    """One duplicate insertion's evidence, paired against its original."""
+
+    sample_id: int
+    sample_label: str
+    insertion_type: DuplicateInsertionType
+    position: str
+    crucible_status: str
+    portion_g: Decimal
+    gold_bead_mg: Decimal | None
+    au: MeasuredValue | None
+    original_au: MeasuredValue | None
+    stats: DuplicatePairStats | None
+    advisories: tuple[Advisory, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class QcDossier:
     batch_id: int
     batch_number: str
     batch_status: str
     entries: tuple[QcEntry, ...]
+    duplicates: tuple[QcDuplicateEntry, ...]
     batch_flags: tuple[Advisory, ...]
 
 
@@ -87,7 +111,45 @@ def _decimal(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
-def build_qc_dossier(session: Session, *, batch_id: int, blank_threshold_g_t: Decimal) -> QcDossier:
+def _grade_of(crucible: Crucible) -> tuple[MeasuredValue | None, Advisory | None]:
+    """The crucible's derived grade, or the honest reason there is none.
+
+    Shared by stock QC entries and duplicates: the bead lands on the row
+    through the same bench paths either way, so the derivation is one
+    function too. A weight the domain refuses to grade blind (most honestly
+    a zero bead, which needs a stated balance sensitivity before it is
+    either a detect or a non-detect) becomes a flag, never a guess.
+    """
+    if crucible.status.value != "weighed" or crucible.gold_bead_mg is None:
+        return None, Advisory(
+            "not_yet_weighed",
+            "the crucible has no final weighing on record; there is no measurement to report",
+        )
+    assert crucible.gold_bead_mg is not None  # narrowing for mypy
+    try:
+        return (
+            gravimetric_grade(
+                gold_bead_mg=crucible.gold_bead_mg,
+                sample_weight_g=crucible.sample_weight_g,
+                balance_sensitivity_mg=None,
+            ),
+            None,
+        )
+    except AssayCalculationError:
+        return None, Advisory(
+            "grade_requires_balance_sensitivity",
+            "the bead weight cannot be graded without a stated balance "
+            "sensitivity; record one at result entry to resolve it",
+        )
+
+
+def build_qc_dossier(
+    session: Session,
+    *,
+    batch_id: int,
+    blank_threshold_g_t: Decimal,
+    max_duplicate_rpd_percent: Decimal,
+) -> QcDossier:
     """Assemble the batch's QC evidence from rows that already exist.
 
     Raises :class:`TransitionNotAllowedError` for a batch that has not
@@ -116,36 +178,10 @@ def build_qc_dossier(session: Session, *, batch_id: int, blank_threshold_g_t: De
         material = session.get(QcMaterial, crucible.qc_material_id)
         assert material is not None  # the FK guarantees it
         advisories: list[Advisory] = []
-        au: MeasuredValue | None = None
+        au, grade_advisory = _grade_of(crucible)
+        if grade_advisory is not None:
+            advisories.append(grade_advisory)
         z: Decimal | None = None
-
-        if crucible.status.value != "weighed" or crucible.gold_bead_mg is None:
-            advisories.append(
-                Advisory(
-                    "not_yet_weighed",
-                    "the crucible has no final weighing on record; there is no "
-                    "measurement to report",
-                )
-            )
-        else:
-            assert crucible.gold_bead_mg is not None  # narrowing for mypy
-            try:
-                au = gravimetric_grade(
-                    gold_bead_mg=crucible.gold_bead_mg,
-                    sample_weight_g=crucible.sample_weight_g,
-                    balance_sensitivity_mg=None,
-                )
-            except AssayCalculationError:
-                # A weight the domain refuses to grade blind — most honestly a
-                # zero bead, which needs a stated balance sensitivity before it
-                # is either a detect or a non-detect. Flag it; never guess.
-                advisories.append(
-                    Advisory(
-                        "grade_requires_balance_sensitivity",
-                        "the bead weight cannot be graded without a stated balance "
-                        "sensitivity; record one at result entry to resolve it",
-                    )
-                )
 
         if material.qc_type in (QcMaterialType.BLANK, QcMaterialType.COARSE_BLANK):
             if au is not None:
@@ -192,6 +228,69 @@ def build_qc_dossier(session: Session, *, batch_id: int, blank_threshold_g_t: De
             )
         )
 
+    duplicates: list[QcDuplicateEntry] = []
+    dup_crucibles = session.scalars(
+        select(Crucible)
+        .where(Crucible.insertion_type.is_not(None), Crucible.batch_id == batch.id)
+        .order_by(Crucible.position_row, Crucible.position_col)
+    ).all()
+    for crucible in dup_crucibles:
+        assert crucible.insertion_type is not None
+        assert crucible.sample_id is not None  # the CHECK guarantees it
+        sample = session.get(Sample, crucible.sample_id)
+        assert sample is not None  # the FK guarantees it
+        dup_advisories: list[Advisory] = []
+        au, grade_advisory = _grade_of(crucible)
+        if grade_advisory is not None:
+            dup_advisories.append(grade_advisory)
+
+        # The pair is batch-local: the duplicate compares against its
+        # sample's *primary* charge in this same tray, graded the same way.
+        # No original in this batch, or one that cannot be graded yet, is a
+        # flag — never a silent skip and never an invented comparison.
+        original = session.scalar(
+            select(Crucible).where(
+                Crucible.batch_id == batch.id,
+                Crucible.sample_id == crucible.sample_id,
+                Crucible.insertion_type.is_(None),
+            )
+        )
+        original_au: MeasuredValue | None = None
+        if original is None:
+            dup_advisories.append(
+                Advisory(
+                    "original_not_in_batch",
+                    "this sample has no primary charge in this batch; the pair "
+                    "comparison needs both slots in the same run",
+                )
+            )
+        else:
+            original_au, original_advisory = _grade_of(original)
+            if original_advisory is not None:
+                advisories.append(original_advisory)
+
+        stats, rpd_advisory = duplicate_pair_advisory(
+            original_au, au, max_rpd_percent=max_duplicate_rpd_percent
+        )
+        if rpd_advisory is not None:
+            dup_advisories.append(rpd_advisory)
+
+        duplicates.append(
+            QcDuplicateEntry(
+                sample_id=sample.id,
+                sample_label=sample.sample_id,
+                insertion_type=crucible.insertion_type,
+                position=f"{crucible.position_row}-{crucible.position_col}",
+                crucible_status=crucible.status.value,
+                portion_g=crucible.sample_weight_g,
+                gold_bead_mg=crucible.gold_bead_mg,
+                au=au,
+                original_au=original_au,
+                stats=stats,
+                advisories=tuple(dup_advisories),
+            )
+        )
+
     batch_flags: tuple[Advisory, ...] = ()
     if not entries:
         batch_flags = (
@@ -207,6 +306,7 @@ def build_qc_dossier(session: Session, *, batch_id: int, blank_threshold_g_t: De
         batch_number=batch.batch_number,
         batch_status=batch.status.value,
         entries=tuple(entries),
+        duplicates=tuple(duplicates),
         batch_flags=batch_flags,
     )
 
@@ -222,6 +322,41 @@ def dossier_payload(dossier: QcDossier) -> dict[str, object]:
     """
     return {
         "batch": {"id": dossier.batch_id, "batch_number": dossier.batch_number},
+        "duplicates": [
+            {
+                "sample": {"id": e.sample_id, "label": e.sample_label},
+                "insertion_type": e.insertion_type.value,
+                "position": e.position,
+                "crucible_status": e.crucible_status,
+                "portion_g": _decimal(e.portion_g),
+                "gold_bead_mg": _decimal(e.gold_bead_mg),
+                "au": None
+                if e.au is None
+                else {
+                    "value": str(e.au.value),
+                    "detection_limit": _decimal(e.au.detection_limit),
+                    "censored": e.au.censored,
+                    "unit": e.au.unit.value,
+                },
+                "original_au": None
+                if e.original_au is None
+                else {
+                    "value": str(e.original_au.value),
+                    "detection_limit": _decimal(e.original_au.detection_limit),
+                    "censored": e.original_au.censored,
+                    "unit": e.original_au.unit.value,
+                },
+                "stats": None
+                if e.stats is None
+                else {
+                    "mean_g_t": str(e.stats.mean_g_t),
+                    "abs_diff_g_t": str(e.stats.abs_diff_g_t),
+                    "rpd_percent": str(e.stats.rpd_percent),
+                },
+                "advisories": [{"code": a.code, "detail": a.detail} for a in e.advisories],
+            }
+            for e in dossier.duplicates
+        ],
         "entries": [
             {
                 "material": {

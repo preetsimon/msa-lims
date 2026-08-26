@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1
+**Updated:** 2026-08-25 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API), which found and fixed two real crashes in its first run
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -23,7 +23,7 @@ tray UI, QC dossiers, and more) — lives in
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 492 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 493 tests passing · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible (Phase 3 needed none — both slices are
 service and route changes over the existing schema) · frontend builds and
 typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
@@ -708,6 +708,71 @@ existing suite (which was already green: the findings below are all things
   test in their file that needs it, rather than duplicating the sequence
   per test.
 
+### Contract fuzzing — `tests/integration/test_schemathesis_contract.py`
+- **[AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7,
+  "Fuzz the Gates."** Schemathesis derives property-based HTTP fuzzing
+  straight from the live app's own `/openapi.json` — no hand-maintained
+  fixture data — generating schema-valid *and* adversarial requests for
+  every operation and asserting exactly one thing: a request never crashes
+  the server. Authenticated as `lab_manager` throughout (the one role every
+  write endpoint's gate admits), so the fuzzing exercises each endpoint's
+  own request handling rather than re-discovering the role gates the rest
+  of the suite already covers directly.
+- **Found two real crashes on its first real run — not hypothetical, not
+  edge-case theatre.** `POST /api/qc-materials` with
+  `certified_au_uncertainty_g_t: 0` reached the database's own CHECK
+  constraint directly (`ck_qc_material_certified_au_uncertainty_positive`)
+  because `QcMaterialCreate` never mirrored it at the Pydantic layer — every
+  sibling numeric field in this API does (`DrillHoleCreate`'s dip/azimuth,
+  every reagent on `FluxRecipeCreate`, every weight on the crucible
+  schemas), this one pair was simply missed. Separately, any endpoint
+  taking an id — path or body — crashed on an integer one past Postgres
+  `BIGINT`'s maximum (`9223372036854775808`): syntactically a valid `int`
+  Pydantic accepts happily, but Postgres refuses it with a raw
+  `DataError` before any query runs. Both are now fixed: `QcMaterialCreate`
+  gained `Field(ge=0)`/`Field(gt=0)` matching the CHECK constraints exactly
+  (**422**, not a crash), and `web/app.py` gained a global `DataError`
+  handler mapping the out-of-range case to **404** — "no row can have this
+  id" is functionally identical to "no row has this id," the same answer
+  every other `*NotFoundError` in the file already gives, and written fresh
+  rather than passed through like the other handlers, since `str(exc)` on a
+  raw driver error leaks the query and its bind parameters where every
+  other handler's message was written on purpose for a person to read.
+- **Each generated example runs inside its own `Session.begin_nested`
+  savepoint** — the identical primitive `db/numbering.py` already uses for
+  race-safe retries — unconditionally rolled back afterward, not merely
+  wrapped in the fixture's one outer transaction like every other
+  integration test. The first version of this fixture shared one plain
+  transaction across every example for an operation; the first crash it
+  found left Postgres refusing all further commands, and every example
+  after that one failed with an identical "transaction is aborted" error
+  that had nothing to do with what Schemathesis had actually generated,
+  burying the one request that mattered under noise. Recovery needed
+  `Session.rollback()` specifically — not the narrower
+  `SessionTransaction.rollback()` the savepoint object itself returns —
+  because a failed flush leaves the ORM Session flagged as needing a full
+  rollback, exactly what SQLAlchemy's own error message names as the fix.
+- **Scoped to Schemathesis's `not_a_server_error` check alone**, not its
+  full default set. `response_schema_conformance` and
+  `positive_data_acceptance` both fire constantly here for reasons that are
+  not bugs — this API's domain refusals return `{"detail": "<message>"}`
+  rather than FastAPI's generic per-field-error array (deliberate, see
+  `web/app.py`'s own comment), and this codebase deliberately keeps
+  cross-field and stateful business rules out of the Pydantic schema and in
+  the service layer, which Schemathesis has no way to know about. Declaring
+  accurate per-status response models so schema conformance means something
+  here is real, separate scope (see open questions); the crash-detection
+  question idea #7 exists to answer needed none of that first.
+- **`max_examples=10`, tuned down from an initial 100-per-operation
+  default that took over ten minutes wall-clock** — almost entirely
+  Hypothesis *shrinking* the two real failures toward a minimal
+  reproduction, not fuzzing itself. Once both bugs were fixed, a clean run
+  across all 22 operations takes under 30 seconds; a new `pytest.mark.fuzz`
+  keeps it out of the plain `pytest -q -m "not fuzz"` step in CI and gives
+  it a separately labelled step ("Fuzz the API contract") so a future crash
+  is attributable at a glance rather than buried in the main suite's
+  output. `make fuzz` runs it alone locally.
+
 ### Database — `src/msa_lims/db/`
 - 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
@@ -825,7 +890,7 @@ existing suite (which was already green: the findings below are all things
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 492
+### Tests — 493
 - **Unit** (192): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -947,8 +1012,12 @@ existing suite (which was already green: the findings below are all things
    client role refused as **403**, an unknown sample as **404**, `in_assay`
    refused at the schema layer as **422** before reaching the service, and
    rejection with and without a reason)).
-
-### Verified live
+- **Contract fuzz** (1 collected test, dynamically exercising all 22
+  operations × up to 10 generated examples each — not a fixed assertion
+  count in the usual sense): Schemathesis-generated schema-valid and
+  adversarial requests against the live app, asserting no operation ever
+  returns a server error. Found and fixed two real crashes on its first
+  run — see "Contract fuzzing" above.
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
 Postgres, rendering `healthy` with the database connected and no console errors.
 Restarting the API with `MSA_SENTINEL_ENABLED=true` against a Sentinel that is
@@ -1166,6 +1235,17 @@ result request that had just been refused now succeeded (**201**, `au:
 {"value": "5.000", ...}`), with no change to the request itself, only to the
 sample's genuine status. Demo data was truncated afterward.
 
+The two fuzz-found fixes verified live directly: `POST /api/qc-materials`
+with `certified_au_uncertainty_g_t: "0"` on a CRM now returns **422** naming
+the field (`"Input should be greater than 0"`) instead of crashing into the
+database's CHECK constraint; `GET /api/samples/9223372036854775808` (one
+past Postgres `BIGINT`'s maximum) now returns **404**
+(`"no resource with that id exists"`) instead of a raw `DataError`; and a
+negative `certified_au_value_g_t` is refused the identical way (**422**,
+`"Input should be greater than or equal to 0"`). No demo data to truncate —
+every one of these requests was correctly refused before anything wrote to
+the database.
+
 ---
 
 ## Decision log
@@ -1239,6 +1319,11 @@ sample's genuine status. Demo data was truncated afterward.
 | 2026-08-25 | `fire_assay_results/service.py`'s own precondition (any non-`REJECTED` sample) is **left untightened** in this pass | Requiring the real `IN_ASSAY → ASSAYED` transition too would be correct, but it ripples into every certificate and sample test fixture that enters a result against a freshly-created sample — a separately-scoped decision, not squeezed into the phase's first slice to keep this one coherent and reviewable on its own. |
 | 2026-08-25 | `fire_assay_results/service.py`'s precondition **now also calls** the real `IN_ASSAY → ASSAYED` transition, closing the deferral above | The ripple this required — every fixture across five test files that entered a result against a freshly-created sample now walks it to `IN_ASSAY` first — was real, but doing it in a dedicated pass kept each change reviewable on its own rather than bundled into an already-large first slice. |
 | 2026-08-25 | The `IN_ASSAY → ASSAYED` check is **skipped when the sample already has a current result**, not run unconditionally | A second sample already carrying a result is always also not `IN_ASSAY` (it moved to `ASSAYED` when the first result landed), so the two checks would always both fire together for that case. "Supersede result #N" names the actual remedy; "the sample is already assayed" (`check_transition`'s generic message) does not — so the more specific, already-existing check runs first and the transition check only fires when there is genuinely nothing to point at instead. |
+| 2026-08-25 | Contract fuzzing (audit idea #7) is **scoped to Schemathesis's `not_a_server_error` check alone** | `response_schema_conformance` and `positive_data_acceptance` both fire constantly for reasons that are not bugs here — domain refusals return `{"detail": string}` by design, and cross-field/stateful business rules live in the service layer on purpose, both invisible to a schema Schemathesis reads literally. The crash-detection question idea #7 exists to answer needs neither; declaring accurate response models so schema conformance means something is real, separate scope. |
+| 2026-08-25 | An out-of-range id (past Postgres `BIGINT`'s max) is mapped to **404 globally via a `DataError` handler**, not fixed per-endpoint | The bug is systemic — every `int`/`int \| None` id field across the API shares it, path and body alike — so a single global handler closes the whole class in one place rather than adding an upper `Field` bound to a dozen schema classes individually. "No row can have this id" and "no row has this id" are the same fact to a caller; both get the same status every other `*NotFoundError` already uses. |
+| 2026-08-25 | The `DataError` handler's message is **written fresh**, not passed through via `str(exc)` like every other handler in the dict-driven loop | Every other handler's exception was raised on purpose by application code with a message written for the person who hit it. A raw driver `DataError` carries the failed SQL and its bind parameters — fine for a log, not for a client response. |
+| 2026-08-25 | Each fuzz-generated example runs in its **own `Session.begin_nested` savepoint**, not the fixture's one shared transaction every other integration test uses | A raw, uncaught database error (exactly the class of bug fuzzing exists to find) leaves Postgres refusing further commands until a rollback. One shared transaction across many generated examples let the first such crash poison every example after it with an identical, unrelated "transaction is aborted" failure — the savepoint makes each generated example as independent as it would be as a real, separate request. |
+| 2026-08-25 | `max_examples` tuned down to **10**, from the ~100-per-operation default that took over ten minutes | Almost all of that time was Hypothesis *shrinking* the two real failures toward a minimal reproduction, not fuzzing breadth. A clean run (no failures to shrink) finishes in under 30 seconds at this setting — fast enough for a routine CI step, the "effort S, one afternoon" scope idea #7 was scoped at. |
 
 ---
 
@@ -1378,6 +1463,14 @@ sample's genuine status. Demo data was truncated afterward.
 
 ## Open questions
 
+- **The OpenAPI schema declares no accurate per-status response models for
+  domain refusals**, so Schemathesis's `response_schema_conformance` and
+  `positive_data_acceptance` checks cannot run meaningfully yet — see the
+  "Contract fuzzing" section and its decision-log rows. Declaring real
+  `responses={422: {...}, 404: {...}, ...}` models per route (or a shared
+  envelope type FastAPI can reuse) would let those checks graduate from
+  "always noisy, deliberately excluded" to actually enforced — the natural
+  next increment of audit idea #7, not attempted in this pass.
 - **Which balance sensitivity is real?** `gravimetric_grade` takes it as a
   parameter, but the value should come from the instrument record once
   `instrument` carries calibration data. Currently every caller must supply it

@@ -28,6 +28,7 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-asyncio>=0.24",
     "hypothesis>=6.119",
+    "schemathesis>=4.25",
     "ruff>=0.8",
     "mypy>=1.13",
 ]
@@ -96,6 +97,7 @@ addopts = "-q --strict-markers"
 asyncio_mode = "auto"
 markers = [
     "integration: requires Postgres (docker compose up -d)",
+    "fuzz: property-based HTTP contract fuzzing via Schemathesis (slower; always also integration)",
 ]
 
 [tool.coverage.run]

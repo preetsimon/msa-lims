@@ -60,7 +60,13 @@ jobs:
           alembic upgrade head
 
       - name: Test
-        run: pytest -q
+        run: pytest -q -m "not fuzz"
+
+      # Property-based fuzzing of the whole HTTP contract from the API's own
+      # OpenAPI schema — a separate step so a crash it finds is attributable
+      # at a glance, not buried in the main suite's output.
+      - name: Fuzz the API contract
+        run: pytest -q -m fuzz
 
   frontend:
     runs-on: ubuntu-latest

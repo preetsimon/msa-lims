@@ -504,10 +504,16 @@ class QcMaterialCreate(BaseModel):
     qc_type: QcMaterialType
     lot_number: str | None = Field(default=None, max_length=100)
     #: Required for a CRM, refused for a blank — a blank is defined by having
-    #: no certified grade. Enforced in the service so both sides of the rule
-    #: are reported together.
-    certified_au_value_g_t: Decimal | None = None
-    certified_au_uncertainty_g_t: Decimal | None = None
+    #: no certified grade. *Whether* one is present is enforced in the
+    #: service so both sides of that rule are reported together; the bounds
+    #: below mirror the database's own CHECK constraints (a grade cannot be
+    #: negative, an uncertainty of exactly zero claims a perfectly certain
+    #: measurement) so a bad value comes back as a clean 422 rather than a
+    #: raw IntegrityError — found by Schemathesis fuzzing the live app,
+    #: which hit a CRM with `certified_au_uncertainty_g_t: 0` and crashed
+    #: straight into the database's CHECK constraint.
+    certified_au_value_g_t: Decimal | None = Field(default=None, ge=0)
+    certified_au_uncertainty_g_t: Decimal | None = Field(default=None, gt=0)
     notes: str | None = None
 
 

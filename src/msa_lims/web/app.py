@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError
 
 from msa_lims.batches.service import (
     BatchNotFoundError,
@@ -144,6 +145,27 @@ def _register_error_handlers(app: FastAPI) -> None:
             return JSONResponse(status_code=code, content={"detail": str(exc)})
 
         app.add_exception_handler(error_type, handler)
+
+    app.add_exception_handler(DataError, _handle_out_of_range_id)
+
+
+def _handle_out_of_range_id(request: Request, exc: Exception) -> JSONResponse:
+    """An id larger than Postgres ``BIGINT`` can hold — found by Schemathesis
+    fuzzing the live app with ``9223372036854775808``, one past the maximum —
+    reaches the database as a syntactically valid integer no Pydantic field
+    refuses, and Postgres raises a raw ``DataError`` before any query
+    executes. Functionally that is "no row has this id", so it is mapped
+    the same way every ``*NotFoundError`` in this file already is.
+
+    Written fresh rather than passed through like every handler above:
+    ``str(exc)`` here is a raw driver message carrying the failed SQL and its
+    bind parameters — fine to surface for a domain refusal a person wrote on
+    purpose, not for an unfiltered database error.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={"detail": "no resource with that id exists"},
+    )
 
 
 app = create_app()

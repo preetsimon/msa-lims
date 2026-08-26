@@ -1,7 +1,7 @@
 PY := .venv/bin/python
 PIP := .venv/bin/pip
 
-.PHONY: install services test test-unit cov lint fmt typecheck check migrate seed revision run ui clean
+.PHONY: install services test test-unit fuzz cov lint fmt typecheck check migrate seed revision run ui clean
 
 install:
 	$(PIP) install -q -e ".[dev,pdf,oidc]"
@@ -16,6 +16,11 @@ test:
 # Unit + property tests only; no services required.
 test-unit:
 	$(PY) -m pytest -m "not integration"
+
+# Property-based HTTP fuzzing alone (idea #7, AUDIT_AND_BREAKTHROUGHS.md) --
+# needs Postgres, same as integration.
+fuzz:
+	$(PY) -m pytest -m fuzz
 
 cov:
 	$(PY) -m pytest --cov --cov-report=term-missing

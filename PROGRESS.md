@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API), which found and fixed two real crashes in its first run, and idea #4 (the furnace tray) in full — the read side (batch listing, an enriched detail response, two React screens drawing the tray as a grid) and, this pass, the write side: charging, parting, and weighing as modal forms directly against the tray, closing the deferral named at the end of the previous pass
+**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done, across audit follow-up passes: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API, which found and fixed two real crashes on its first run — plus a later, more serious fix to the fuzz fixture's own test-isolation, which had been silently leaking data into the test database); idea #4 (the furnace tray) in full — batch listing, an enriched detail response, two React screens drawing the tray as a grid, and charging/parting/weighing as modal forms directly against it; and idea #18 (generated TypeScript types) — `types.ts` is now a thin alias layer over a schema `openapi-typescript` derives from the live app, with a CI step that fails the build if they ever drift
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -1043,14 +1043,12 @@ existing suite (which was already green: the findings below are all things
   now serves the health-check screen and both sample screens; a name specific
   to "system components" stopped describing what it actually was the moment
   a second screen needed the identical layout.
-- `types.ts` mirrors the wire format including the censored-value distinction,
-  with `formatMeasured` so a non-detect cannot be rendered as its null value —
-  now also carrying `SampleListItem`, `SampleDetail`, `FireAssayResult`,
-  `CertificateReference`, `Batch`, `CrucibleSlot`, `BatchDetail`,
-  `FluxRecipe`, `QcMaterial`, and the full `Crucible`,
-  hand-written like everything else here with the
-  same standing note that these should come from `/openapi.json` once the API
-  stops moving.
+- `types.ts` mirrors the wire format including the censored-value
+  distinction, with `formatMeasured` so a non-detect cannot be rendered as
+  its null value. **No longer hand-written** — see "Generated frontend
+  types" below; every export here is now a type alias over
+  `generated-types.ts`, and the standing note that used to sit on this
+  bullet is closed.
 - **`pages/BatchList.tsx` / `pages/BatchDetail.tsx`** — mirror the sample
   screens' own patterns exactly: the same loading/error/empty states, the
   same 404-vs-generic-error distinction via `ApiError.status`. Batch detail
@@ -1067,6 +1065,46 @@ existing suite (which was already green: the findings below are all things
   string instead of discarding it; `datetimeInput.ts` is the one place the
   `<input type="datetime-local">`-vs-ISO-instant conversion happens, reused
   by every business-timestamp field across the three forms.
+
+### Generated frontend types — `src/msa_lims/web/export_openapi.py`, `frontend/src/generated-types.ts`, `frontend/src/types.ts`
+- **[AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea
+  #18, "Hand-written `types.ts`."** Named as acknowledged standing debt
+  since Phase 1 — every type in `types.ts` was a hand-copied guess at the
+  wire format, with nothing to catch it drifting the moment a route or
+  response model changed. `openapi-typescript` plus a CI drift check makes
+  the contract mechanical instead of aspirational, exactly as the audit's
+  own one-line sketch named it.
+- **`export_openapi.py` needs no running server** — `create_app().openapi()`
+  alone produces the full schema, dumped to JSON. `make generate-types`
+  runs it and immediately pipes the result through
+  `openapi-typescript` into `frontend/src/generated-types.ts`. The raw
+  `openapi.json` dump is gitignored (a build artifact of a build artifact);
+  `generated-types.ts` **is committed** — the app must build without
+  needing Python as a build-time dependency, and a reviewer should see the
+  wire-format diff when it changes, not just "regenerate before merging."
+- **`types.ts` is now a thin alias layer, not a second copy of the
+  contract.** Every export is a one-line `type X = components["schemas"]["XOut"]`
+  pointing at the generated schema — chosen specifically so **no
+  import site anywhere in the app needed to change**: `Batch`,
+  `SampleDetail`, `CrucibleSlot`, and every other name a page or component
+  already imported from `"./types"` still resolves, now to a real alias
+  instead of a hand-copied interface. `formatMeasured` is the one thing
+  that stays hand-written here — rendering a censored value is application
+  logic, not a type, and has nowhere else to live.
+- **A CI drift check, not just a generation script.** `npm run
+  check-types-drift` regenerates `generated-types.ts` from a schema dump
+  and then `git diff --exit-code`s it — clean if regeneration reproduces
+  exactly what's committed, a failing build if it doesn't. Verified both
+  directions directly: a deliberately stale `generated-types.ts` (one
+  appended comment) makes the check fail with a real diff shown; the
+  correctly-regenerated file makes it pass silently.
+- **The backend and frontend CI jobs are now sequential, not
+  independent** (`frontend: needs: backend`) — a real, deliberate
+  trade-off. The backend job exports `openapi.json` as a build artifact
+  after its own tests pass; the frontend job downloads it and runs the
+  drift check against it, so the check is meaningful (a schema the real
+  app actually produced) rather than trusting a stale copy nobody
+  re-exported. The cost is added CI wall-clock time; see the decision log.
 
 ### Tests — 513
 - **Unit** (192): units and dimensions, censored values (including the audit's
@@ -1586,6 +1624,10 @@ pass's changes caused.
 | 2026-08-26 | `Modal` is a **shared generic shell** across the three write-side forms, breaking with this session's own general preference for duplication over premature abstraction | The three forms' fields differ completely, but their overlay/dialog chrome — backdrop, close button, Escape-to-close — really is identical, not just superficially similar. Abstracting the chrome and leaving the fields as three separate components keeps the one genuinely shared part shared without forcing the differing parts into a single configurable component. |
 | 2026-08-26 | The fuzz fixture's hand-rolled `Session.begin_nested()`-per-request isolation is **replaced** with `Session(..., join_transaction_mode="create_savepoint")`, SQLAlchemy 2.0's own built-in mechanism, rather than patched in place | The hand-rolled version had a real, silent bug: `Session.commit()` correctly defers to an externally-owned transaction, but `Session.rollback()` does not — it ends the whole transaction for real, and fuzzing's mostly-refused requests call rollback() constantly. Once found (real garbage rows accumulated in `msa_test` across separate fuzz runs), the fix was to use the primitive SQLAlchemy actually built for this exact "join a Session into an external transaction" scenario rather than trying to patch the manual version's specific failure mode and risk another one just like it. |
 | 2026-08-26 | The fuzz fixture's isolation bug gets a **direct, deterministic regression test**, not just a corrected fixture | The bug was invisible to every existing test — the old fixture "passed" for weeks. A test exercising Schemathesis's own randomness might not reliably hit the exact success-then-refusal-then-success sequence that triggers it. `TestFixtureIsolation` reproduces that sequence directly and was verified to fail against the old code and pass against the new, so a future regression here fails loudly and immediately rather than silently accumulating garbage again. |
+| 2026-08-26 | `types.ts` is rewritten as **thin aliases over generated schemas**, not replaced wholesale by raw generated types at every import site | Every page and component already imports friendly names (`Batch`, `SampleDetail`, …) from `"./types"`. Aliasing keeps every one of those import sites unchanged — the diff is entirely inside `types.ts` itself — rather than rippling a rename (`Batch` → `components["schemas"]["BatchOut"]`) through every file that uses it for a purely mechanical reason. |
+| 2026-08-26 | `generated-types.ts` is **committed**; `openapi.json` (its input) is **gitignored** | The generated TypeScript is what the app actually imports and builds against — committing it means `npm install && npm run build` works with no Python toolchain present, and a reviewer sees the real wire-format diff in a PR. The raw schema JSON is a build artifact of a build artifact with no reason to live in git once the committed `.ts` exists. |
+| 2026-08-26 | `export_openapi.py` calls `create_app().openapi()` directly, with **no running server** required | FastAPI's own OpenAPI generation is a pure function of the route/schema definitions already in the process — spinning up uvicorn just to `curl /openapi.json` would add a real dependency (a live server, a port, a wait-until-ready loop) for a fact the app already knows about itself at import time. |
+| 2026-08-26 | The frontend CI job now **depends on the backend job** (`needs: backend`), serializing two previously independent jobs | The type-drift check is only meaningful against a schema the live app actually produced this run — trusting a stale `openapi.json` committed days earlier would let the exact "drifted silently" failure idea #18 exists to prevent happen one layer up, in the CI config itself. The added wall-clock cost is accepted as the honest price of a check that means something. |
 
 ---
 
@@ -1749,11 +1791,17 @@ pass's changes caused.
    `join_transaction_mode="create_savepoint"`. A new deterministic
    regression test proves it; two consecutive real `pytest -m fuzz` runs
    verified clean. See "Contract fuzzing" above and the decision log.
-5. **Idea #18, generated TypeScript types from `/openapi.json`**, remains
-   unbuilt. `types.ts` gained `FluxRecipe`/`QcMaterial`/`Crucible` this
-   pass, hand-written under the same standing note every other type in the
-   file already carries — now thirteen hand-kept interfaces deep, the
-   strongest case yet for actually generating them.
+5. ~~**Idea #18, generated TypeScript types from `/openapi.json`.**~~
+   **Done 2026-08-26** — `export_openapi.py` (no server needed) +
+   `openapi-typescript` produce `frontend/src/generated-types.ts`,
+   committed; `types.ts` is now a thin alias layer over it, every existing
+   import site unchanged. `make generate-types` regenerates both; a new
+   `npm run check-types-drift` step in CI (backend job exports and
+   uploads the schema, frontend job depends on it) fails the build if the
+   committed types ever drift from the live app. Verified live: `/samples`,
+   `/samples/{id}`, and `/batches/{id}` all render correctly against the
+   new types with zero console errors. **Idea #18 is done; every open
+   audit item from this pass's queue is closed.**
 
 ## Open questions
 

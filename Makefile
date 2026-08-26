@@ -1,7 +1,7 @@
 PY := .venv/bin/python
 PIP := .venv/bin/pip
 
-.PHONY: install services test test-unit fuzz cov lint fmt typecheck check migrate seed revision run ui clean
+.PHONY: install services test test-unit fuzz cov lint fmt typecheck check migrate seed revision run ui generate-types clean
 
 install:
 	$(PIP) install -q -e ".[dev,pdf,oidc]"
@@ -53,6 +53,14 @@ run:
 
 ui:
 	cd frontend && npm run dev
+
+# Regenerate frontend/src/generated-types.ts from the live app's own
+# OpenAPI schema (idea #18, AUDIT_AND_BREAKTHROUGHS.md) -- no server needed.
+# Run this after any request/response schema change and commit the result;
+# CI's `check-types-drift` step fails if it would have produced a diff.
+generate-types:
+	$(PY) -m msa_lims.web.export_openapi frontend/openapi.json
+	cd frontend && npm run generate-types
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage

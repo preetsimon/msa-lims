@@ -1,24 +1,25 @@
 /**
- * Types mirroring the API's response shapes.
+ * Type aliases over `generated-types.ts`, the schema `openapi-typescript`
+ * derives straight from the live API's own `/openapi.json` — closing audit
+ * idea #18. Every export here is a name pointing at a generated schema, not
+ * a hand-copied field list: the wire contract can no longer drift silently,
+ * because `make generate-types` (or `npm run generate-types`) regenerates
+ * `generated-types.ts` from the real app and a CI step fails the build if
+ * the regenerated file differs from what's committed.
  *
- * Hand-written for now. Once the API surface stops moving these should be
- * generated from `/openapi.json` — a hand-kept copy of a schema drifts, and a
- * drifted type is worse than no type because it is believed.
+ * Only two things live here that aren't pure aliases: `formatMeasured`,
+ * because rendering a censored value is application logic, not a type; and
+ * the friendly names themselves — the generated schemas are named
+ * `BatchOut`, `SampleDetailOut`, etc. (FastAPI's own response-model
+ * convention), and every page/component in this app imports the shorter
+ * name a schema's *use* suggests instead.
  */
 
-export type ComponentStatus = "ok" | "unavailable" | "not_configured";
+import type { components } from "./generated-types";
 
-export interface ComponentHealth {
-  status: ComponentStatus;
-  detail: string | null;
-}
-
-export interface HealthResponse {
-  status: "healthy" | "degraded" | "unhealthy";
-  version: string;
-  database: ComponentHealth;
-  qc_sentinel: ComponentHealth;
-}
+export type ComponentHealth = components["schemas"]["ComponentHealth"];
+export type ComponentStatus = ComponentHealth["status"];
+export type HealthResponse = components["schemas"]["HealthResponse"];
 
 /**
  * A result as the API renders it.
@@ -28,12 +29,7 @@ export interface HealthResponse {
  * as a zero. Render with {@link formatMeasured} rather than reading `value`
  * directly.
  */
-export interface MeasuredValue {
-  value: string | null;
-  detection_limit: string | null;
-  censored: boolean;
-  unit: string;
-}
+export type MeasuredValue = components["schemas"]["MeasuredValueOut"];
 
 export function formatMeasured(measured: MeasuredValue): string {
   return measured.censored
@@ -44,60 +40,19 @@ export function formatMeasured(measured: MeasuredValue): string {
 /** One row of `GET /api/samples` — deliberately lean; see the backend's own
  * `SampleListItemOut` docstring for why no grade or certificate list rides
  * along here. */
-export interface SampleListItem {
-  id: number;
-  sample_id: string;
-  sample_type: string;
-  status: string;
-  client_name: string;
-  submission_number: string;
-}
+export type SampleListItem = components["schemas"]["SampleListItemOut"];
 
 /** One certificate that names a sample — not the document itself, just
  * enough to link to `GET /api/certificates/{id}` or download its PDF. */
-export interface CertificateReference {
-  id: number;
-  certificate_number: string;
-}
+export type CertificateReference = components["schemas"]["CertificateReferenceOut"];
 
-export interface FireAssayResult {
-  id: number;
-  sample_id: number;
-  method: string;
-  gold_bead_mg: string;
-  sample_weight_g: string;
-  balance_sensitivity_mg: string | null;
-  au: MeasuredValue;
-  analysed_at: string;
-  supersedes_id: number | null;
-  superseded_reason: string | null;
-  notes: string | null;
-  crucible_id: number | null;
-}
+export type FireAssayResult = components["schemas"]["FireAssayResultOut"];
 
-export interface SampleDetail {
-  id: number;
-  sample_id: string;
-  sample_type: string;
-  status: string;
-  submission_id: number;
-  drill_hole_id: number | null;
-  from_depth_m: string | null;
-  to_depth_m: string | null;
-  current_result: FireAssayResult | null;
-  certificates: CertificateReference[];
-}
+export type SampleDetail = components["schemas"]["SampleDetailOut"];
 
 /** One row of `GET /api/batches` — status and timing only, matching
  * `SampleListItem`'s lean-list precedent. */
-export interface Batch {
-  id: number;
-  batch_number: string;
-  status: string;
-  opened_by_id: number;
-  opened_at: string;
-  notes: string | null;
-}
+export type Batch = components["schemas"]["BatchOut"];
 
 /**
  * One crucible as it sits in a batch's tray.
@@ -108,89 +63,25 @@ export interface Batch {
  * alongside the id, so the tray never has to fetch a second time just to
  * label a slot.
  */
-export interface CrucibleSlot {
-  id: number;
-  position_row: number;
-  position_col: number;
-  status: string;
-  sample_id: number | null;
-  sample_label: string | null;
-  qc_material_id: number | null;
-  qc_material_name: string | null;
-  qc_material_type: string | null;
-}
+export type CrucibleSlot = components["schemas"]["CrucibleSlotOut"];
 
 /** `GET /api/batches/{id}` — a batch and the furnace tray its crucibles sit
  * in. `furnace_rows`/`furnace_columns` are a single lab-wide setting today,
  * not per-batch — see PROGRESS.md's open questions — carried here because
  * this is the response a tray view actually renders from. */
-export interface BatchDetail {
-  id: number;
-  batch_number: string;
-  status: string;
-  opened_by_id: number;
-  opened_at: string;
-  notes: string | null;
-  furnace_rows: number;
-  furnace_columns: number;
-  crucibles: CrucibleSlot[];
-}
+export type BatchDetail = components["schemas"]["BatchDetailOut"];
 
 /** A registered flux recipe — the picker a charge form draws from. */
-export interface FluxRecipe {
-  id: number;
-  name: string;
-  matrix_type: string;
-  nominal_portion_g: string;
-  litharge_g: string;
-  soda_ash_g: string;
-  borax_g: string;
-  silica_g: string;
-  flour_g: string;
-  nitre_g: string;
-  is_active: boolean;
-}
+export type FluxRecipe = components["schemas"]["FluxRecipeOut"];
 
 /** A registered QC material (CRM or blank) — the picker a QC charge form
  * draws from. `certified_au_value_g_t`/`certified_au_uncertainty_g_t` are
  * null for a blank, which is defined by carrying no certified grade. */
-export interface QcMaterial {
-  id: number;
-  name: string;
-  qc_type: string;
-  lot_number: string | null;
-  certified_au_value_g_t: string | null;
-  certified_au_uncertainty_g_t: string | null;
-  is_active: boolean;
-}
+export type QcMaterial = components["schemas"]["QcMaterialOut"];
 
 /** The full crucible row `POST /api/batches/{id}/crucibles` and the
  * parting/weighing endpoints return — every flux amount and measurement
  * column, unlike the tray's own lean `CrucibleSlot`. Nothing here renders
  * this shape directly; a batch detail refetch after each write is what the
  * tray actually redraws from. */
-export interface Crucible {
-  id: number;
-  batch_id: number;
-  sample_id: number | null;
-  qc_material_id: number | null;
-  flux_recipe_id: number;
-  position_row: number;
-  position_col: number;
-  status: string;
-  sample_weight_g: string;
-  litharge_g: string;
-  soda_ash_g: string;
-  borax_g: string;
-  silica_g: string;
-  flour_g: string;
-  nitre_g: string;
-  lead_button_weight_mg: string | null;
-  prill_weight_mg: string | null;
-  parting_acid_volume_ml: string | null;
-  parted_at: string | null;
-  gold_bead_mg: string | null;
-  weighed_at: string | null;
-  charged_at: string;
-  notes: string | null;
-}
+export type Crucible = components["schemas"]["CrucibleOut"];

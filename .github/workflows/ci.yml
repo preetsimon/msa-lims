@@ -68,8 +68,24 @@ jobs:
       - name: Fuzz the API contract
         run: pytest -q -m fuzz
 
+      # No server needed — create_app().openapi() alone. The frontend job
+      # downloads this to prove its committed generated types actually match
+      # what the live app describes (idea #18, AUDIT_AND_BREAKTHROUGHS.md).
+      - name: Export OpenAPI schema for the frontend's type-drift check
+        run: python -m msa_lims.web.export_openapi frontend/openapi.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: frontend/openapi.json
+
   frontend:
     runs-on: ubuntu-latest
+    # Waits on the backend job for its exported openapi.json below — this
+    # serializes what were two independent jobs, trading CI wall-clock time
+    # for a drift check that is only meaningful against a schema the real
+    # app actually produced, not a stale copy nobody re-exported.
+    needs: backend
     defaults:
       run:
         working-directory: frontend
@@ -84,5 +100,17 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openapi-schema
+          path: frontend
+
+      # Regenerates generated-types.ts from the schema above and fails if
+      # that differs from what's committed — a route or response-model
+      # change that forgot `make generate-types` fails here, loudly.
+      - name: Generated types match the live schema
+        run: npm run check-types-drift
+
       - run: npm run lint
       - run: npm run build

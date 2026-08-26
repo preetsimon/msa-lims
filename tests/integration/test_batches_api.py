@@ -280,10 +280,38 @@ class TestFiringABatchThroughHttp:
         body = response.json()
         assert len(body["crucibles"]) == 1
         assert body["crucibles"][0]["position_row"] == 3
+        # The tray-rendering fields: the sample's own label, not just its id,
+        # and the furnace geometry the caller needs to draw the grid.
+        assert body["crucibles"][0]["sample_label"] == "MSA-24-SO-00417"
+        assert body["furnace_rows"] == 6
+        assert body["furnace_columns"] == 6
 
     def test_an_unknown_batch_is_404(self, client: TestClient) -> None:
         response = client.get("/api/batches/999999")
         assert response.status_code == 404
+
+    def test_a_client_role_is_refused_reading_a_batch(
+        self, client: TestClient, batch_id: int
+    ) -> None:
+        response = client.get(f"/api/batches/{batch_id}", headers=FIELD_CLIENT)
+        assert response.status_code == 403
+
+
+class TestListingBatchesThroughHttp:
+    def test_a_batch_appears_in_the_list(self, client: TestClient, batch_id: int) -> None:
+        response = client.get("/api/batches", headers=ANALYST)
+        assert response.status_code == 200
+        body = response.json()
+        assert any(batch["id"] == batch_id for batch in body)
+
+    def test_a_client_role_is_refused_with_403(self, client: TestClient) -> None:
+        response = client.get("/api/batches", headers=FIELD_CLIENT)
+        assert response.status_code == 403
+
+    def test_an_empty_lab_lists_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/batches", headers=ANALYST)
+        assert response.status_code == 200
+        assert response.json() == []
 
 
 def walk_to_cupelled(client: TestClient, batch_id: int, sample_id: int, recipe_id: int) -> int:

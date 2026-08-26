@@ -137,9 +137,22 @@ class CrucibleWeighingInput:
 
 
 @dataclass(frozen=True, slots=True)
+class CrucibleSlot:
+    """One crucible plus the human-readable label of whatever it holds — a
+    sample's own label, or a QC material's name and type — assembled once
+    here in a single query rather than requiring a caller rendering a tray
+    of up to 36 of these to look each one up separately."""
+
+    crucible: Crucible
+    sample_label: str | None
+    qc_material_name: str | None
+    qc_material_type: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class BatchDetail:
     batch: Batch
-    crucibles: tuple[Crucible, ...]
+    crucibles: tuple[CrucibleSlot, ...]
 
 
 class BatchService:
@@ -496,12 +509,41 @@ class BatchService:
 
 def get_batch_detail(session: Session, batch_id: int) -> BatchDetail:
     """A batch and its crucibles, ordered the way a technician reads a tray —
-    row-major, top-left first."""
+    row-major, top-left first — each carrying whatever it holds' label.
+
+    Two ``LEFT JOIN``s, not a relationship traversal: a crucible's
+    ``sample_id``/``qc_material_id`` are mutually exclusive (see the model's
+    own CHECK constraint), so exactly one of the two joined rows is non-null
+    per crucible, and one query gets every label a tray needs to render
+    without a lookup per slot.
+    """
     batch = session.get(Batch, batch_id)
     if batch is None:
         raise BatchNotFoundError(f"no batch with id {batch_id}")
 
+    rows = session.execute(
+        select(Crucible, Sample.sample_id, QcMaterial.name, QcMaterial.qc_type)
+        .outerjoin(Sample, Crucible.sample_id == Sample.id)
+        .outerjoin(QcMaterial, Crucible.qc_material_id == QcMaterial.id)
+        .where(Crucible.batch_id == batch_id)
+        .order_by(Crucible.position_row, Crucible.position_col)
+    ).all()
+
     crucibles = tuple(
-        sorted(batch.crucibles, key=lambda crucible: (crucible.position_row, crucible.position_col))
+        CrucibleSlot(
+            crucible=crucible,
+            sample_label=sample_label,
+            qc_material_name=qc_material_name,
+            qc_material_type=qc_type.value if qc_type is not None else None,
+        )
+        for crucible, sample_label, qc_material_name, qc_type in rows
     )
     return BatchDetail(batch=batch, crucibles=crucibles)
+
+
+def list_batches(session: Session, *, limit: int = 100) -> list[Batch]:
+    """The most recent batches, newest first — the same lean, one-query
+    shape ``samples/service.py``'s ``list_samples`` already established for
+    a listing endpoint: no per-batch crucible count or tray preview, since
+    nothing here needs one yet and it would cost a query per row to get."""
+    return list(session.scalars(select(Batch).order_by(Batch.id.desc()).limit(limit)))

@@ -184,7 +184,9 @@ h2 {
 .pill-ok,
 .pill-healthy,
 .pill-assayed,
-.pill-reported {
+.pill-reported,
+.pill-completed,
+.pill-weighed {
   color: var(--ok);
   background: var(--ok-bg);
 }
@@ -194,7 +196,15 @@ h2 {
 .pill-received,
 .pill-in_prep,
 .pill-ready_for_assay,
-.pill-in_assay {
+.pill-in_assay,
+.pill-pending,
+.pill-charging,
+.pill-in_fusion,
+.pill-fused,
+.pill-in_cupellation,
+.pill-cupelled,
+.pill-charged,
+.pill-parted {
   color: var(--warn);
   background: var(--warn-bg);
 }
@@ -204,4 +214,82 @@ h2 {
 .pill-rejected {
   color: var(--bad);
   background: var(--bad-bg);
+}
+
+/* The furnace tray — a digital twin of the physical grid a batch's
+   crucibles sit in. Each cell's background echoes its crucible's own
+   status tier (the same three colours the pills already use), so a
+   reviewer reads the tray's state at a glance before reading a single
+   label. */
+.tray-grid {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.tray-cell {
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  overflow: hidden;
+}
+
+.tray-cell-empty {
+  border-style: dashed;
+  align-items: center;
+  justify-content: center;
+}
+
+.tray-cell-charged,
+.tray-cell-fused,
+.tray-cell-cupelled,
+.tray-cell-parted {
+  background: var(--warn-bg);
+  border-color: var(--warn);
+}
+
+.tray-cell-weighed {
+  background: var(--ok-bg);
+  border-color: var(--ok);
+}
+
+.tray-cell-rejected {
+  background: var(--bad-bg);
+  border-color: var(--bad);
+}
+
+.tray-position {
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.tray-label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: inherit;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tray-label:hover {
+  text-decoration: underline;
+}
+
+.tray-qc-badge {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

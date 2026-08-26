@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API), which found and fixed two real crashes in its first run
+**Updated:** 2026-08-25 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API), which found and fixed two real crashes in its first run, and idea #4 (the furnace tray) — a `GET /api/batches` listing endpoint, a batch detail response enriched with sample/QC labels and furnace geometry, and two React screens rendering the tray as a drawn grid, verified live end to end
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -23,7 +23,8 @@ tray UI, QC dossiers, and more) — lives in
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 493 tests passing · ruff clean · mypy `--strict` clean · migrations
+**Health:** 501 tests passing (plus a Schemathesis contract-fuzz run kept
+separate, see below) · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible (Phase 3 needed none — both slices are
 service and route changes over the existing schema) · frontend builds and
 typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
@@ -773,6 +774,64 @@ existing suite (which was already green: the findings below are all things
   is attributable at a glance rather than buried in the main suite's
   output. `make fuzz` runs it alone locally.
 
+### The furnace tray — `batches/service.py`, `web/routes/batches.py`, `frontend/src/pages/BatchList.tsx`, `frontend/src/pages/BatchDetail.tsx`, `frontend/src/components/FurnaceTray.tsx`
+- **[AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #4,
+  "The Tray."** Finding 20 named the system's most distinctive object as
+  invisible — a batch existed only as JSON. This slice builds the visual
+  half: a batch list, and a batch detail screen that draws the furnace as a
+  grid, one cell per position, coloured by crucible status. The other half
+  of the audit's own sketch — charging/parting/weighing as modal forms
+  against the existing endpoints — is deliberately deferred; see next
+  actions below.
+- **`GET /api/batches` closes finding 17's listing gap**, the dependency
+  the audit entry itself named. `list_batches` is one query, newest-first,
+  a `limit` (default 100) — deliberately as lean as `list_samples`: no
+  per-row crucible count, no filters, because nothing downstream asked for
+  either yet.
+- **A crucible slot's label was invisible over the wire.** `Crucible` has
+  only raw `sample_id`/`qc_material_id` FK columns, no ORM relationship to
+  either — so `get_batch_detail` was rewritten as one query with two
+  `outerjoin`s onto `Sample`/`QcMaterial` (matching `list_samples`'s own
+  "explicit joined SELECT, not lazy traversal" precedent) rather than
+  sorting `batch.crucibles` and hoping a caller resolves the label itself.
+  A new `CrucibleSlot` dataclass (service layer) and `CrucibleSlotOut`
+  schema carry the joined label alongside the crucible — `CrucibleOut`
+  itself is untouched, still exactly what `charge_crucible`/
+  `record_parting`/`record_weighing` return.
+- **`CrucibleSlotOut.from_model` takes the ORM `Crucible` plus plain
+  label kwargs, not the service-layer `CrucibleSlot` dataclass directly**
+  — matches this codebase's standing rule that no schema imports a service
+  type; the first draft violated it and was corrected before landing.
+- **Furnace geometry (`furnace_rows`/`furnace_columns`) is exposed on
+  `BatchDetailOut` for the first time**, sourced from `settings` at the
+  route layer — the tray component needs a grid shape to draw, and
+  `config.furnace_rows`/`furnace_columns` already existed since Phase 0
+  with nothing reading them yet. Still a single lab-wide setting, not
+  per-batch or per-instrument — the same open question the config's own
+  history already carried, unchanged by this pass (see open questions).
+- **A real, unrelated auth gap found and fixed while touching the file:**
+  `GET /api/batches/{id}` had no `ActorDep` at all — reachable by anyone,
+  authenticated or not. Both it and the new list route now depend on
+  `InternalActorDep`, the same "internal role required, `CLIENT` refused"
+  gate every other lookup endpoint has carried since the Phase 1 audit.
+- **`FurnaceTray`** (new component) renders every position in the grid,
+  not just occupied ones — an empty batch still shows the tray it will
+  eventually fill, matching how a technician reads the physical one. A
+  sample slot links to `/samples/{id}`; a QC slot shows its material type
+  as a badge (no sample to link to); the cell's background reuses the
+  existing three-tier pill colour system rather than inventing a fourth
+  vocabulary for tray state.
+- **Poll-free, refresh-on-navigate** — the sketch's own suggestion.
+  Websockets are explicitly not built; nothing about this slice's traffic
+  pattern (a technician opening a batch to check its state) needs
+  push updates.
+- 9 new integration tests (5 service-level — batch listing newest-first,
+  an empty lab, a `limit`; a sample slot carrying its own label; a QC slot
+  carrying its material's name and type — plus 4 over HTTP — the listing
+  route, `client` refused with 403 on both routes, an empty list). Existing
+  `test_crucibles_are_ordered_by_position` updated for the new
+  `CrucibleSlot` wrapper shape.
+
 ### Database — `src/msa_lims/db/`
 - 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
   `instrument`, `lab_user`, `audit_event`, `fire_assay_result`, `certificate`,
@@ -885,12 +944,20 @@ existing suite (which was already green: the findings below are all things
   a second screen needed the identical layout.
 - `types.ts` mirrors the wire format including the censored-value distinction,
   with `formatMeasured` so a non-detect cannot be rendered as its null value —
-  now also carrying `SampleListItem`, `SampleDetail`, `FireAssayResult`, and
-  `CertificateReference`, hand-written like everything else here with the
+  now also carrying `SampleListItem`, `SampleDetail`, `FireAssayResult`,
+  `CertificateReference`, `Batch`, `CrucibleSlot`, and `BatchDetail`,
+  hand-written like everything else here with the
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
+- **`pages/BatchList.tsx` / `pages/BatchDetail.tsx`** — mirror the sample
+  screens' own patterns exactly: the same loading/error/empty states, the
+  same 404-vs-generic-error distinction via `ApiError.status`. Batch detail
+  adds one new thing neither sample screen needed: a "Furnace tray —
+  R×C" section rendering `FurnaceTray`, with a "no crucibles charged yet"
+  message when the tray is genuinely empty rather than an empty grid with
+  no explanation.
 
-### Tests — 493
+### Tests — 501
 - **Unit** (192): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -919,7 +986,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (281, real Postgres): the append-only grants proven against
+- **Integration** (292, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -1011,7 +1078,11 @@ existing suite (which was already green: the findings below are all things
    and over HTTP: the same two-step walk, skipping it refused as **409**, a
    client role refused as **403**, an unknown sample as **404**, `in_assay`
    refused at the schema layer as **422** before reaching the service, and
-   rejection with and without a reason)).
+   rejection with and without a reason)); and, new this pass, the furnace
+   tray (9 — batch listing newest-first, an empty lab, a `limit`; a sample
+   slot carrying its own label, a QC slot carrying its material's name and
+   type; and over HTTP: the listing route, an empty list, and `client`
+   refused with **403** on both the list and detail routes).
 - **Contract fuzz** (1 collected test, dynamically exercising all 22
   operations × up to 10 generated examples each — not a fixed assertion
   count in the usual sense): Schemathesis-generated schema-valid and
@@ -1246,6 +1317,24 @@ negative `certified_au_value_g_t` is refused the identical way (**422**,
 every one of these requests was correctly refused before anything wrote to
 the database.
 
+The furnace tray verified live through the browser: a client, three pulp
+samples, a "Tray Demo" flux recipe, a CRM (`OREAS 501d`), and a blank
+(`Silica Blank`) were registered through the real API, then a batch was
+opened, charged with three samples and both QC materials across a 6×6
+tray, and walked to `fused`. `/batches` rendered a table with
+`BATCH-2026-0001` and a correctly amber `FUSED` pill; clicking through to
+`/batches/1` rendered the tray as a real 6×6 grid — five occupied cells
+(three sample labels, a bold `CRM` badge, a bold `BLANK` badge) all
+amber-tinted for `fused`, every other cell dashed with a centred "—", with
+zero console errors. Clicking a sample's label inside its tray cell
+navigated to `/samples/{id}` and rendered that sample's detail page
+correctly; the "← All batches" and "← All samples" back-links both
+returned to their respective lists. Demo data was truncated from both the
+dev database and, separately, the `msa_test` database — which had
+accumulated 54 leftover `batch` rows from an unrelated Schemathesis fuzz
+run between sessions, discovered when a fresh "empty lab" listing test
+unexpectedly returned non-empty.
+
 ---
 
 ## Decision log
@@ -1324,6 +1413,11 @@ the database.
 | 2026-08-25 | The `DataError` handler's message is **written fresh**, not passed through via `str(exc)` like every other handler in the dict-driven loop | Every other handler's exception was raised on purpose by application code with a message written for the person who hit it. A raw driver `DataError` carries the failed SQL and its bind parameters — fine for a log, not for a client response. |
 | 2026-08-25 | Each fuzz-generated example runs in its **own `Session.begin_nested` savepoint**, not the fixture's one shared transaction every other integration test uses | A raw, uncaught database error (exactly the class of bug fuzzing exists to find) leaves Postgres refusing further commands until a rollback. One shared transaction across many generated examples let the first such crash poison every example after it with an identical, unrelated "transaction is aborted" failure — the savepoint makes each generated example as independent as it would be as a real, separate request. |
 | 2026-08-25 | `max_examples` tuned down to **10**, from the ~100-per-operation default that took over ten minutes | Almost all of that time was Hypothesis *shrinking* the two real failures toward a minimal reproduction, not fuzzing breadth. A clean run (no failures to shrink) finishes in under 30 seconds at this setting — fast enough for a routine CI step, the "effort S, one afternoon" scope idea #7 was scoped at. |
+| 2026-08-25 | The tray's first slice covers **listing and visualization only** — charging/parting/weighing as modal forms is deferred to a separate pass | The audit's own sketch named both halves in one entry, but this codebase's standing discipline is one coherent, reviewable vertical slice per session. The read side (list + detail + tray render) is independently valuable and ships alone; the write-side forms reuse endpoints that already exist and need no schema change, so nothing about deferring them blocks anything else. |
+| 2026-08-25 | A crucible slot's label is resolved via an **explicit joined `SELECT`** in `get_batch_detail`, not an ORM `relationship()` added to `Crucible` | `Crucible.sample_id`/`qc_material_id` were deliberately left as raw FK columns with no relationship when QC insertion landed — adding one now only for this read would be a schema change to serve a single query. The joined-`SELECT` style already used by `list_samples` answers the same "who does this row point at" question without touching the model. |
+| 2026-08-25 | `CrucibleSlotOut.from_model` takes the ORM `Crucible` plus plain label kwargs, not the service's `CrucibleSlot` dataclass | Every other schema's `from_model` takes an ORM object plus plain kwargs; none imports a service-layer type. A first draft took the dataclass directly and was corrected before landing — accepting it would have been the first schemas→service import in the codebase, for no benefit the kwargs form doesn't already give. |
+| 2026-08-25 | `GET /api/batches/{id}` gained `InternalActorDep`, a gap found while adding the sibling list route, not a planned part of this slice | The route had no auth dependency at all — reachable by any caller, unauthenticated or not, the exact hole the Phase 1 audit closed on every other lookup endpoint. Fixing it here, while the file was already open for the list route, matches this codebase's "fix what you find, name it" discipline rather than filing it as a future item. |
+| 2026-08-25 | Furnace geometry (`furnace_rows`/`furnace_columns`) is exposed on the **existing** `BatchDetailOut`, not a new settings-reading endpoint | The tray component needs a grid shape to draw and nothing else currently needs the raw config value on its own. Adding a dedicated `GET /api/config` (or similar) for one consumer would be API surface built ahead of a second use case; the value already lives in `settings` and costs nothing extra to attach to a response the tray screen was already fetching. |
 
 ---
 
@@ -1461,6 +1555,23 @@ the database.
    its crucible. No `instrument_id` link exists on any prep record yet
    because no prep record exists yet.
 
+## Next actions (post-Phase-3 — audit-driven)
+
+1. ~~**[AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea
+   #7, "Fuzz the Gates."**~~ **Done 2026-08-25** — Schemathesis contract
+   fuzzing wired to `pytest.mark.fuzz` and CI; found and fixed two real
+   crashes on its first run. See "Contract fuzzing" above.
+2. ~~**Idea #4, "The Tray" — listing and visualization.**~~ **Done
+   2026-08-25** — `GET /api/batches`, an enriched `GET /api/batches/{id}`,
+   `BatchList`/`BatchDetail`/`FurnaceTray`. 9 new tests; verified live end
+   to end — see "Verified live." **Charging/parting/weighing as modal
+   forms against the existing endpoints — the audit sketch's other half —
+   is real remaining scope, deliberately deferred to its own pass.**
+3. **Idea #18, generated TypeScript types from `/openapi.json`**, remains
+   unbuilt. `types.ts` gained `Batch`/`CrucibleSlot`/`BatchDetail`
+   hand-written this pass, under the same standing note every other type
+   in the file already carries.
+
 ## Open questions
 
 - **The OpenAPI schema declares no accurate per-status response models for
@@ -1597,15 +1708,22 @@ the database.
   has no remedy through the API — only a direct database fix. Not addressed
   because no real workflow has surfaced which correction shape (delete the
   crucible? supersede it? reject and re-charge?) is the right one.
-- **No `GET` endpoint lists batches, or lists a sample's crucible history.**
-  `GET /api/batches/{id}` requires already knowing the id; there is no
-  `GET /api/batches` and no "which batch (if any) is this sample currently
-  in" query. Not addressed because nothing downstream has needed it yet —
-  the live verification always tracked the id from the `POST` response.
+- ~~**No `GET` endpoint lists batches.**~~ **Resolved 2026-08-25** —
+  `GET /api/batches` exists now, newest-first with a `limit`; see "The
+  furnace tray" above. Still missing: "which batch (if any) is this sample
+  currently in" — a sample's detail view has no reverse link to its
+  crucible/batch, only the crucible's own id via its fire assay result.
 - **Furnace tray geometry (`furnace_rows`/`furnace_columns`) is a single
   global setting**, not per-furnace. A lab with two furnaces of different
   sizes has no way to express that — `Batch` has no `instrument_id` at all
   right now (dropped from the original sketch: `instrument` has no
   registration endpoint yet, and a nullable FK nothing can ever populate
   would have been exactly the half-finished-feature shape this codebase
-  avoids). Revisit once instrument registration exists.
+  avoids). Revisit once instrument registration exists. Now surfaced
+  read-only on `BatchDetailOut` and rendered by `FurnaceTray` — the tray
+  UI inherits this exact limitation: every batch draws the same
+  lab-wide grid regardless of which furnace actually fired it.
+- **The tray has no write paths of its own.** Charging, parting, and
+  weighing all still require curl or a future modal form — `BatchDetail`
+  is read-only. The audit's own sketch names this as the natural next
+  increment; see "Next actions" above.

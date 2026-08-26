@@ -654,6 +654,45 @@ class BatchOut(BaseModel):
         )
 
 
+class CrucibleSlotOut(BaseModel):
+    """One crucible as it appears in a batch's tray — lean, unlike
+    `CrucibleOut`: a grid of up to 36 of these needs a position, a status to
+    colour it, and whatever it holds' label, not every flux amount and
+    measurement column. That fuller detail is one click away at the sample
+    it names; nothing here needs its own crucible-detail endpoint yet."""
+
+    id: int
+    position_row: int
+    position_col: int
+    status: str
+    sample_id: int | None
+    sample_label: str | None
+    qc_material_id: int | None
+    qc_material_name: str | None
+    qc_material_type: str | None
+
+    @classmethod
+    def from_model(
+        cls,
+        crucible: Crucible,
+        *,
+        sample_label: str | None,
+        qc_material_name: str | None,
+        qc_material_type: str | None,
+    ) -> CrucibleSlotOut:
+        return cls(
+            id=crucible.id,
+            position_row=crucible.position_row,
+            position_col=crucible.position_col,
+            status=crucible.status.value,
+            sample_id=crucible.sample_id,
+            sample_label=sample_label,
+            qc_material_id=crucible.qc_material_id,
+            qc_material_name=qc_material_name,
+            qc_material_type=qc_material_type,
+        )
+
+
 class BatchDetailOut(BaseModel):
     id: int
     batch_number: str
@@ -661,10 +700,24 @@ class BatchDetailOut(BaseModel):
     opened_by_id: int
     opened_at: datetime
     notes: str | None
-    crucibles: list[CrucibleOut]
+    #: The furnace tray a caller needs to draw the grid this batch's
+    #: crucibles sit in. A single lab-wide setting today, not per-batch or
+    #: per-instrument — see PROGRESS.md's open questions — carried here
+    #: because this is the response a tray view actually renders from, not
+    #: because the value varies by batch.
+    furnace_rows: int
+    furnace_columns: int
+    crucibles: list[CrucibleSlotOut]
 
     @classmethod
-    def from_model(cls, batch: Batch, *, crucibles: list[CrucibleOut]) -> BatchDetailOut:
+    def from_model(
+        cls,
+        batch: Batch,
+        *,
+        crucibles: list[CrucibleSlotOut],
+        furnace_rows: int,
+        furnace_columns: int,
+    ) -> BatchDetailOut:
         return cls(
             id=batch.id,
             batch_number=batch.batch_number,
@@ -672,5 +725,7 @@ class BatchDetailOut(BaseModel):
             opened_by_id=batch.opened_by_id,
             opened_at=batch.opened_at,
             notes=batch.notes,
+            furnace_rows=furnace_rows,
+            furnace_columns=furnace_columns,
             crucibles=crucibles,
         )

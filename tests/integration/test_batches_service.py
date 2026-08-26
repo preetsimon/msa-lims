@@ -20,6 +20,7 @@ from msa_lims.batches.service import (
     CrucibleValidationError,
     CrucibleWeighingInput,
     get_batch_detail,
+    list_batches,
 )
 from msa_lims.db.models import (
     AuditEvent,
@@ -955,11 +956,98 @@ class TestBatchDetail:
         app_session.flush()
 
         detail = get_batch_detail(app_session, charging_batch.id)
-        assert [c.position_row for c in detail.crucibles] == [1, 2]
+        assert [slot.crucible.position_row for slot in detail.crucibles] == [1, 2]
 
     def test_an_unknown_batch_is_refused(self, app_session: Session) -> None:
         with pytest.raises(BatchNotFoundError):
             get_batch_detail(app_session, 999_999)
+
+    def test_a_sample_slot_carries_the_samples_own_label(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        a_sample: Sample,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id, sample_id=a_sample.id, flux_recipe_id=recipe.id
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        detail = get_batch_detail(app_session, charging_batch.id)
+        slot = detail.crucibles[0]
+        assert slot.sample_label == a_sample.sample_id
+        assert slot.qc_material_name is None
+        assert slot.qc_material_type is None
+
+    def test_a_qc_slot_carries_the_materials_name_and_type(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        charging_batch,
+        recipe: FluxRecipe,
+        crm: QcMaterial,
+    ) -> None:
+        service = BatchService(app_session, **FURNACE)
+        service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=None,
+                qc_material_id=crm.id,
+                flux_recipe_id=recipe.id,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        detail = get_batch_detail(app_session, charging_batch.id)
+        slot = detail.crucibles[0]
+        assert slot.sample_label is None
+        assert slot.qc_material_name == "OREAS 501d"
+        assert slot.qc_material_type == "crm"
+
+
+class TestListingBatches:
+    def test_batches_come_back_newest_first(self, app_session: Session, analyst: LabUser) -> None:
+        service = BatchService(app_session, **FURNACE)
+        first = service.create_batch(
+            BatchInput(opened_at=datetime(2026, 8, 25, tzinfo=UTC)),
+            opened_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        second = service.create_batch(
+            BatchInput(opened_at=datetime(2026, 8, 25, tzinfo=UTC)),
+            opened_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        batches = list_batches(app_session)
+        ids = [batch.id for batch in batches]
+        assert ids.index(second.id) < ids.index(first.id)
+
+    def test_an_empty_lab_lists_nothing(self, app_session: Session) -> None:
+        assert list_batches(app_session) == []
+
+    def test_limit_is_respected(self, app_session: Session, analyst: LabUser) -> None:
+        service = BatchService(app_session, **FURNACE)
+        for _ in range(3):
+            service.create_batch(
+                BatchInput(opened_at=datetime(2026, 8, 25, tzinfo=UTC)),
+                opened_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+            app_session.flush()
+
+        assert len(list_batches(app_session, limit=2)) == 2
 
 
 class TestChargingAQcCrucible:

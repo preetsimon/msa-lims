@@ -11,8 +11,9 @@ from msa_lims.batches.service import (
     CruciblePartingInput,
     CrucibleWeighingInput,
     get_batch_detail,
+    list_batches,
 )
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep, SettingsDep
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep, SettingsDep
 from msa_lims.web.schemas import (
     BatchCreate,
     BatchDetailOut,
@@ -21,6 +22,7 @@ from msa_lims.web.schemas import (
     CrucibleChargeCreate,
     CrucibleOut,
     CruciblePartingCreate,
+    CrucibleSlotOut,
     CrucibleWeighingCreate,
 )
 
@@ -156,9 +158,31 @@ def advance_batch_status(
     return BatchOut.from_model(batch)
 
 
+@router.get("/batches", response_model=list[BatchOut])
+def read_batches(
+    session: SessionDep,
+    actor: InternalActorDep,
+    limit: int = 100,
+) -> list[BatchOut]:
+    return [BatchOut.from_model(batch) for batch in list_batches(session, limit=limit)]
+
+
 @router.get("/batches/{batch_id}", response_model=BatchDetailOut)
-def read_batch(batch_id: int, session: SessionDep) -> BatchDetailOut:
+def read_batch(
+    batch_id: int, session: SessionDep, settings: SettingsDep, actor: InternalActorDep
+) -> BatchDetailOut:
     detail = get_batch_detail(session, batch_id)
     return BatchDetailOut.from_model(
-        detail.batch, crucibles=[CrucibleOut.from_model(c) for c in detail.crucibles]
+        detail.batch,
+        crucibles=[
+            CrucibleSlotOut.from_model(
+                slot.crucible,
+                sample_label=slot.sample_label,
+                qc_material_name=slot.qc_material_name,
+                qc_material_type=slot.qc_material_type,
+            )
+            for slot in detail.crucibles
+        ],
+        furnace_rows=settings.furnace_rows,
+        furnace_columns=settings.furnace_columns,
     )

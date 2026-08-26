@@ -6,7 +6,7 @@
  * same way every curl check in PROGRESS.md's live verifications does.
  */
 
-import type { SampleDetail, SampleListItem } from "./types";
+import type { Batch, BatchDetail, SampleDetail, SampleListItem } from "./types";
 
 class ApiError extends Error {
   constructor(
@@ -32,6 +32,14 @@ export function listSamples(): Promise<SampleListItem[]> {
 
 export function getSample(id: number): Promise<SampleDetail> {
   return getJSON<SampleDetail>(`/api/samples/${id}`);
+}
+
+export function listBatches(): Promise<Batch[]> {
+  return getJSON<Batch[]>("/api/batches");
+}
+
+export function getBatch(id: number): Promise<BatchDetail> {
+  return getJSON<BatchDetail>(`/api/batches/${id}`);
 }
 
 export { ApiError };

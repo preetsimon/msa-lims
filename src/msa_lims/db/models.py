@@ -392,16 +392,26 @@ class FireAssayResult(Base, TimestampMixin):
     that has already been superseded, so a chain cannot branch (mirrors QC
     Sentinel's rule against double-replacement in a re-assay chain).
 
-    The raw weighings are stored alongside the computed grade, not only the
-    grade — ``gold_bead_mg`` and ``sample_weight_g`` are what
-    :func:`msa_lims.domain.assay.gravimetric_grade` was actually called with,
-    so the number on a certificate is reproducible from a weighing years
-    later, not just asserted.
+    The raw measurements are stored alongside the computed grade, not only the
+    grade — the columns below are what
+    :mod:`msa_lims.domain.assay` was actually called with, so the number on a
+    certificate is reproducible from the bench record years later, not just
+    asserted.
 
-    Only ``FIRE_ASSAY_GRAVIMETRIC`` is entered through this table's current
-    write path (see ``fire_assay_results/service.py``); ``method`` stores the
-    full vocabulary because AAS and ICP-MS are real methods this schema
-    already names, even though nothing writes them yet.
+    **One table, two finishes, one supersession chain.** A gravimetric result
+    weighs the parted bead (``gold_bead_mg``); an AAS or ICP-MS result reads
+    the dissolved bead's concentration (``solution_*``). Exactly one set is
+    populated, matched to ``method`` and enforced by CHECK constraints, which
+    is why ``gold_bead_mg`` is nullable despite being mandatory for the
+    gravimetric path.
+
+    They share this table rather than getting one each because they are the
+    same fusion finished two ways, and because the workflow that matters most
+    runs *between* them: a solution finish that saturates is re-run
+    gravimetrically, and that referee result supersedes the first. Split
+    across two tables, "the current result for this sample" would stop being
+    a single question with a single answer — and a certificate could freeze
+    one table's head while the other held a newer correction.
 
     ``crucible_id`` is nullable on purpose: direct entry remains a real path
     (externally assayed pulp arrives with no crucible this system charged),
@@ -422,15 +432,52 @@ class FireAssayResult(Base, TimestampMixin):
         ),
         CheckConstraint("sample_weight_g > 0", name="sample_weight_positive"),
         CheckConstraint("gold_bead_mg >= 0", name="bead_weight_non_negative"),
+        CheckConstraint("solution_volume_ml > 0", name="solution_volume_positive"),
+        CheckConstraint("solution_concentration >= 0", name="solution_concentration_non_negative"),
+        # The finish's inputs must match the finish that was performed. Stated
+        # as two constraints rather than one so a violation names which half is
+        # wrong: a gravimetric row carrying a concentration and one missing its
+        # bead are different mistakes.
+        CheckConstraint(
+            "method <> 'fire_assay_gravimetric' OR "
+            "(gold_bead_mg IS NOT NULL AND solution_concentration IS NULL "
+            "AND solution_volume_ml IS NULL AND solution_concentration_unit IS NULL)",
+            name="gravimetric_weighs_a_bead",
+        ),
+        CheckConstraint(
+            "method = 'fire_assay_gravimetric' OR "
+            "(solution_concentration IS NOT NULL AND solution_volume_ml IS NOT NULL "
+            "AND solution_concentration_unit IS NOT NULL AND gold_bead_mg IS NULL)",
+            name="solution_finish_reads_a_concentration",
+        ),
     )
 
     id: Mapped[IdPk]
     sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
     method: Mapped[AssayMethod] = mapped_column(_enum(AssayMethod, "assay_method"))
 
-    gold_bead_mg: Mapped[Decimal] = mapped_column(Numeric)
+    #: The gravimetric finish's measurement. Null on an AAS/ICP-MS row — see
+    #: the class docstring and the CHECK constraints above.
+    gold_bead_mg: Mapped[Decimal | None] = mapped_column(Numeric)
     sample_weight_g: Mapped[Decimal] = mapped_column(Numeric)
+    """The portion assayed. Common to both finishes: every route through the
+    furnace starts by weighing out material, and it is the divisor in both
+    grade calculations."""
     balance_sensitivity_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+
+    # The solution finish's measurements — the dissolved bead's concentration,
+    # the volume it was made up to, and the method's detection limit in the
+    # same unit as the reading. Null on a gravimetric row.
+    #
+    # The method's *upper* calibration limit is deliberately not stored: it
+    # gates whether a reading may be recorded at all (see
+    # ``domain.assay.solution_finish_grade``) but contributes nothing to the
+    # number that ends up here, and it describes the method rather than this
+    # result. It belongs on an instrument/method record when one exists.
+    solution_concentration: Mapped[Decimal | None] = mapped_column(Numeric)
+    solution_concentration_unit: Mapped[str | None] = mapped_column(String(16))
+    solution_volume_ml: Mapped[Decimal | None] = mapped_column(Numeric)
+    solution_detection_limit: Mapped[Decimal | None] = mapped_column(Numeric)
 
     # The computed grade, stored across columns rather than one JSON blob so
     # it stays queryable and constrainable — the same shape

@@ -4,6 +4,7 @@ import { BatchDetail } from "./pages/BatchDetail";
 import { BatchList } from "./pages/BatchList";
 import { SampleDetail } from "./pages/SampleDetail";
 import { SampleList } from "./pages/SampleList";
+import { SampleProvenance } from "./pages/SampleProvenance";
 import { SystemStatus } from "./pages/SystemStatus";
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
         <Route path="/" element={<SampleList />} />
         <Route path="/samples" element={<SampleList />} />
         <Route path="/samples/:id" element={<SampleDetail />} />
+        <Route path="/samples/:id/provenance" element={<SampleProvenance />} />
         <Route path="/batches" element={<BatchList />} />
         <Route path="/batches/:id" element={<BatchDetail />} />
         <Route path="/status" element={<SystemStatus />} />

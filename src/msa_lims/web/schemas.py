@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from msa_lims.db.models import (
     Batch,
@@ -269,6 +269,72 @@ class MeasuredValueOut(BaseModel):
         )
 
 
+class SolutionFinishCreate(BaseModel):
+    """An AAS or ICP-MS finish. Separate from :class:`FireAssayResultCreate`
+    because the two finishes measure different things — there is no field in
+    common beyond the sample, the portion, and the supersession pair."""
+
+    sample_id: int
+    method: Literal["fire_assay_aas", "fire_assay_icp_ms"] = Field(
+        description=(
+            "Which instrument read the dissolved bead. The gravimetric finish is "
+            "excluded here at the schema layer: it weighs a bead rather than reading a "
+            "solution, and has its own endpoint."
+        )
+    )
+    concentration: Decimal = Field(
+        ge=0, description="What the instrument read, in concentration_unit."
+    )
+    concentration_unit: Literal["mg/L", "ug/L"] = Field(
+        description=(
+            "Must measure mass concentration. 'ppm' is deliberately not offered: on an "
+            "instrument printout it is ambiguous between ug/mL of solution and ug/g of "
+            "sample, and those differ by exactly the factor this calculation applies."
+        )
+    )
+    solution_volume_ml: Decimal = Field(
+        gt=0, description="The volume the dissolved bead was made up to."
+    )
+    sample_weight_g: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The portion assayed. Required unless crucible_id names the crucible the "
+            "sample was charged into — then its recorded charge is used and this must "
+            "be left unset."
+        ),
+    )
+    analysed_at: datetime = Field(
+        description="When the instrument read it, not when it was entered."
+    )
+    detection_limit: Decimal | None = Field(
+        default=None, gt=0, description="The method's detection limit, in concentration_unit."
+    )
+    upper_calibration_limit: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "The method's top standard, in concentration_unit. A reading above it is "
+            "refused rather than stored: past the top standard the instrument is "
+            "extrapolating, so the number is not a measurement. Not stored on the row."
+        ),
+    )
+    notes: str | None = None
+    supersedes_id: int | None = Field(
+        default=None, description="Set to correct an existing result."
+    )
+    superseded_reason: str | None = Field(
+        default=None, description="Required when supersedes_id is set."
+    )
+    crucible_id: int | None = Field(
+        default=None,
+        description=(
+            "The crucible this assay came from; its recorded charge is derived as the "
+            "portion weight."
+        ),
+    )
+
+
 class FireAssayResultCreate(BaseModel):
     sample_id: int
     gold_bead_mg: Decimal | None = Field(
@@ -310,12 +376,25 @@ class FireAssayResultCreate(BaseModel):
 
 
 class FireAssayResultOut(BaseModel):
+    """One result of either finish.
+
+    The finish-specific fields are nullable on the way out for the same reason
+    they are nullable in the table: a gravimetric row has no concentration and
+    a solution row has no bead. ``method`` says which set to expect, and ``au``
+    — the grade, the thing every consumer actually wants — is present and
+    identically shaped on both.
+    """
+
     id: int
     sample_id: int
     method: str
-    gold_bead_mg: Decimal
+    gold_bead_mg: Decimal | None
     sample_weight_g: Decimal
     balance_sensitivity_mg: Decimal | None
+    solution_concentration: Decimal | None
+    solution_concentration_unit: str | None
+    solution_volume_ml: Decimal | None
+    solution_detection_limit: Decimal | None
     au: MeasuredValueOut
     analysed_at: datetime
     supersedes_id: int | None
@@ -332,6 +411,10 @@ class FireAssayResultOut(BaseModel):
             gold_bead_mg=result.gold_bead_mg,
             sample_weight_g=result.sample_weight_g,
             balance_sensitivity_mg=result.balance_sensitivity_mg,
+            solution_concentration=result.solution_concentration,
+            solution_concentration_unit=result.solution_concentration_unit,
+            solution_volume_ml=result.solution_volume_ml,
+            solution_detection_limit=result.solution_detection_limit,
             au=MeasuredValueOut(
                 value=None if result.au_value is None else str(result.au_value),
                 detection_limit=(
@@ -729,3 +812,134 @@ class BatchDetailOut(BaseModel):
             furnace_columns=furnace_columns,
             crucibles=crucibles,
         )
+
+
+# --- Provenance dossier (audit idea #3) ---------------------------------
+#
+# These models mirror `provenance/service.py`'s `seal_payload` exactly, and
+# are built by *validating* that payload rather than re-assembling the same
+# facts a second time (see `ProvenanceOut.from_payload`). Two independently
+# written structures would be one edit away from the response describing
+# something different from what the seal covers — which would make the seal
+# worse than useless, since it would still verify. `extra="forbid"` turns
+# any drift between the two into a loud failure instead of a silent one.
+
+
+class _SealedModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProvenanceSampleOut(_SealedModel):
+    id: int
+    sample_id: str
+    sample_type: str
+    status: str
+    from_depth_m: str | None
+    to_depth_m: str | None
+    weight_received_g: str | None
+
+
+class ProvenanceSubmissionOut(_SealedModel):
+    id: int
+    submission_number: str
+    received_at: str | None
+    received_by: str | None
+    client_reference: str | None
+
+
+class ProvenanceClientOut(_SealedModel):
+    id: int
+    code: str
+
+
+class ProvenanceProjectOut(_SealedModel):
+    name: str
+
+
+class ProvenanceDrillHoleOut(_SealedModel):
+    hole_id: str
+
+
+class ProvenanceCrucibleOut(_SealedModel):
+    id: int
+    batch_number: str
+    position: str
+    status: str
+    flux_recipe: str
+    sample_weight_g: str | None
+    charged_at: str | None
+    lead_button_weight_mg: str | None
+    prill_weight_mg: str | None
+    parting_acid_volume_ml: str | None
+    parted_at: str | None
+    gold_bead_mg: str | None
+    weighed_at: str | None
+
+
+class ProvenanceResultOut(_SealedModel):
+    id: int
+    method: str
+    gold_bead_mg: str | None
+    sample_weight_g: str | None
+    au_value: str | None
+    au_detection_limit: str | None
+    au_censored: bool
+    au_unit: str
+    analysed_at: str | None
+    analyst: str | None
+    crucible_id: int | None
+    supersedes_id: int | None
+    superseded_reason: str | None
+
+
+class ProvenanceCertificateOut(_SealedModel):
+    id: int
+    certificate_number: str
+    issued_at: str | None
+    issued_by: str | None
+    pdf_sha256: str
+    certified_result_id: int
+    supersedes_id: int | None
+    superseded_reason: str | None
+
+
+class ProvenanceAuditEntryOut(_SealedModel):
+    id: int
+    table_name: str
+    record_id: int
+    action: str
+    before: dict[str, Any] | None
+    after: dict[str, Any] | None
+    reason: str | None
+    actor: str | None
+    recorded_at: str | None
+    entry_hash: str
+
+
+class ProvenanceOut(_SealedModel):
+    """One sample's whole evidence dossier, plus the seal over it.
+
+    Every value is rendered as a string where it is a `Decimal` or a
+    timestamp in the database — the seal is computed over exactly these
+    bytes, so a float or a re-formatted date here would make an
+    independently recomputed seal disagree for no reason a reader could
+    see. See `provenance/service.py`.
+    """
+
+    sample: ProvenanceSampleOut
+    submission: ProvenanceSubmissionOut
+    client: ProvenanceClientOut
+    project: ProvenanceProjectOut | None
+    drill_hole: ProvenanceDrillHoleOut | None
+    crucibles: list[ProvenanceCrucibleOut]
+    results: list[ProvenanceResultOut]
+    certificates: list[ProvenanceCertificateOut]
+    audit_entries: list[ProvenanceAuditEntryOut]
+    #: `sha256` over the canonical rendering of every field above.
+    #: Recomputable by anyone holding this document — see the service
+    #: module for what "canonical" means precisely.
+    seal: str
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, object], *, seal: str) -> ProvenanceOut:
+        return cls.model_validate({**payload, "seal": seal})

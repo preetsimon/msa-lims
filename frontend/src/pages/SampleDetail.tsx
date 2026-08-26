@@ -46,7 +46,8 @@ export function SampleDetail() {
           <header>
             <h1>{sample.sample_id}</h1>
             <p className="lede">
-              <StatusPill status={sample.status} /> · {sample.sample_type}
+              <StatusPill status={sample.status} /> · {sample.sample_type} ·{" "}
+              <Link to={`/samples/${sample.id}/provenance`}>Evidence dossier</Link>
             </p>
           </header>
 

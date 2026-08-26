@@ -252,6 +252,125 @@ class TestTheSampleAdvancesThroughTheSpine:
         assert sample.status is SampleStatus.ASSAYED
 
 
+def solution_body(**overrides: object) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "method": "fire_assay_aas",
+        "concentration": "15.000",
+        "concentration_unit": "mg/L",
+        "solution_volume_ml": "10",
+        "sample_weight_g": "30",
+        "analysed_at": "2026-08-24T09:00:00Z",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+class TestEnteringASolutionFinish:
+    def test_an_analyst_enters_an_aas_result(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(sample_id=in_assay_sample_id),
+            headers=ANALYST,
+        )
+        assert response.status_code == 201
+        body = response.json()
+        # 15 mg/L in a 10 mL flask, from a 30 g portion, is 5 g/t -- the same
+        # answer test_an_analyst_enters_a_result gets from the equivalent
+        # bead, because both finishes are reading the same gold.
+        assert body["au"]["value"] == "5.000"
+        assert body["method"] == "fire_assay_aas"
+        assert body["gold_bead_mg"] is None
+        assert body["solution_concentration"] == "15.000"
+
+    def test_a_prep_tech_is_refused_with_403(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(sample_id=in_assay_sample_id),
+            headers=PREP_TECH,
+        )
+        assert response.status_code == 403
+
+    def test_an_unknown_sample_id_is_404(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(sample_id=999_999),
+            headers=ANALYST,
+        )
+        assert response.status_code == 404
+
+    def test_a_sample_not_yet_in_assay_is_409(self, client: TestClient, sample_id: int) -> None:
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(sample_id=sample_id),
+            headers=ANALYST,
+        )
+        assert response.status_code == 409
+
+    def test_a_reading_above_the_calibration_range_is_422(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(
+                sample_id=in_assay_sample_id,
+                concentration="400",
+                upper_calibration_limit="300",
+            ),
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+        assert "calibration range" in response.json()["detail"]
+
+    def test_ppm_is_refused_at_the_schema_layer(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
+        """concentration_unit only ever offers mg/L and ug/L (see
+        SolutionFinishCreate) -- a mass-fraction unit like ppm cannot even
+        reach the domain calculation's own refusal of it."""
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(sample_id=in_assay_sample_id, concentration_unit="ppm"),
+            headers=ANALYST,
+        )
+        assert response.status_code == 422
+
+    def test_a_saturated_screen_is_superseded_by_a_gravimetric_re_assay(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
+        """End to end, over real HTTP: the workflow the shared chain exists
+        for. An AAS screen pinned at the top of its curve gets corrected by a
+        gravimetric re-assay -- a different endpoint, a different finish, the
+        same sample's one chain."""
+        screen = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(
+                sample_id=in_assay_sample_id, concentration="300", upper_calibration_limit="300"
+            ),
+            headers=ANALYST,
+        ).json()
+        assert screen["method"] == "fire_assay_aas"
+
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(
+                sample_id=in_assay_sample_id,
+                gold_bead_mg="9.000",
+                supersedes_id=screen["id"],
+                superseded_reason="AAS screen at the top of its calibration range; "
+                "re-assayed gravimetrically",
+            ),
+            headers=MANAGER,
+        )
+        assert response.status_code == 201
+        referee = response.json()
+        assert referee["supersedes_id"] == screen["id"]
+        assert referee["method"] == "fire_assay_gravimetric"
+
+
 def charge_a_crucible(
     client: TestClient, sample_id: int, *, weight: str = "45", weigh_too: bool = False
 ) -> int:
@@ -429,3 +548,24 @@ class TestWiringAResultToItsCrucible:
         detail = response.json()["detail"]
         assert "gold_bead_mg is required" in detail
         assert "sample_weight_g is required" in detail
+
+
+class TestWiringASolutionFinishToItsCrucible:
+    def test_the_portion_is_derived_but_no_bead_is_read_back(
+        self, client: TestClient, sample_id: int
+    ) -> None:
+        """Even a crucible walked all the way to WEIGHED contributes only its
+        portion to a solution finish -- the recorded bead belongs to whatever
+        finish actually weighed it, and this request's own concentration is a
+        separate measurement of the same gold."""
+        crucible_id = charge_a_crucible(client, sample_id, weigh_too=True)
+        response = client.post(
+            "/api/fire-assay-results/solution-finish",
+            json=solution_body(sample_id=sample_id, sample_weight_g=None, crucible_id=crucible_id),
+            headers=ANALYST,
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["crucible_id"] == crucible_id
+        assert body["sample_weight_g"] == "45"
+        assert body["gold_bead_mg"] is None

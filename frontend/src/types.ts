@@ -85,3 +85,13 @@ export type QcMaterial = components["schemas"]["QcMaterialOut"];
  * this shape directly; a batch detail refetch after each write is what the
  * tray actually redraws from. */
 export type Crucible = components["schemas"]["CrucibleOut"];
+
+/** One sample's whole evidence dossier — `GET /api/samples/{id}/provenance`.
+ * Every `Decimal` and timestamp arrives as a string because the `seal` is
+ * computed over exactly those bytes; see the backend's own
+ * `provenance/service.py` for what the seal covers and how to recompute it. */
+export type Provenance = components["schemas"]["ProvenanceOut"];
+export type ProvenanceCrucible = components["schemas"]["ProvenanceCrucibleOut"];
+export type ProvenanceResult = components["schemas"]["ProvenanceResultOut"];
+export type ProvenanceCertificate = components["schemas"]["ProvenanceCertificateOut"];
+export type ProvenanceAuditEntry = components["schemas"]["ProvenanceAuditEntryOut"];

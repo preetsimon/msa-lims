@@ -16,13 +16,15 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from msa_lims.db.models import AuditEvent, Client, Crucible, LabUser, Sample, Submission
-from msa_lims.domain.enums import CrucibleStatus, Role, SampleStatus, SampleType
+from msa_lims.domain.enums import AssayMethod, CrucibleStatus, Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import InsufficientRoleError, TransitionNotAllowedError
+from msa_lims.domain.units import Unit
 from msa_lims.fire_assay_results.service import (
     FireAssayResultInput,
     FireAssayResultService,
     FireAssayResultValidationError,
     SampleNotFoundError,
+    SolutionFinishInput,
     current_result,
 )
 
@@ -394,6 +396,220 @@ class TestSupersession:
             actor_role=Role.ANALYST,
         )
         assert a_sample.status is SampleStatus.ASSAYED
+
+
+def solution_input(**overrides: object) -> SolutionFinishInput:
+    defaults: dict[str, object] = {
+        "sample_id": 1,
+        "method": AssayMethod.FIRE_ASSAY_AAS,
+        "concentration": Decimal("15"),
+        "concentration_unit": Unit.MG_PER_L,
+        "solution_volume_ml": Decimal("10"),
+        "sample_weight_g": Decimal("30"),
+        "analysed_at": datetime(2026, 8, 24, 9, 0, tzinfo=UTC),
+        "detection_limit": None,
+        "upper_calibration_limit": None,
+        "notes": None,
+        "supersedes_id": None,
+        "superseded_reason": None,
+        "crucible_id": None,
+    }
+    defaults.update(overrides)
+    return SolutionFinishInput(**defaults)  # type: ignore[arg-type]
+
+
+class TestSolutionFinish:
+    """The AAS/ICP-MS entry point: a concentration, not a bead weight, but
+    the same sample admission and the same supersession chain — see the
+    module docstring for why the two finishes share both."""
+
+    def test_the_grade_is_computed_from_the_concentration(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        result = service.create_solution_finish(
+            solution_input(sample_id=a_sample.id), analyst=analyst, actor_role=Role.ANALYST
+        )
+        app_session.flush()
+
+        # 15 mg/L in a 10 mL flask, from a 30 g portion, is 5 g/t — the same
+        # answer test_the_grade_is_computed_from_the_weighing gets from the
+        # equivalent bead, because it is the same physical gold either way.
+        assert result.au_value == Decimal("5")
+        assert result.method.value == "fire_assay_aas"
+        assert result.gold_bead_mg is None
+        assert result.solution_concentration == Decimal("15")
+
+    def test_entering_a_solution_result_moves_the_sample_to_assayed(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        service.create_solution_finish(
+            solution_input(sample_id=a_sample.id), analyst=analyst, actor_role=Role.ANALYST
+        )
+        app_session.flush()
+        assert a_sample.status is SampleStatus.ASSAYED
+
+    def test_a_sample_not_yet_in_assay_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        """The same admission gate as the gravimetric path — a solution
+        finish does not get its own, looser rule about sample status."""
+        a_sample.status = SampleStatus.RECEIVED
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        with pytest.raises(TransitionNotAllowedError):
+            service.create_solution_finish(
+                solution_input(sample_id=a_sample.id), analyst=analyst, actor_role=Role.ANALYST
+            )
+
+    def test_a_prep_tech_may_not_enter_a_solution_result(
+        self, app_session: Session, a_sample: Sample
+    ) -> None:
+        prep_tech = LabUser(
+            subject="sub-prep-far-2", email="p2@lab.test", full_name="P. Rep", role=Role.PREP_TECH
+        )
+        app_session.add(prep_tech)
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        with pytest.raises(InsufficientRoleError):
+            service.create_solution_finish(
+                solution_input(sample_id=a_sample.id),
+                analyst=prep_tech,
+                actor_role=Role.PREP_TECH,
+            )
+
+    def test_the_gravimetric_method_is_refused_at_this_entry_point(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        """Reachable only by calling the service directly — the route's own
+        schema does not offer this method — but refused here too, because the
+        row it would build (a concentration with no bead) violates the
+        gravimetric CHECK constraint regardless of which code path built it."""
+        service = FireAssayResultService(app_session)
+        with pytest.raises(FireAssayResultValidationError, match="weighs a bead"):
+            service.create_solution_finish(
+                solution_input(sample_id=a_sample.id, method=AssayMethod.FIRE_ASSAY_GRAVIMETRIC),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_reading_above_the_calibration_range_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        from msa_lims.domain.assay import AssayCalculationError
+
+        service = FireAssayResultService(app_session)
+        with pytest.raises(AssayCalculationError, match="calibration range"):
+            service.create_solution_finish(
+                solution_input(
+                    sample_id=a_sample.id,
+                    concentration=Decimal("400"),
+                    upper_calibration_limit=Decimal("300"),
+                ),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_result_with_neither_a_crucible_nor_a_weight_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        with pytest.raises(
+            FireAssayResultValidationError, match="sample_weight_g is required unless"
+        ):
+            service.create_solution_finish(
+                solution_input(sample_id=a_sample.id, sample_weight_g=None),
+                analyst=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_a_named_crucible_derives_the_portion_but_not_a_bead(
+        self, app_session: Session, analyst: LabUser
+    ) -> None:
+        """Unlike the gravimetric path, a solution finish never reads a
+        crucible's recorded bead back — the bead it dissolved is exactly the
+        one this request's own concentration accounts for."""
+        sample, crucible = CupelledChain.make(app_session, analyst)
+        service = FireAssayResultService(app_session)
+        result = service.create_solution_finish(
+            solution_input(sample_id=sample.id, sample_weight_g=None, crucible_id=crucible.id),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        # The crucible's own recorded charge is 45 g (see CupelledChain); 15
+        # mg/L in 10 mL from that 45 g portion is 10/3 g/t.
+        assert result.sample_weight_g == Decimal("45")
+        assert result.crucible_id == crucible.id
+        assert result.gold_bead_mg is None
+
+    def test_a_supervisor_corrects_a_solution_result_with_another_solution_result(
+        self, app_session: Session, analyst: LabUser, supervisor: LabUser, a_sample: Sample
+    ) -> None:
+        service = FireAssayResultService(app_session)
+        first = service.create_solution_finish(
+            solution_input(sample_id=a_sample.id), analyst=analyst, actor_role=Role.ANALYST
+        )
+        app_session.flush()
+
+        second = service.create_solution_finish(
+            solution_input(
+                sample_id=a_sample.id,
+                concentration=Decimal("16.5"),
+                supersedes_id=first.id,
+                superseded_reason="re-diluted after a pipetting error",
+            ),
+            analyst=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        app_session.flush()
+
+        assert second.supersedes_id == first.id
+        assert second.au_value != first.au_value
+
+    def test_a_saturated_solution_result_is_superseded_by_a_gravimetric_re_assay(
+        self, app_session: Session, analyst: LabUser, supervisor: LabUser, a_sample: Sample
+    ) -> None:
+        """The scenario the shared chain exists for: an AAS screen comes back
+        pinned to the top of its curve, so the lab re-runs the sample
+        gravimetrically — the referee method, which has no ceiling — and that
+        second result corrects the first. One chain answers "what is this
+        sample's grade" throughout, across both finishes."""
+        service = FireAssayResultService(app_session)
+        screen = service.create_solution_finish(
+            solution_input(
+                sample_id=a_sample.id,
+                concentration=Decimal("300"),
+                upper_calibration_limit=Decimal("300"),
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert screen.method.value == "fire_assay_aas"
+
+        referee = service.create(
+            result_input(
+                sample_id=a_sample.id,
+                gold_bead_mg=Decimal("9.000"),
+                supersedes_id=screen.id,
+                superseded_reason="AAS screen at the top of its calibration range; "
+                "re-assayed gravimetrically",
+            ),
+            analyst=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        app_session.flush()
+
+        assert referee.supersedes_id == screen.id
+        assert referee.method.value == "fire_assay_gravimetric"
+        current = current_result(app_session, a_sample.id)
+        assert current is not None
+        assert current.id == referee.id
 
 
 class TestAppendOnly:

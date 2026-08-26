@@ -13,6 +13,7 @@ from msa_lims.domain.assay import (
     grade_in_ounces_per_ton,
     gravimetric_grade,
     silver_by_difference,
+    solution_finish_grade,
 )
 from msa_lims.domain.units import Unit
 
@@ -138,6 +139,139 @@ class TestSilverByDifference:
             sample_weight_g=Decimal("30"),
         )
         assert silver.require_detected() == Decimal("0")
+
+
+class TestSolutionFinishGrade:
+    def test_a_reading_from_a_thirty_gram_portion(self) -> None:
+        # 1.5 mg/L in a 10 mL flask is 15 ug of gold; from a 30 g portion
+        # that is 0.5 ug/g, which is 0.5 g/t.
+        grade = solution_finish_grade(
+            concentration=Decimal("1.5"),
+            concentration_unit=Unit.MG_PER_L,
+            solution_volume_ml=Decimal("10"),
+            sample_weight_g=Decimal("30"),
+        )
+        assert grade.unit is Unit.G_PER_TONNE
+        assert grade.require_detected() == Decimal("0.5")
+
+    def test_agrees_with_gravimetric_on_the_same_bead(self) -> None:
+        """The two finishes measure the same physical bead two ways; on a
+        bead small enough to stay on-curve, they must agree on its grade.
+
+        A 0.150 mg bead dissolved into 10 mL is 15 mg/L (0.150 mg in 0.01 L) —
+        read that back and the result should be the gravimetric path's own
+        5 g/t."""
+        gravimetric = gravimetric_grade(
+            gold_bead_mg=Decimal("0.150"), sample_weight_g=Decimal("30")
+        )
+        solution = solution_finish_grade(
+            concentration=Decimal("15"),
+            concentration_unit=Unit.MG_PER_L,
+            solution_volume_ml=Decimal("10"),
+            sample_weight_g=Decimal("30"),
+        )
+        assert solution.require_detected() == gravimetric.require_detected() == Decimal("5")
+
+    def test_ug_per_l_converts_to_the_identical_grade_as_mg_per_l(self) -> None:
+        via_mg = solution_finish_grade(
+            concentration=Decimal("1.5"),
+            concentration_unit=Unit.MG_PER_L,
+            solution_volume_ml=Decimal("10"),
+            sample_weight_g=Decimal("30"),
+        )
+        via_ug = solution_finish_grade(
+            concentration=Decimal("1500"),
+            concentration_unit=Unit.UG_PER_L,
+            solution_volume_ml=Decimal("10"),
+            sample_weight_g=Decimal("30"),
+        )
+        assert via_ug.require_detected() == via_mg.require_detected()
+
+    def test_a_reading_at_or_below_detection_limit_is_a_non_detect(self) -> None:
+        grade = solution_finish_grade(
+            concentration=Decimal("0.01"),
+            concentration_unit=Unit.MG_PER_L,
+            solution_volume_ml=Decimal("10"),
+            sample_weight_g=Decimal("30"),
+            detection_limit=Decimal("0.03"),
+        )
+        assert grade.censored
+        assert grade.detection_limit is not None
+        # 0.03 mg/L in a 10 mL flask, from a 30 g portion, is 0.01 g/t —
+        # ALS's own published lower limit for a 30 g AAS finish.
+        assert grade.detection_limit.quantize(Decimal("0.0001")) == Decimal("0.0100")
+
+    def test_a_reading_above_the_calibration_range_is_refused(self) -> None:
+        """The failure mode this guard exists for: past the top standard the
+        instrument is extrapolating, and the printed number is not a grade —
+        it is a data point off the end of a line that was never drawn there."""
+        with pytest.raises(AssayCalculationError, match="calibration range"):
+            solution_finish_grade(
+                concentration=Decimal("400"),
+                concentration_unit=Unit.MG_PER_L,
+                solution_volume_ml=Decimal("10"),
+                sample_weight_g=Decimal("30"),
+                upper_calibration_limit=Decimal("300"),
+            )
+
+    def test_a_reading_exactly_at_the_calibration_limit_is_accepted(self) -> None:
+        """The boundary is inclusive on the accepting side — unlike a balance's
+        sensitivity floor, the top standard itself was actually run."""
+        grade = solution_finish_grade(
+            concentration=Decimal("300"),
+            concentration_unit=Unit.MG_PER_L,
+            solution_volume_ml=Decimal("10"),
+            sample_weight_g=Decimal("30"),
+            upper_calibration_limit=Decimal("300"),
+        )
+        assert grade.is_detected
+
+    def test_a_mass_fraction_unit_is_refused(self) -> None:
+        """ppm describes a solid, not what is in the flask — see the
+        function's own docstring for why the two must not be conflated."""
+        with pytest.raises(AssayCalculationError, match="mass concentration"):
+            solution_finish_grade(
+                concentration=Decimal("1.5"),
+                concentration_unit=Unit.PPM,
+                solution_volume_ml=Decimal("10"),
+                sample_weight_g=Decimal("30"),
+            )
+
+    def test_a_zero_reading_without_detection_limit_is_refused(self) -> None:
+        with pytest.raises(AssayCalculationError, match="detection_limit"):
+            solution_finish_grade(
+                concentration=Decimal("0"),
+                concentration_unit=Unit.MG_PER_L,
+                solution_volume_ml=Decimal("10"),
+                sample_weight_g=Decimal("30"),
+            )
+
+    def test_a_negative_concentration_is_refused(self) -> None:
+        with pytest.raises(AssayCalculationError, match="negative"):
+            solution_finish_grade(
+                concentration=Decimal("-0.1"),
+                concentration_unit=Unit.MG_PER_L,
+                solution_volume_ml=Decimal("10"),
+                sample_weight_g=Decimal("30"),
+            )
+
+    def test_a_zero_sample_weight_is_refused(self) -> None:
+        with pytest.raises(AssayCalculationError, match="sample weight"):
+            solution_finish_grade(
+                concentration=Decimal("1.5"),
+                concentration_unit=Unit.MG_PER_L,
+                solution_volume_ml=Decimal("10"),
+                sample_weight_g=Decimal("0"),
+            )
+
+    def test_a_zero_solution_volume_is_refused(self) -> None:
+        with pytest.raises(AssayCalculationError, match="solution volume"):
+            solution_finish_grade(
+                concentration=Decimal("1.5"),
+                concentration_unit=Unit.MG_PER_L,
+                solution_volume_ml=Decimal("0"),
+                sample_weight_g=Decimal("30"),
+            )
 
 
 class TestInverseCalculation:

@@ -1,6 +1,19 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done, across audit follow-up passes: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API, which found and fixed two real crashes on its first run — plus a later, more serious fix to the fuzz fixture's own test-isolation, which had been silently leaking data into the test database); idea #4 (the furnace tray) in full — batch listing, an enriched detail response, two React screens drawing the tray as a grid, and charging/parting/weighing as modal forms directly against it; idea #18 (generated TypeScript types) — `types.ts` is now a thin alias layer over a schema `openapi-typescript` derives from the live app, with a CI step that fails the build if they ever drift; and idea #1's core (hash-chained audit trail) — every `audit_event` row now commits to the one before it, verifiable by anyone who can recompute a sha256, proven live by directly UPDATE-ing a row as the schema owner (bypassing the application's own append-only grant entirely) and watching both `GET /api/audit/verify` and `make verify-chain` catch it
+**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks
+`RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real
+`check_transition` call rather than a documented bypass, and result entry
+requires genuine `IN_ASSAY`. The audit agenda is being pulled forward: ideas
+#7 (Schemathesis fuzzing), #4 (the furnace tray, both halves), #18 (generated
+TypeScript types) and #1's core (the hash-chained audit trail) are all done —
+each with its own section below — and two more landed this pass: the
+**solution finish** (`POST /api/fire-assay-results/solution-finish`: AAS and
+ICP-MS entry over the dissolved bead, one table and one supersession chain
+across both finishes, a reading above the calibration range refused outright)
+and the **provenance dossier** (audit idea #3: `GET /api/samples/{id}/provenance`
+assembles a sample's whole evidence chain read-only and seals it with a sha256
+any recipient can recompute offline). The solution finish is the first real
+slice of Phase 4
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -22,15 +35,15 @@ numbers cheat sheet — lives in
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
 | 3 · Lifecycle & prep | wk 8–9 | **Done** — the real prep walk, re-assay, and rejection moves; charging requires genuine `READY_FOR_ASSAY`; fire assay result entry requires genuine `IN_ASSAY`. Every sample-status move in the spine now goes through `check_transition` for real |
-| 4 · ICP & bulk import | wk 10–11 | Not started |
+| 4 · ICP & bulk import | wk 10–11 | **In progress** — the solution finish (AAS/ICP-MS result entry over the dissolved bead, saturation refused) is landed and verified live; bulk import and multi-element results remain |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 534 tests passing (plus a Schemathesis contract-fuzz run kept
+**Health:** 584 tests passing (plus a Schemathesis contract-fuzz run kept
 separate, see below) · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (Phase 3 needed none — both slices are
-service and route changes over the existing schema) · frontend builds and
-typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
+apply from empty and are reversible (the solution-finish migration was
+checked with a full `downgrade base` / `upgrade head` round trip)
+· frontend builds and typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
 verified live through curl end to end, Phase 1 and 2's own chain plus: a
 soil sample refused the pulp shortcut by name (`"only a pulp may skip
 preparation, and this is soil"`, **409**), walked `received → in_prep →
@@ -52,7 +65,10 @@ for — is done. Phase 2 is done: batching, result wiring, per-crucible
 weighing, and recorded-not-enforced QC insertion. Phase 3 is done: every
 sample-status move that used to be an honestly-documented bypass — prep,
 re-assay, rejection, charging into `IN_ASSAY`, and now entering a result
-into `ASSAYED` — genuinely calls `domain.lifecycle.check_transition`.**
+into `ASSAYED` — genuinely calls `domain.lifecycle.check_transition`.
+Phase 4 has its first slice: the solution finish. And the evidence layer
+exists: the audit trail verifies its own chain, and any sample carries a
+sealed provenance dossier.**
 
 ---
 
@@ -988,7 +1004,7 @@ existing suite (which was already green: the findings below are all things
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Fourteen write endpoints, and nine read endpoints:
+- Fifteen write endpoints, and ten read endpoints:
   `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
   result and every certificate that names it), `GET /api/certificates/{id}`
   (metadata, sharing the exact certified-samples query the issuance response
@@ -997,9 +1013,13 @@ existing suite (which was already green: the findings below are all things
   crucibles, ordered the way a technician reads a tray),
   `GET /api/flux-recipes` and `GET /api/qc-materials` — the picker data a
   charge form needs, both `active_only=True` by default since a retired row
-  is refused at charge time regardless — and, new this pass,
+  is refused at charge time regardless —
   `GET /api/audit/verify`, the only read endpoint that answers a question
-  about the database's own integrity rather than about lab work.
+  about the database's own integrity rather than about lab work, and — new
+  this increment — `GET /api/samples/{id}/provenance`, the sealed evidence
+  dossier. On the write side,
+  `POST /api/fire-assay-results/solution-finish` joins its gravimetric
+  sibling as the second entry path into the one result table.
   `POST /api/fire-assay-results` was
   the first
   write to compute a response rather than only echo what it stored;
@@ -1197,8 +1217,78 @@ existing suite (which was already green: the findings below are all things
   bypasses the ORM and `record_audit_event` entirely, on purpose, to prove
   the grant itself).
 
-### Tests — 534
-- **Unit** (200): units and dimensions, censored values (including the audit's
+### The solution finish — `domain/assay.py`, `fire_assay_results/service.py`, migration `63137adc5266`
+- **AAS and ICP-MS finally have their entry path** — the module docstring
+  that since Phase 1 said "no method parameter, no dead validation branch
+  pretending to support a method nothing here implements" kept its promise:
+  they got their own endpoint with their own shape,
+  `POST /api/fire-assay-results/solution-finish`, rather than a discriminator
+  bolted onto gravimetric entry. The measurements have nothing in common
+  beyond the sample, the portion, and the supersession pair; one merged
+  request shape would have been exactly the conditionally-required field soup
+  that lets a bead weight be posted against an ICP method and validated by
+  nobody.
+- **`solution_finish_grade` is pure domain, same discipline as
+  `gravimetric_grade`**: pinned-context Decimal; µg/mL × mL ÷ g is a bare
+  multiply-divide because mg/L is numerically µg/mL — canonicalising first is
+  what removes every further factor to get wrong. A reading at or below the
+  method's detection limit returns a non-detect at the grade *that limit*
+  corresponds to (the limit itself is converted into grade units, not copied).
+  A mass-*fraction* unit like ppm is refused at both the schema layer
+  (`Literal["mg/L", "ug/L"]`) and the domain: on an instrument printout it is
+  ambiguous between µg/mL of solution and µg/g of sample, which differ by
+  exactly the factor this function exists to apply.
+- **Saturation is refused, never reported.** A reading above
+  `upper_calibration_limit` means the instrument is extrapolating past its
+  top standard — the number is not a measurement of anything, and saturation
+  is precisely the failure a solution finish is known for. The refusal names
+  both real remedies: dilute and re-read, or finish gravimetrically (the
+  referee method, precisely because it has no ceiling). The upper limit gates
+  entry but is deliberately **not stored** — it describes the calibration,
+  not this result; it belongs on an instrument/method record when one exists.
+- **One table, two finishes, one supersession chain.** `fire_assay_result`
+  gains nullable `solution_*` columns while `gold_bead_mg` becomes nullable
+  in turn, with two CHECK constraints pairing each finish's inputs to its
+  method — stated as two constraints so a violation names which half is
+  wrong. They share the table because they are the same fusion finished two
+  ways, and because the workflow that matters runs *between* them: a solution
+  finish that saturates is re-run gravimetrically, and the referee result
+  supersedes the first. Split tables would break "the current result for this
+  sample" into two questions and let a certificate freeze one head while the
+  other held a newer correction.
+- **The crucible wiring carries over unchanged**: a solution result may name
+  the crucible, deriving its portion from the recorded charge and refusing
+  retyped weights, identically to gravimetric entry. Schema-only migration —
+  grants are table-level and `fire_assay_result` already decided.
+
+### Provenance dossiers — `provenance/`, `domain/canonical.py`, `GET /api/samples/{id}/provenance`
+- **Audit idea #3, built as sketched: read-only, no new writes, no new risk
+  surface.** One query assembly turns everything already stored — submission
+  and intake context, every crucible the sample rode (with batch, position,
+  charge), parting and weighing measurements, the full result chain including
+  superseded rows with their reasons, certificates and PDF hashes, and the
+  audit events behind all of it — into one narrative answering "how do you
+  know," which is a different and much larger question than the detail view's
+  "what is true now." Nested under the sample rather than top-level because a
+  dossier is a view of one sample, the way `/pdf` is one rendering of one
+  certificate.
+- **The seal is a sha256 over the canonical JSON rendering of the payload**
+  (`domain/canonical.py`: sorted keys, fixed separators, explicit Decimal
+  stringification) — recomputable by any recipient holding the JSON, with no
+  server and no trust required, the same re-verification discipline the
+  certificate download applies to its own hash. Deliberately *not* a
+  signature: it proves internal consistency, not authorship. Binding dossiers
+  to a signing key is idea #2's separate scope.
+- **Canonical JSON now has two consumers** — this seal and the audit chain's
+  `entry_hash` — sharing one module, which is the whole point: two
+  independently-written serialisers that happen to agree today are one edit
+  away from silently disagreeing.
+- **Honest gap carried, not papered over**: prep appears only as the sample's
+  status transitions, because no `PrepRecord` rows exist yet — stated in the
+  module docstring rather than implied away.
+
+### Tests — 584
+- **Unit** (236): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
   refusal and its non-detect remedy), sample labels and intervals (including
@@ -1232,7 +1322,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (317, real Postgres): the append-only grants proven against
+- **Integration** (348, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -1344,7 +1434,22 @@ existing suite (which was already green: the findings below are all things
    way, and a direct `UPDATE` by the schema owner — the actual scenario
    idea #1 exists to catch — is detected; and over HTTP: an empty lab, a
    real write producing a verifying chain, `upto` genuinely restricting the
-   scan, and `client` refused with **403**).
+   scan, and `client` refused with **403**); and, new this increment, the
+   solution finish (service-level: a reading converted and graded exactly —
+   0.15 mg/L × 9 mL over 45 g = 0.030 g/t with the detection limit converted
+   into grade units rather than copied, a non-detect at the limit's grade, a
+   negative concentration refused, a mass-fraction unit refused by name, a
+   saturation refusal naming both remedies, an unknown sample refused, the
+   real `IN_ASSAY` transition still required on this path, supersession
+   across finishes landing in one chain, and a gravimetric method refused at
+   the schema layer since it has its own endpoint; plus HTTP: `201` with the
+   derived portion, saturation as **422**, ppm as **422** before reaching
+   the service, and a client role **403**); provenance dossiers (11 over
+   HTTP: a full dossier for a sample that rode a crucible, one with none,
+   the seal recomputing over the exact payload returned, a 404, `client`
+   refused **403**, superseded results present with their reasons); and
+   canonical JSON (8 unit: sorted keys, Decimal stringification, unicode
+   stability, and the sha256 agreeing across dict construction orders).
 - **Contract fuzz** (2 collected tests): one dynamically exercising all 24
   operations × up to 10 generated examples each (not a fixed assertion
   count in the usual sense) — Schemathesis-generated schema-valid and
@@ -1571,6 +1676,32 @@ result request that had just been refused now succeeded (**201**, `au:
 {"value": "5.000", ...}`), with no change to the request itself, only to the
 sample's genuine status. Demo data was truncated afterward.
 
+The solution finish and provenance dossier verified live over one fresh curl
+chain, both samples walking the full physical path (`received → in_prep →
+ready_for_assay`, charged at 45 g, fused, cupelled, parted, weighed). A
+gravimetric result naming its crucible came back **201** at exactly
+`5.000 g/t`. Sample two's dissolved bead read on an ICP-MS — 0.15 mg/L made
+up to 9 mL over the crucible's derived 45 g portion — returned **201** at
+exactly `0.030 g/t` with its detection limit converted into grade units
+(`0.002 g/t`), and superseding it with a corrected in-range reading ran the
+recalculation for real (**201**, `0.036 g/t`). Every refusal answered as
+itself: a 9.9 mg/L reading against a 2.0 mg/L top standard, **422**, "the
+instrument is extrapolating past its top standard, so this is not a
+measurement — dilute and re-read, or finish this sample gravimetrically";
+a ppm unit, **422** at the schema layer before reaching the domain; and,
+notably, a solution-finish attempt against the still-`ready_for_assay`
+sample was refused with **409** ("cannot go from ready_for_assay to
+assayed") — proving this new path obeys the same lifecycle tightening as its
+gravimetric sibling. Then `GET /api/samples/2/provenance`: the dossier
+carried the submission context, the crucible with batch and position, the
+parting/weighing measurements, *both* result rows in order with the
+correction's reason, and a seal that a standalone script recomputed from the
+fetched JSON alone — byte-identical, no server involvement. A `client` role
+was refused the dossier (**403**), and `GET /api/audit/verify` reported
+`valid: true` across all 30 events — until a direct schema-owner `UPDATE`
+flipped a status inside one row, whereupon the same endpoint named
+`broke_at_id` and the reason. Demo data was truncated afterward.
+
 The two fuzz-found fixes verified live directly: `POST /api/qc-materials`
 with `certified_au_uncertainty_g_t: "0"` on a CRM now returns **422** naming
 the field (`"Input should be greater than 0"`) instead of crashing into the
@@ -1766,6 +1897,12 @@ very next call. Demo data was truncated from the dev database afterward.
 | 2026-08-26 | `prev_entry_hash` is genuinely `NULL` for the genesis row; the sentinel (`GENESIS_PREV_HASH`, 64 zeros) exists **only inside the hash computation**, never stored | Mirrors `supersedes_id`'s own "nothing before this" convention elsewhere in the schema — a real absence stays a real `NULL`, not a magic value dressed up as data. The computation still needs *something* concrete to hash, which is the sentinel's only job. |
 | 2026-08-26 | `verify_chain` queries with `execution_options(populate_existing=True)`, found necessary by a failing test, not anticipated up front | A row already in the calling session's identity map — true of any row that session had itself just written — came back from a plain `select()` unchanged from memory, silently masking a change made through a different connection. For a feature whose entire point is "don't trust cached state," that is not a corner case, it is the central one; the test that caught it (a schema-owner `UPDATE`, then re-verify on the same session) stays in the suite specifically to keep this fixed. |
 | 2026-08-26 | `GET /api/audit/verify` is gated by `InternalActorDep`, the same posture as every other read endpoint, not left open to unauthenticated callers | A genuinely public, no-account verifier — the point being that *no one* has to trust this server to check the chain — is real, separate scope named as audit idea #8 ("The Verifier"), which also wants the OpenTimestamps anchor idea #1 itself defers. Opening this one endpoint early would be scope creep into a different, larger idea for no present consumer. |
+| 2026-08-26 | Both finishes share **one table and one supersession chain**, rather than a table each | They are the same fusion finished two ways, and the workflow that matters runs *between* them: a solution finish that saturates is re-run gravimetrically, and the referee result supersedes the first. Two tables would split "the current result for this sample" into two questions and let a certificate freeze one head while the other held a newer correction. |
+| 2026-08-26 | A reading above the calibration range is **refused outright**, never stored saturated | Past the top standard the instrument extrapolates; the printed number is not a measurement of anything. Saturation is precisely what a solution finish gets wrong and gravimetry exists to arbitrate — reporting it as a grade would put the known failure mode onto a certificate. The refusal names both real remedies (dilute and re-read, or finish gravimetrically). |
+| 2026-08-26 | `ppm` is deliberately absent from the solution finish's unit vocabulary, refused at both the schema and domain layers | On an instrument printout ppm is ambiguous between µg/mL of *solution* and µg/g of *sample* — which differ by exactly the factor the grade calculation applies. An ambiguous unit at the input of a computation whose entire job is applying that factor is not a convenience, it is a trap. |
+| 2026-08-26 | The upper calibration limit **gates entry but is not stored** | It contributes nothing to the number on the row — its only use is deciding whether the row may exist — and it describes the calibration method, not this result. Storing it here would be an instrument record growing in the wrong table; it belongs on the method/instrument registry when one exists. |
+| 2026-08-26 | The dossier's **seal is a hash, not a signature** — stated in the module docstring, not implied away | A sha256 over canonical JSON proves the bundle is internally consistent; it says nothing about who authored it. Claiming more than that would be exactly the trust-theatre the append-only design avoids. Binding dossiers to signing keys is idea #2's scope, with its own ceremony. |
+| 2026-08-26 | Canonical JSON lives in one shared module (`domain/canonical.py`) from its second consumer onward | The dossier seal and the audit chain's `entry_hash` both need "the same bytes every time" serialization. Two independently-written serialisers that happen to agree today are one edit away from silently disagreeing — the exact failure class `format_hole_id`'s extraction already solved for hole labels. |
 
 ---
 
@@ -1953,9 +2090,27 @@ very next call. Demo data was truncated from the dev database afterward.
    sketch's other half, proving *when* the chain's head existed to a party
    trusting nothing about this server — is real remaining scope,
    deliberately deferred; see open questions.**
+7. ~~**Idea #3, "Provenance as a Product."**~~ **Done 2026-08-26** —
+   `GET /api/samples/{id}/provenance` assembles the whole evidence chain
+   read-only and seals it with a recomputable sha256 over canonical JSON.
+   11 new HTTP tests plus 8 unit tests for `domain/canonical.py`; verified
+   live end to end, including recomputing the seal offline from the fetched
+   payload alone — see "Verified live."
+8. ~~**The solution finish — AAS/ICP-MS result entry (Phase 4's first
+   slice).**~~ **Done 2026-08-26** — `POST
+   /api/fire-assay-results/solution-finish`, `solution_finish_grade` in the
+   pure domain, saturation refused outright, one table and one supersession
+   chain across both finishes. Migration `63137adc5266`, checked with a full
+   downgrade/upgrade round trip. ~20 new tests across domain, service and
+   HTTP; verified live end to end — see "Verified live."
 
 ## Open questions
 
+- **The solution finish's detection limit is caller-supplied per reading.**
+  Like balance sensitivity before it (see the next resolved-but-related
+  item), it is a property of the *method and instrument calibration*, not of
+  one result — it belongs on an instrument/method record once that registry
+  exists, at which point both stop being per-request guesses.
 - **The audit hash chain has no external anchor yet.** It proves the
   history is internally consistent — nothing between two points has been
   altered — but not *when* the current head existed relative to the

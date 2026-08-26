@@ -29,7 +29,8 @@ world.
 from __future__ import annotations
 
 import hashlib
-import json
+
+from msa_lims.domain.canonical import canonical_json
 
 #: The genesis row — the first audit_event ever written — has no
 #: predecessor. A fixed, documented sentinel (not `None`, not an empty
@@ -54,29 +55,31 @@ def canonical_entry(
 ) -> str:
     """The exact bytes one entry's hash commits to.
 
-    Sorted keys and fixed separators (JCS-style) so the same logical entry
-    always serializes identically regardless of dict insertion order or a
-    future Python version's `json` defaults — the same byte-determinism
-    discipline `certificates/pdf.py` already applies to a signed document,
-    applied here to a signed *fact*. Exported (not folded into
-    :func:`compute_entry_hash`) so an independent verifier can recompute
-    this exact payload from the stored columns alone and hash it itself,
-    rather than trusting this module's own arithmetic — "recompute, don't
-    trust" is the same posture `certificates/service.py`'s own hash check
-    already takes on a PDF.
+    Serialized through :func:`msa_lims.domain.canonical.canonical_json` —
+    the same function the provenance dossier's seal uses, so the two
+    features cannot drift into disagreeing about what "canonical" means.
+    The byte-determinism discipline is `certificates/pdf.py`'s, applied
+    here to a signed *fact* rather than a signed document.
+
+    Exported (not folded into :func:`compute_entry_hash`) so an independent
+    verifier can recompute this exact payload from the stored columns alone
+    and hash it itself, rather than trusting this module's own arithmetic —
+    "recompute, don't trust" is the same posture
+    `certificates/service.py`'s own hash check already takes on a PDF.
     """
-    payload = {
-        "prev_entry_hash": prev_entry_hash,
-        "table_name": table_name,
-        "record_id": record_id,
-        "action": action,
-        "before": before,
-        "after": after,
-        "reason": reason,
-        "actor_id": actor_id,
-        "actor_ip": actor_ip,
-    }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return canonical_json(
+        {
+            "prev_entry_hash": prev_entry_hash,
+            "table_name": table_name,
+            "record_id": record_id,
+            "action": action,
+            "before": before,
+            "after": after,
+            "reason": reason,
+            "actor_id": actor_id,
+            "actor_ip": actor_ip,
+        }
+    )
 
 
 def compute_entry_hash(

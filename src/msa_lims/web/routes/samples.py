@@ -5,11 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from msa_lims.domain.enums import SampleStatus
+from msa_lims.provenance.service import get_sample_provenance, seal, seal_payload
 from msa_lims.samples.service import get_sample_detail, list_samples
 from msa_lims.web.deps import InternalActorDep, SessionDep
 from msa_lims.web.schemas import (
     CertificateReferenceOut,
     FireAssayResultOut,
+    ProvenanceOut,
     SampleDetailOut,
     SampleListItemOut,
 )
@@ -51,3 +53,19 @@ def read_sample(sample_id: int, session: SessionDep, actor: InternalActorDep) ->
             for ref in detail.certificates
         ],
     )
+
+
+@router.get("/{sample_id}/provenance", response_model=ProvenanceOut)
+def read_sample_provenance(
+    sample_id: int, session: SessionDep, actor: InternalActorDep
+) -> ProvenanceOut:
+    """This sample's whole evidence dossier — audit idea #3.
+
+    Assembled read-only from rows that already existed and sealed with a
+    `sha256` a recipient can recompute offline. Nested under the sample
+    rather than given its own top-level path because a dossier is not an
+    entity in its own right: it is one view of one sample, the same way
+    `/api/certificates/{id}/pdf` is one rendering of one certificate.
+    """
+    provenance = get_sample_provenance(session, sample_id)
+    return ProvenanceOut.from_payload(seal_payload(provenance), seal=seal(provenance))

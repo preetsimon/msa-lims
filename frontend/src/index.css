@@ -463,3 +463,73 @@ h2 {
   gap: 0.6rem;
   margin-top: 1.2rem;
 }
+
+/* The provenance dossier's timeline — a vertical line of dated, sourced
+   facts, and the seal that makes the whole page a self-checking document
+   rather than just a page. */
+.seal {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.8rem;
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--line);
+}
+
+.timeline-item {
+  position: relative;
+  padding: 0 0 1.1rem 1.1rem;
+}
+
+.timeline-item::before {
+  content: "";
+  position: absolute;
+  left: -0.4rem;
+  top: 0.35rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 2px solid var(--ok);
+}
+
+.timeline-what {
+  font-weight: 600;
+}
+
+.timeline-meta {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+  margin-top: 0.1rem;
+}
+
+.timeline-reason {
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--ink-soft);
+  margin-top: 0.2rem;
+}
+
+.timeline-hash {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+  margin-top: 0.2rem;
+}
+
+.data-table tr.superseded {
+  color: var(--ink-soft);
+}
+
+.data-table tr.superseded .grade {
+  text-decoration: line-through;
+  text-decoration-color: var(--bad);
+}

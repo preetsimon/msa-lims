@@ -11,6 +11,7 @@ import type {
   BatchDetail,
   Crucible,
   FluxRecipe,
+  Provenance,
   QcMaterial,
   SampleDetail,
   SampleListItem,
@@ -142,6 +143,10 @@ export function weighCrucible(
 
 export function advanceBatchStatus(batchId: number, targetStatus: string): Promise<Batch> {
   return sendJSON<Batch>("PATCH", `/api/batches/${batchId}/status`, { status: targetStatus });
+}
+
+export function getSampleProvenance(id: number): Promise<Provenance> {
+  return getJSON<Provenance>(`/api/samples/${id}/provenance`);
 }
 
 export { ApiError };

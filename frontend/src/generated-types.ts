@@ -226,6 +226,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/fire-assay-results/solution-finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Solution Finish */
+        post: operations["create_solution_finish_api_fire_assay_results_solution_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/flux-recipes": {
         parameters: {
             query?: never;
@@ -322,6 +339,32 @@ export interface paths {
         };
         /** Read Sample */
         get: operations["read_sample_api_samples__sample_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/samples/{sample_id}/provenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Sample Provenance
+         * @description This sample's whole evidence dossier — audit idea #3.
+         *
+         *     Assembled read-only from rows that already existed and sealed with a
+         *     `sha256` a recipient can recompute offline. Nested under the sample
+         *     rather than given its own top-level path because a dossier is not an
+         *     entity in its own right: it is one view of one sample, the same way
+         *     `/api/certificates/{id}/pdf` is one rendering of one certificate.
+         */
+        get: operations["read_sample_provenance_api_samples__sample_id__provenance_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -835,7 +878,16 @@ export interface components {
              */
             supersedes_id?: number | null;
         };
-        /** FireAssayResultOut */
+        /**
+         * FireAssayResultOut
+         * @description One result of either finish.
+         *
+         *     The finish-specific fields are nullable on the way out for the same reason
+         *     they are nullable in the table: a gravimetric row has no concentration and
+         *     a solution row has no bead. ``method`` says which set to expect, and ``au``
+         *     — the grade, the thing every consumer actually wants — is present and
+         *     identically shaped on both.
+         */
         FireAssayResultOut: {
             /**
              * Analysed At
@@ -848,7 +900,7 @@ export interface components {
             /** Crucible Id */
             crucible_id: number | null;
             /** Gold Bead Mg */
-            gold_bead_mg: string;
+            gold_bead_mg: string | null;
             /** Id */
             id: number;
             /** Method */
@@ -859,6 +911,14 @@ export interface components {
             sample_id: number;
             /** Sample Weight G */
             sample_weight_g: string;
+            /** Solution Concentration */
+            solution_concentration: string | null;
+            /** Solution Concentration Unit */
+            solution_concentration_unit: string | null;
+            /** Solution Detection Limit */
+            solution_detection_limit: string | null;
+            /** Solution Volume Ml */
+            solution_volume_ml: string | null;
             /** Superseded Reason */
             superseded_reason: string | null;
             /** Supersedes Id */
@@ -995,6 +1055,184 @@ export interface components {
             name: string;
             /** Start Date */
             start_date: string | null;
+        };
+        /** ProvenanceAuditEntryOut */
+        ProvenanceAuditEntryOut: {
+            /** Action */
+            action: string;
+            /** Actor */
+            actor: string | null;
+            /** After */
+            after: {
+                [key: string]: unknown;
+            } | null;
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            } | null;
+            /** Entry Hash */
+            entry_hash: string;
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string | null;
+            /** Record Id */
+            record_id: number;
+            /** Recorded At */
+            recorded_at: string | null;
+            /** Table Name */
+            table_name: string;
+        };
+        /** ProvenanceCertificateOut */
+        ProvenanceCertificateOut: {
+            /** Certificate Number */
+            certificate_number: string;
+            /** Certified Result Id */
+            certified_result_id: number;
+            /** Id */
+            id: number;
+            /** Issued At */
+            issued_at: string | null;
+            /** Issued By */
+            issued_by: string | null;
+            /** Pdf Sha256 */
+            pdf_sha256: string;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
+        };
+        /** ProvenanceClientOut */
+        ProvenanceClientOut: {
+            /** Code */
+            code: string;
+            /** Id */
+            id: number;
+        };
+        /** ProvenanceCrucibleOut */
+        ProvenanceCrucibleOut: {
+            /** Batch Number */
+            batch_number: string;
+            /** Charged At */
+            charged_at: string | null;
+            /** Flux Recipe */
+            flux_recipe: string;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Id */
+            id: number;
+            /** Lead Button Weight Mg */
+            lead_button_weight_mg: string | null;
+            /** Parted At */
+            parted_at: string | null;
+            /** Parting Acid Volume Ml */
+            parting_acid_volume_ml: string | null;
+            /** Position */
+            position: string;
+            /** Prill Weight Mg */
+            prill_weight_mg: string | null;
+            /** Sample Weight G */
+            sample_weight_g: string | null;
+            /** Status */
+            status: string;
+            /** Weighed At */
+            weighed_at: string | null;
+        };
+        /** ProvenanceDrillHoleOut */
+        ProvenanceDrillHoleOut: {
+            /** Hole Id */
+            hole_id: string;
+        };
+        /**
+         * ProvenanceOut
+         * @description One sample's whole evidence dossier, plus the seal over it.
+         *
+         *     Every value is rendered as a string where it is a `Decimal` or a
+         *     timestamp in the database — the seal is computed over exactly these
+         *     bytes, so a float or a re-formatted date here would make an
+         *     independently recomputed seal disagree for no reason a reader could
+         *     see. See `provenance/service.py`.
+         */
+        ProvenanceOut: {
+            /** Audit Entries */
+            audit_entries: components["schemas"]["ProvenanceAuditEntryOut"][];
+            /** Certificates */
+            certificates: components["schemas"]["ProvenanceCertificateOut"][];
+            client: components["schemas"]["ProvenanceClientOut"];
+            /** Crucibles */
+            crucibles: components["schemas"]["ProvenanceCrucibleOut"][];
+            drill_hole: components["schemas"]["ProvenanceDrillHoleOut"] | null;
+            project: components["schemas"]["ProvenanceProjectOut"] | null;
+            /** Results */
+            results: components["schemas"]["ProvenanceResultOut"][];
+            sample: components["schemas"]["ProvenanceSampleOut"];
+            /** Seal */
+            seal: string;
+            submission: components["schemas"]["ProvenanceSubmissionOut"];
+        };
+        /** ProvenanceProjectOut */
+        ProvenanceProjectOut: {
+            /** Name */
+            name: string;
+        };
+        /** ProvenanceResultOut */
+        ProvenanceResultOut: {
+            /** Analysed At */
+            analysed_at: string | null;
+            /** Analyst */
+            analyst: string | null;
+            /** Au Censored */
+            au_censored: boolean;
+            /** Au Detection Limit */
+            au_detection_limit: string | null;
+            /** Au Unit */
+            au_unit: string;
+            /** Au Value */
+            au_value: string | null;
+            /** Crucible Id */
+            crucible_id: number | null;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Id */
+            id: number;
+            /** Method */
+            method: string;
+            /** Sample Weight G */
+            sample_weight_g: string | null;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
+        };
+        /** ProvenanceSampleOut */
+        ProvenanceSampleOut: {
+            /** From Depth M */
+            from_depth_m: string | null;
+            /** Id */
+            id: number;
+            /** Sample Id */
+            sample_id: string;
+            /** Sample Type */
+            sample_type: string;
+            /** Status */
+            status: string;
+            /** To Depth M */
+            to_depth_m: string | null;
+            /** Weight Received G */
+            weight_received_g: string | null;
+        };
+        /** ProvenanceSubmissionOut */
+        ProvenanceSubmissionOut: {
+            /** Client Reference */
+            client_reference: string | null;
+            /** Id */
+            id: number;
+            /** Received At */
+            received_at: string | null;
+            /** Received By */
+            received_by: string | null;
+            /** Submission Number */
+            submission_number: string;
         };
         /** QcMaterialCreate */
         QcMaterialCreate: {
@@ -1168,6 +1406,76 @@ export interface components {
          * @enum {string}
          */
         SampleType: "core" | "rc_chip" | "soil" | "stream_sediment" | "rock_chip" | "pulp";
+        /**
+         * SolutionFinishCreate
+         * @description An AAS or ICP-MS finish. Separate from :class:`FireAssayResultCreate`
+         *     because the two finishes measure different things — there is no field in
+         *     common beyond the sample, the portion, and the supersession pair.
+         */
+        SolutionFinishCreate: {
+            /**
+             * Analysed At
+             * Format: date-time
+             * @description When the instrument read it, not when it was entered.
+             */
+            analysed_at: string;
+            /**
+             * Concentration
+             * @description What the instrument read, in concentration_unit.
+             */
+            concentration: number | string;
+            /**
+             * Concentration Unit
+             * @description Must measure mass concentration. 'ppm' is deliberately not offered: on an instrument printout it is ambiguous between ug/mL of solution and ug/g of sample, and those differ by exactly the factor this calculation applies.
+             * @enum {string}
+             */
+            concentration_unit: "mg/L" | "ug/L";
+            /**
+             * Crucible Id
+             * @description The crucible this assay came from; its recorded charge is derived as the portion weight.
+             */
+            crucible_id?: number | null;
+            /**
+             * Detection Limit
+             * @description The method's detection limit, in concentration_unit.
+             */
+            detection_limit?: number | string | null;
+            /**
+             * Method
+             * @description Which instrument read the dissolved bead. The gravimetric finish is excluded here at the schema layer: it weighs a bead rather than reading a solution, and has its own endpoint.
+             * @enum {string}
+             */
+            method: "fire_assay_aas" | "fire_assay_icp_ms";
+            /** Notes */
+            notes?: string | null;
+            /** Sample Id */
+            sample_id: number;
+            /**
+             * Sample Weight G
+             * @description The portion assayed. Required unless crucible_id names the crucible the sample was charged into — then its recorded charge is used and this must be left unset.
+             */
+            sample_weight_g?: number | string | null;
+            /**
+             * Solution Volume Ml
+             * @description The volume the dissolved bead was made up to.
+             */
+            solution_volume_ml: number | string;
+            /**
+             * Superseded Reason
+             * @description Required when supersedes_id is set.
+             */
+            superseded_reason?: string | null;
+            /**
+             * Supersedes Id
+             * @description Set to correct an existing result.
+             */
+            supersedes_id?: number | null;
+            /**
+             * Upper Calibration Limit
+             * @description The method's top standard, in concentration_unit. A reading above it is refused rather than stored: past the top standard the instrument is extrapolating, so the number is not a measurement. Not stored on the row.
+             */
+            upper_calibration_limit?: number | string | null;
+        };
         /** SubmissionCreate */
         SubmissionCreate: {
             /** Client Id */
@@ -1762,6 +2070,43 @@ export interface operations {
             };
         };
     };
+    create_solution_finish_api_fire_assay_results_solution_finish_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionFinishCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FireAssayResultOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_flux_recipes_api_flux_recipes_get: {
         parameters: {
             query?: never;
@@ -2031,6 +2376,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SampleDetailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_sample_provenance_api_samples__sample_id__provenance_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                sample_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProvenanceOut"];
                 };
             };
             /** @description Validation Error */

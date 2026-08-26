@@ -82,7 +82,13 @@ def a_client(app_session: Session) -> Client:
 _submission_serial = count(1)
 
 
-def _make_sample(session: Session, client: Client, label: str) -> Sample:
+def _make_sample(
+    session: Session, client: Client, label: str, *, status: SampleStatus = SampleStatus.RECEIVED
+) -> Sample:
+    """``status`` defaults to ``RECEIVED``; pass ``IN_ASSAY`` for a sample
+    that's about to go through ``FireAssayResultService`` directly, which
+    now requires the real transition (see
+    ``fire_assay_results/service.py``'s module docstring)."""
     submission = Submission(
         submission_number=f"SUB-2026-{next(_submission_serial):04d}",
         client_id=client.id,
@@ -94,7 +100,7 @@ def _make_sample(session: Session, client: Client, label: str) -> Sample:
         sample_id=label,
         submission_id=submission.id,
         sample_type=SampleType.SOIL,
-        status=SampleStatus.RECEIVED,
+        status=status,
     )
     session.add(sample)
     session.flush()
@@ -103,7 +109,7 @@ def _make_sample(session: Session, client: Client, label: str) -> Sample:
 
 @pytest.fixture
 def an_assayed_sample(app_session: Session, analyst: LabUser, a_client: Client) -> Sample:
-    sample = _make_sample(app_session, a_client, "MSA-24-SO-90001")
+    sample = _make_sample(app_session, a_client, "MSA-24-SO-90001", status=SampleStatus.IN_ASSAY)
     FireAssayResultService(app_session).create(
         FireAssayResultInput(
             sample_id=sample.id,
@@ -247,8 +253,10 @@ class TestIssuingACertificate:
     def test_certifying_two_samples_records_two_certificate_results(
         self, app_session: Session, manager: LabUser, analyst: LabUser, a_client: Client
     ) -> None:
-        first = _make_sample(app_session, a_client, "MSA-24-SO-90003")
-        second = _make_sample(app_session, a_client, "MSA-24-SO-90004")
+        first = _make_sample(app_session, a_client, "MSA-24-SO-90003", status=SampleStatus.IN_ASSAY)
+        second = _make_sample(
+            app_session, a_client, "MSA-24-SO-90004", status=SampleStatus.IN_ASSAY
+        )
         result_service = FireAssayResultService(app_session)
         for sample in (first, second):
             result_service.create(
@@ -429,7 +437,9 @@ class TestAmendingACertificate:
         other_client = Client(code="OTH", name="Other Mining Co")
         app_session.add(other_client)
         app_session.flush()
-        other_sample = _make_sample(app_session, other_client, "OTH-24-SO-00001")
+        other_sample = _make_sample(
+            app_session, other_client, "OTH-24-SO-00001", status=SampleStatus.IN_ASSAY
+        )
         FireAssayResultService(app_session).create(
             FireAssayResultInput(
                 sample_id=other_sample.id,

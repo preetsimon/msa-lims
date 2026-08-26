@@ -51,6 +51,51 @@ ANALYST = {"X-Actor": "analyst@lab", "X-Actor-Role": "analyst"}
 CLIENT = {"X-Actor": "client@example.com", "X-Actor-Role": "client"}
 
 
+def _charge_into_a_crucible(client: TestClient, sample_id: int) -> None:
+    """Walks a fresh ``RECEIVED`` sample through prep and charges it into a
+    crucible, entirely through the real endpoints — entering a result now
+    requires the sample to genuinely be ``IN_ASSAY`` (see
+    ``fire_assay_results/service.py``'s module docstring), which only
+    charging produces. ``received_sample_id`` itself stays uncharged, since
+    some tests in this file specifically assert on a sample that is still
+    genuinely ``RECEIVED``."""
+    client.patch(f"/api/samples/{sample_id}/status", json={"target": "in_prep"}, headers=ANALYST)
+    client.patch(
+        f"/api/samples/{sample_id}/status", json={"target": "ready_for_assay"}, headers=ANALYST
+    )
+    recipe = client.post(
+        "/api/flux-recipes",
+        json={
+            "name": f"Samples API Test Recipe {sample_id}",
+            "matrix_type": "silicate",
+            "nominal_portion_g": "30",
+            "litharge_g": "60",
+            "soda_ash_g": "90",
+            "borax_g": "30",
+            "silica_g": "15",
+            "flour_g": "3",
+            "nitre_g": "0",
+        },
+        headers=MANAGER,
+    ).json()
+    batch = client.post(
+        "/api/batches", json={"opened_at": "2026-08-25T08:00:00Z"}, headers=ANALYST
+    ).json()
+    client.patch(f"/api/batches/{batch['id']}/status", json={"status": "charging"}, headers=ANALYST)
+    client.post(
+        f"/api/batches/{batch['id']}/crucibles",
+        json={
+            "sample_id": sample_id,
+            "flux_recipe_id": recipe["id"],
+            "position_row": 1,
+            "position_col": 1,
+            "sample_weight_g": "30",
+            "charged_at": "2026-08-25T09:00:00Z",
+        },
+        headers=ANALYST,
+    )
+
+
 @pytest.fixture
 def registered_client_id(client: TestClient) -> int:
     return int(
@@ -111,6 +156,7 @@ class TestReadingASample:
     def test_after_a_result_the_sample_shows_its_current_grade(
         self, client: TestClient, received_sample_id: int
     ) -> None:
+        _charge_into_a_crucible(client, received_sample_id)
         client.post(
             "/api/fire-assay-results",
             json={
@@ -132,6 +178,7 @@ class TestReadingASample:
     def test_after_a_correction_the_sample_shows_the_current_not_the_original(
         self, client: TestClient, received_sample_id: int
     ) -> None:
+        _charge_into_a_crucible(client, received_sample_id)
         first = client.post(
             "/api/fire-assay-results",
             json={
@@ -163,6 +210,7 @@ class TestReadingASample:
     def test_after_a_certificate_the_sample_lists_it_and_is_reported(
         self, client: TestClient, registered_client_id: int, received_sample_id: int
     ) -> None:
+        _charge_into_a_crucible(client, received_sample_id)
         client.post(
             "/api/fire-assay-results",
             json={
@@ -196,6 +244,7 @@ class TestReadingASample:
         """Every certificate that ever named this sample is listed, not just
         the current one -- the sample detail view is a history, not a
         pointer to the latest document."""
+        _charge_into_a_crucible(client, received_sample_id)
         client.post(
             "/api/fire-assay-results",
             json={
@@ -288,6 +337,7 @@ class TestListingSamples:
             },
             headers=ANALYST,
         )
+        _charge_into_a_crucible(client, received_sample_id)
         client.post(
             "/api/fire-assay-results",
             json={

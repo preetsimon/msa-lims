@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from msa_lims.db.models import AuditEvent, Client, Crucible, LabUser, Sample, Submission
 from msa_lims.domain.enums import CrucibleStatus, Role, SampleStatus, SampleType
-from msa_lims.domain.lifecycle import InsufficientRoleError
+from msa_lims.domain.lifecycle import InsufficientRoleError, TransitionNotAllowedError
 from msa_lims.fire_assay_results.service import (
     FireAssayResultInput,
     FireAssayResultService,
@@ -73,7 +73,10 @@ def a_sample(app_session: Session) -> Sample:
         sample_id="MSA-24-SO-00417",
         submission_id=submission.id,
         sample_type=SampleType.SOIL,
-        status=SampleStatus.RECEIVED,
+        # Entering a result now requires the real IN_ASSAY status (see
+        # fire_assay_results/service.py's module docstring) — set up
+        # directly since this fixture is testing result entry, not charging.
+        status=SampleStatus.IN_ASSAY,
     )
     app_session.add(sample)
     app_session.flush()
@@ -167,7 +170,22 @@ class TestEnteringAResult:
         app_session.flush()
 
         service = FireAssayResultService(app_session)
-        with pytest.raises(FireAssayResultValidationError, match="rejected"):
+        with pytest.raises(TransitionNotAllowedError):
+            service.create(
+                result_input(sample_id=a_sample.id), analyst=analyst, actor_role=Role.ANALYST
+            )
+
+    def test_a_sample_not_yet_in_assay_is_refused(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        """The real transition, not the old any-non-rejected-status bypass:
+        a sample still RECEIVED (never charged into a crucible) cannot have
+        a result entered against it."""
+        a_sample.status = SampleStatus.RECEIVED
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        with pytest.raises(TransitionNotAllowedError):
             service.create(
                 result_input(sample_id=a_sample.id), analyst=analyst, actor_role=Role.ANALYST
             )

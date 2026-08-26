@@ -1,9 +1,13 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 3 in progress — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY` (or skips straight there as a pulp), and charging a crucible finally calls the real `READY_FOR_ASSAY → IN_ASSAY` transition instead of the honest bypass Phases 1 and 2 each documented and deferred. Tightening `fire_assay_result` entry's own precondition the same way is the next slice
+**Updated:** 2026-08-25 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
-first — it explains the decisions this document only tracks.
+first — it explains the decisions this document only tracks. A full post-Phase-2
+audit — gaps, weaknesses, industry research, and a ranked breakthrough agenda
+(hash-chained audit anchoring, passkey-bound certificate signing, the furnace
+tray UI, QC dossiers, and more) — lives in
+[docs/AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md).
 
 ---
 
@@ -14,33 +18,37 @@ first — it explains the decisions this document only tracks.
 | 0 · Skeleton | wk 1 | **Done** — domain core, schema, grants, CI gate, UI shell |
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
-| 3 · Lifecycle & prep | wk 8–9 | **In progress** — the real prep walk and re-assay/rejection moves built and verified live; charging now requires genuine `READY_FOR_ASSAY`. Tightening `fire_assay_result` entry to require genuine `IN_ASSAY` is the next slice |
+| 3 · Lifecycle & prep | wk 8–9 | **Done** — the real prep walk, re-assay, and rejection moves; charging requires genuine `READY_FOR_ASSAY`; fire assay result entry requires genuine `IN_ASSAY`. Every sample-status move in the spine now goes through `check_transition` for real |
 | 4 · ICP & bulk import | wk 10–11 | Not started |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 490 tests passing · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (Phase 3 needed none — it is a service and
-route addition over the existing schema) · frontend builds and typechecks
-clean (TypeScript `strict` + `noUncheckedIndexedAccess`) · verified live
-through curl end to end, Phase 1 and 2's own chain plus: a soil sample
-refused the pulp shortcut by name (`"only a pulp may skip preparation, and
-this is soil"`, **409**), walked `received → in_prep → ready_for_assay`
-across two real `PATCH` calls; a pulp sample reaching `ready_for_assay` in
-one; a fresh `RECEIVED` sample refused a crucible charge with **409** naming
-the transition itself, then the same sample charged cleanly once genuinely
-`ready_for_assay`; a supervisor rejecting a sample with a reason (**200**)
-and the identical request with no reason refused (**422**); and `in_assay`
-named as a target refused at the schema layer before reaching the service
-(**422**, the literal values named in the error). A post-Phase-1 audit (see
-its own section below) found six defects, all fixed and tested; a five-item
+**Health:** 492 tests passing · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible (Phase 3 needed none — both slices are
+service and route changes over the existing schema) · frontend builds and
+typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
+verified live through curl end to end, Phase 1 and 2's own chain plus: a
+soil sample refused the pulp shortcut by name (`"only a pulp may skip
+preparation, and this is soil"`, **409**), walked `received → in_prep →
+ready_for_assay` across two real `PATCH` calls; a pulp sample reaching
+`ready_for_assay` in one; a fresh `RECEIVED` sample refused a crucible
+charge with **409** naming the transition itself, then the same sample
+charged cleanly once genuinely `ready_for_assay`; a supervisor rejecting a
+sample with a reason (**200**) and the identical request with no reason
+refused (**422**); `in_assay` named as a target refused at the schema layer
+before reaching the service (**422**); and, closing the loop, entering a
+fire assay result against that same still-`RECEIVED` sample refused with
+**409** (`"a sample cannot go from received to assayed"`) *before* charging,
+then succeeding (**201**, `5.000 g/t`) immediately after the identical
+sample was genuinely charged into a crucible. A post-Phase-1 audit (see its
+own section below) found six defects, all fixed and tested; a five-item
 hardening pass followed it.
 **Phase 1 — the thinnest complete thread the original roadmap called
-for — is done. Phase 2 is done: batching, result wiring,
-per-crucible weighing, and recorded-not-enforced QC insertion. Phase 3's
-first slice — the real prep walk, and charging closing the loop on
-`READY_FOR_ASSAY → IN_ASSAY` — is done; `fire_assay_result` entry's own
-precondition is next.**
+for — is done. Phase 2 is done: batching, result wiring, per-crucible
+weighing, and recorded-not-enforced QC insertion. Phase 3 is done: every
+sample-status move that used to be an honestly-documented bypass — prep,
+re-assay, rejection, charging into `IN_ASSAY`, and now entering a result
+into `ASSAYED` — genuinely calls `domain.lifecycle.check_transition`.**
 
 ---
 
@@ -674,14 +682,31 @@ existing suite (which was already green: the findings below are all things
   a more correct one: `_ERROR_STATUS`'s own comment already says a 409
   means "the sample moved under you," which is exactly what "not ready yet"
   means here.
-- **`fire_assay_results/service.py`'s own precondition is deliberately
-  *not* tightened in this pass.** It still accepts a result for any
-  non-`REJECTED` sample, the Phase 1 bypass, even though `IN_ASSAY` is now
-  genuinely reachable. Making it require the real transition too is real,
-  separately-scoped work — it ripples into every certificate and sample
-  test fixture that enters a result against a freshly-created sample, not
-  just the batching ones — and is named explicitly as the next slice rather
-  than folded in here to keep this one coherent.
+- **`fire_assay_results/service.py`'s own precondition now also calls the
+  real transition** — `IN_ASSAY → ASSAYED`, replacing the Phase 1
+  any-non-`REJECTED`-sample bypass. This closes the last honest
+  simplification the spine had left open. The check is skipped only when
+  the sample already has a current result to point at instead: "supersede
+  result #N" is a more useful refusal than "the sample is already assayed"
+  for the identical underlying fact, so `_check_supersession`'s existing
+  "already has a result" check runs first and the transition check only
+  fires when there genuinely is nothing to supersede. Applies identically
+  to direct entry and crucible-linked entry — a typed bead against a
+  `RECEIVED` sample is refused exactly like a crucible-linked one, because
+  the sample's own status is the precondition either way, not the presence
+  of a crucible.
+- **This is real, wide-reaching scope, done deliberately in its own
+  pass.** Requiring genuine `IN_ASSAY` meant every existing test fixture
+  that entered a result against a freshly-created sample — across
+  `test_fire_assay_results_service.py`, `test_fire_assay_results_api.py`,
+  `test_certificates_service.py`, `test_certificates_api.py`, and
+  `test_samples_api.py` — had to actually reach `IN_ASSAY` first: either a
+  direct ORM status set for service-level tests, or a real
+  prep-then-charge-into-a-crucible walk through HTTP for API-level ones.
+  Two new fixture helpers (`_charge_into_a_crucible` in the certificates and
+  samples API test files) do that walk once and are reused across every
+  test in their file that needs it, rather than duplicating the sequence
+  per test.
 
 ### Database — `src/msa_lims/db/`
 - 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
@@ -800,7 +825,7 @@ existing suite (which was already green: the findings below are all things
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
 
-### Tests — 490
+### Tests — 492
 - **Unit** (192): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -837,11 +862,14 @@ existing suite (which was already green: the findings below are all things
   skipped by the savepoint retry); client and
   project registration (21 tests); drill hole registration (16 tests,
   including the hole-canonicalisation-matches-a-drill-sample proof); fire
-  assay result entry (42 tests across the service and HTTP layers — the
-  computed grade, the ASSAYED transition, every supersession refusal including
-  anti-branching, `current_result` answering correctly over a three-link
-  supersession chain as an anti-join, and a direct proof that Postgres refuses
-  `UPDATE`/`DELETE` against `fire_assay_result`; plus, new this increment, the
+  assay result entry (44 tests across the service and HTTP layers — the
+  computed grade, the real `IN_ASSAY → ASSAYED` transition (a `RECEIVED` or
+  `REJECTED` sample refused with the domain error, not a collected
+  validation problem, both service-level and over HTTP as a real **409**),
+  every supersession refusal including anti-branching, `current_result`
+  answering correctly over a three-link supersession chain as an anti-join,
+  and a direct proof that Postgres refuses `UPDATE`/`DELETE` against
+  `fire_assay_result`; plus the
   crucible wiring — a named crucible deriving its recorded 45 g charge as the
   stored   portion, re-typing alongside a crucible refused, neither weight nor
   crucible refused, an unknown crucible refused as missing (404), a crucible
@@ -1128,6 +1156,16 @@ endpoint was refused at the schema layer (**422**, listing `in_prep`,
 exclusion is enforced before any request reaches the service. Demo data was
 truncated afterward.
 
+Result entry's own tightened precondition verified live over a fresh curl
+chain: a client and a pulp sample, still `RECEIVED`. Entering a fire assay
+result against it immediately was refused (**409**, `"a sample cannot go
+from received to assayed"`) — before any furnace work happened at all. The
+sample was then moved to `ready_for_assay` via the pulp shortcut, a flux
+recipe registered, a batch opened and charged with it — and the identical
+result request that had just been refused now succeeded (**201**, `au:
+{"value": "5.000", ...}`), with no change to the request itself, only to the
+sample's genuine status. Demo data was truncated afterward.
+
 ---
 
 ## Decision log
@@ -1199,6 +1237,8 @@ truncated afterward.
 | 2026-08-25 | `PATCH /api/samples/{id}/status` accepts a **`Literal` of three status names**, not the full `SampleStatus` enum | `in_assay`, `assayed`, and `reported` are each true only because of a record that produced them (a crucible, a bead weight, a signed PDF). A generic "set any status" endpoint would let one of those be claimed with nothing behind it — refusing the other three at the schema layer, before any request reaches the service, makes the exclusion self-documenting in the OpenAPI contract rather than a runtime special case. |
 | 2026-08-25 | Charging a crucible now **genuinely calls** `check_transition` for `READY_FOR_ASSAY → IN_ASSAY`, replacing the `_NOT_CHARGEABLE` bypass | The bypass was honestly documented as temporary since Phase 2: prep tracking didn't exist, so nothing could legitimately reach `READY_FOR_ASSAY`. It does now. A sample not yet ready is refused with the real `TransitionNotAllowedError` (**409**) instead of a collected validation problem (**422**) — a deliberate status-code change, and the more correct one per `_ERROR_STATUS`'s own comment ("409 means the sample moved under you"). |
 | 2026-08-25 | `fire_assay_results/service.py`'s own precondition (any non-`REJECTED` sample) is **left untightened** in this pass | Requiring the real `IN_ASSAY → ASSAYED` transition too would be correct, but it ripples into every certificate and sample test fixture that enters a result against a freshly-created sample — a separately-scoped decision, not squeezed into the phase's first slice to keep this one coherent and reviewable on its own. |
+| 2026-08-25 | `fire_assay_results/service.py`'s precondition **now also calls** the real `IN_ASSAY → ASSAYED` transition, closing the deferral above | The ripple this required — every fixture across five test files that entered a result against a freshly-created sample now walks it to `IN_ASSAY` first — was real, but doing it in a dedicated pass kept each change reviewable on its own rather than bundled into an already-large first slice. |
+| 2026-08-25 | The `IN_ASSAY → ASSAYED` check is **skipped when the sample already has a current result**, not run unconditionally | A second sample already carrying a result is always also not `IN_ASSAY` (it moved to `ASSAYED` when the first result landed), so the two checks would always both fire together for that case. "Supersede result #N" names the actual remedy; "the sample is already assayed" (`check_transition`'s generic message) does not — so the more specific, already-existing check runs first and the transition check only fires when there is genuinely nothing to point at instead. |
 
 ---
 
@@ -1310,15 +1350,22 @@ truncated afterward.
    `READY_FOR_ASSAY → IN_ASSAY` instead of the Phase 1/2 bypass, closing a
    gap named in both phases' own docstrings. 20 new tests; verified live end
    to end — see "Verified live."
-2. **Tighten `fire_assay_results/service.py`'s own precondition to require
-   the real `IN_ASSAY → ASSAYED` transition**, replacing its current
-   any-non-`REJECTED`-sample guard. Deliberately deferred from item 1 to keep
-   that slice coherent — see the decision log. Real scope: every existing
-   test fixture across `test_fire_assay_results_*`, `test_certificates_*`,
-   and `test_samples_api.py` that enters a result against a freshly-created
-   sample will need to charge it into a crucible (or otherwise reach
-   `IN_ASSAY`) first, not just the batching-focused fixtures this pass
-   already updated.
+2. ~~**Tighten `fire_assay_results/service.py`'s own precondition to require
+   the real `IN_ASSAY → ASSAYED` transition**~~, replacing its former
+   any-non-`REJECTED`-sample guard. **Done 2026-08-25** — a `RECEIVED`,
+   `IN_PREP`, `READY_FOR_ASSAY`, or `REJECTED` sample is now refused with a
+   real `TransitionNotAllowedError` (**409**), whether entered directly or
+   with a named crucible; the check is skipped when the sample already has a
+   current result, so "supersede result #N" still surfaces instead of the
+   generic "already assayed." Every fixture across
+   `test_fire_assay_results_service.py`, `test_fire_assay_results_api.py`,
+   `test_certificates_service.py`, `test_certificates_api.py`, and
+   `test_samples_api.py` that entered a result against a freshly-created
+   sample now walks it to `IN_ASSAY` first — a direct ORM status set for
+   service-level tests, a real prep-then-charge HTTP walk for API-level
+   ones. 2 new tests; verified live end to end — see "Verified live." **Every
+   sample-status move in the spine now goes through a real
+   `check_transition` call; Phase 3 is complete.**
 3. **A `PrepRecord` of what physically happened during prep** — crushing,
    splitting, pulverising, which instrument, the resulting pulp weight — is
    real remaining scope this pass deliberately did not build. Bare status
@@ -1431,10 +1478,11 @@ truncated afterward.
   **Resolved 2026-08-25** — a result may name its crucible, and when it does
   the stored portion *is* the recorded charge, not a re-typed number; see
   "Result↔crucible wiring" above and the decision log.
-- **`fire_assay_results/service.py` still accepts a result for any
-  non-`REJECTED` sample**, not only a genuinely `IN_ASSAY` one — see "Next
-  actions" above. Charging now requires the real transition; result entry
-  does not yet require its own.
+- ~~**`fire_assay_results/service.py` still accepts a result for any
+  non-`REJECTED` sample.**~~ **Resolved 2026-08-25** — it now requires the
+  real `IN_ASSAY → ASSAYED` transition, same as charging requires
+  `READY_FOR_ASSAY → IN_ASSAY`; see "Next actions" above and the decision
+  log.
 - **No `PrepRecord` of what physically happened during prep.** A bare status
   flip is the whole fact `sample_lifecycle/service.py` currently tracks — no
   instrument, no pulp weight, no operation type (crush/split/pulverise). See

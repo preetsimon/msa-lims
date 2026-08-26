@@ -53,6 +53,10 @@ PREP_TECH = {"X-Actor": "prep@lab", "X-Actor-Role": "prep_tech"}
 
 @pytest.fixture
 def sample_id(client: TestClient) -> int:
+    """A fresh, still-``RECEIVED`` sample. ``TestWiringAResultToItsCrucible``
+    charges this itself (to get a real ``crucible_id`` back); direct-entry
+    tests use the ``in_assay_sample_id`` fixture below instead, which charges
+    it into a crucible without needing the id."""
     client_id = client.post(
         "/api/clients", json={"code": "MSA", "name": "MSA Test Mining Co"}, headers=MANAGER
     ).json()["id"]
@@ -68,6 +72,18 @@ def sample_id(client: TestClient) -> int:
     return int(submission["samples"][0]["id"])
 
 
+@pytest.fixture
+def in_assay_sample_id(client: TestClient, sample_id: int) -> int:
+    """A sample genuinely ``IN_ASSAY`` — entering a result now requires it
+    (see ``fire_assay_results/service.py``'s module docstring), for direct
+    entry exactly as much as for a crucible-linked one. Charged into a real
+    crucible via ``charge_a_crucible`` (defined further down) rather than set
+    directly, so this fixture proves the same thing the live verification
+    does: a sample reaches ``IN_ASSAY`` only by actually being charged."""
+    charge_a_crucible(client, sample_id)
+    return sample_id
+
+
 def result_body(**overrides: object) -> dict[str, object]:
     defaults: dict[str, object] = {
         "gold_bead_mg": "0.150",
@@ -79,10 +95,10 @@ def result_body(**overrides: object) -> dict[str, object]:
 
 
 class TestEnteringAResult:
-    def test_an_analyst_enters_a_result(self, client: TestClient, sample_id: int) -> None:
+    def test_an_analyst_enters_a_result(self, client: TestClient, in_assay_sample_id: int) -> None:
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id),
+            json=result_body(sample_id=in_assay_sample_id),
             headers=ANALYST,
         )
         assert response.status_code == 201
@@ -99,10 +115,12 @@ class TestEnteringAResult:
         }
         assert body["method"] == "fire_assay_gravimetric"
 
-    def test_a_prep_tech_is_refused_with_403(self, client: TestClient, sample_id: int) -> None:
+    def test_a_prep_tech_is_refused_with_403(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id),
+            json=result_body(sample_id=in_assay_sample_id),
             headers=PREP_TECH,
         )
         assert response.status_code == 403
@@ -115,34 +133,49 @@ class TestEnteringAResult:
         )
         assert response.status_code == 404
 
+    def test_a_sample_not_yet_in_assay_is_409(self, client: TestClient, sample_id: int) -> None:
+        """The real transition, not the old any-non-rejected-status bypass:
+        a fresh RECEIVED sample -- never charged into a crucible -- cannot
+        have a result entered against it."""
+        response = client.post(
+            "/api/fire-assay-results",
+            json=result_body(sample_id=sample_id),
+            headers=ANALYST,
+        )
+        assert response.status_code == 409
+
     def test_a_zero_sample_weight_is_422_from_the_domain_calculation(
-        self, client: TestClient, sample_id: int
+        self, client: TestClient, in_assay_sample_id: int
     ) -> None:
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id, sample_weight_g="0"),
+            json=result_body(sample_id=in_assay_sample_id, sample_weight_g="0"),
             headers=ANALYST,
         )
         assert response.status_code == 422
 
     def test_a_second_result_against_the_same_sample_is_422(
-        self, client: TestClient, sample_id: int
+        self, client: TestClient, in_assay_sample_id: int
     ) -> None:
         client.post(
-            "/api/fire-assay-results", json=result_body(sample_id=sample_id), headers=ANALYST
+            "/api/fire-assay-results",
+            json=result_body(sample_id=in_assay_sample_id),
+            headers=ANALYST,
         )
         response = client.post(
-            "/api/fire-assay-results", json=result_body(sample_id=sample_id), headers=ANALYST
+            "/api/fire-assay-results",
+            json=result_body(sample_id=in_assay_sample_id),
+            headers=ANALYST,
         )
         assert response.status_code == 422
 
     def test_a_bead_below_sensitivity_renders_as_a_non_detect(
-        self, client: TestClient, sample_id: int
+        self, client: TestClient, in_assay_sample_id: int
     ) -> None:
         response = client.post(
             "/api/fire-assay-results",
             json=result_body(
-                sample_id=sample_id,
+                sample_id=in_assay_sample_id,
                 gold_bead_mg="0.0005",
                 balance_sensitivity_mg="0.001",
             ),
@@ -156,15 +189,19 @@ class TestEnteringAResult:
 
 
 class TestSupersedingThroughHttp:
-    def test_correcting_a_result_end_to_end(self, client: TestClient, sample_id: int) -> None:
+    def test_correcting_a_result_end_to_end(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
         first = client.post(
-            "/api/fire-assay-results", json=result_body(sample_id=sample_id), headers=ANALYST
+            "/api/fire-assay-results",
+            json=result_body(sample_id=in_assay_sample_id),
+            headers=ANALYST,
         ).json()
 
         response = client.post(
             "/api/fire-assay-results",
             json=result_body(
-                sample_id=sample_id,
+                sample_id=in_assay_sample_id,
                 gold_bead_mg="0.160",
                 supersedes_id=first["id"],
                 superseded_reason="transcription error at the balance",
@@ -176,14 +213,18 @@ class TestSupersedingThroughHttp:
         assert second["supersedes_id"] == first["id"]
         assert second["au"]["value"] != first["au"]["value"]
 
-    def test_superseding_without_a_reason_is_422(self, client: TestClient, sample_id: int) -> None:
+    def test_superseding_without_a_reason_is_422(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
         first = client.post(
-            "/api/fire-assay-results", json=result_body(sample_id=sample_id), headers=ANALYST
+            "/api/fire-assay-results",
+            json=result_body(sample_id=in_assay_sample_id),
+            headers=ANALYST,
         ).json()
 
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id, supersedes_id=first["id"]),
+            json=result_body(sample_id=in_assay_sample_id, supersedes_id=first["id"]),
             headers=ANALYST,
         )
         assert response.status_code == 422
@@ -191,7 +232,7 @@ class TestSupersedingThroughHttp:
 
 class TestTheSampleAdvancesThroughTheSpine:
     def test_the_sample_status_becomes_assayed(
-        self, client: TestClient, session: Session, sample_id: int
+        self, client: TestClient, session: Session, in_assay_sample_id: int
     ) -> None:
         """The last link in the spine: a submission's sample actually reaches
         ASSAYED once a real result lands, entirely through HTTP -- client,
@@ -200,11 +241,13 @@ class TestTheSampleAdvancesThroughTheSpine:
         from msa_lims.domain.enums import SampleStatus
 
         response = client.post(
-            "/api/fire-assay-results", json=result_body(sample_id=sample_id), headers=ANALYST
+            "/api/fire-assay-results",
+            json=result_body(sample_id=in_assay_sample_id),
+            headers=ANALYST,
         )
         assert response.status_code == 201
 
-        sample = session.get(Sample, sample_id)
+        sample = session.get(Sample, in_assay_sample_id)
         assert sample is not None
         assert sample.status is SampleStatus.ASSAYED
 
@@ -312,19 +355,23 @@ class TestWiringAResultToItsCrucible:
         assert response.status_code == 422
         assert "not both" in response.json()["detail"]
 
-    def test_no_weight_and_no_crucible_is_422(self, client: TestClient, sample_id: int) -> None:
+    def test_no_weight_and_no_crucible_is_422(
+        self, client: TestClient, in_assay_sample_id: int
+    ) -> None:
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id, sample_weight_g=None),
+            json=result_body(sample_id=in_assay_sample_id, sample_weight_g=None),
             headers=ANALYST,
         )
         assert response.status_code == 422
         assert "required unless" in response.json()["detail"]
 
-    def test_an_unknown_crucible_is_404(self, client: TestClient, sample_id: int) -> None:
+    def test_an_unknown_crucible_is_404(self, client: TestClient, in_assay_sample_id: int) -> None:
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id, sample_weight_g=None, crucible_id=999_999),
+            json=result_body(
+                sample_id=in_assay_sample_id, sample_weight_g=None, crucible_id=999_999
+            ),
             headers=ANALYST,
         )
         assert response.status_code == 404
@@ -371,11 +418,11 @@ class TestWiringAResultToItsCrucible:
         assert "already been weighed" in response.json()["detail"]
 
     def test_direct_entry_with_neither_number_is_422_naming_both_gaps(
-        self, client: TestClient, sample_id: int
+        self, client: TestClient, in_assay_sample_id: int
     ) -> None:
         response = client.post(
             "/api/fire-assay-results",
-            json=result_body(sample_id=sample_id, gold_bead_mg=None, sample_weight_g=None),
+            json=result_body(sample_id=in_assay_sample_id, gold_bead_mg=None, sample_weight_g=None),
             headers=ANALYST,
         )
         assert response.status_code == 422

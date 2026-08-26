@@ -51,6 +51,49 @@ ANALYST = {"X-Actor": "analyst@lab", "X-Actor-Role": "analyst"}
 CLIENT = {"X-Actor": "client@example.com", "X-Actor-Role": "client"}
 
 
+def _charge_into_a_crucible(client: TestClient, sample_id: int) -> None:
+    """Walks a fresh ``RECEIVED`` sample through prep and charges it into a
+    crucible, entirely through the real endpoints — entering a result now
+    requires the sample to genuinely be ``IN_ASSAY`` (see
+    ``fire_assay_results/service.py``'s module docstring), which only
+    charging produces."""
+    client.patch(f"/api/samples/{sample_id}/status", json={"target": "in_prep"}, headers=ANALYST)
+    client.patch(
+        f"/api/samples/{sample_id}/status", json={"target": "ready_for_assay"}, headers=ANALYST
+    )
+    recipe = client.post(
+        "/api/flux-recipes",
+        json={
+            "name": f"COA Test Recipe {sample_id}",
+            "matrix_type": "silicate",
+            "nominal_portion_g": "30",
+            "litharge_g": "60",
+            "soda_ash_g": "90",
+            "borax_g": "30",
+            "silica_g": "15",
+            "flour_g": "3",
+            "nitre_g": "0",
+        },
+        headers=MANAGER,
+    ).json()
+    batch = client.post(
+        "/api/batches", json={"opened_at": "2026-08-25T08:00:00Z"}, headers=ANALYST
+    ).json()
+    client.patch(f"/api/batches/{batch['id']}/status", json={"status": "charging"}, headers=ANALYST)
+    client.post(
+        f"/api/batches/{batch['id']}/crucibles",
+        json={
+            "sample_id": sample_id,
+            "flux_recipe_id": recipe["id"],
+            "position_row": 1,
+            "position_col": 1,
+            "sample_weight_g": "30",
+            "charged_at": "2026-08-25T09:00:00Z",
+        },
+        headers=ANALYST,
+    )
+
+
 @pytest.fixture
 def assayed_sample_and_client(client: TestClient) -> tuple[int, int]:
     """Returns (client_id, sample_id) for a sample with a current result."""
@@ -67,6 +110,7 @@ def assayed_sample_and_client(client: TestClient) -> tuple[int, int]:
         headers=ANALYST,
     ).json()
     sample_id = submission["samples"][0]["id"]
+    _charge_into_a_crucible(client, sample_id)
     client.post(
         "/api/fire-assay-results",
         json={

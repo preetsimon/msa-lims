@@ -19,14 +19,23 @@ sample:
   Only the current result can be corrected; correcting a correction means
   superseding *that* row, not the one it replaced.
 
-**Entering a sample's first result also moves it to ``ASSAYED``.** Later
-phases will insert prep and furnace-batch stages between ``RECEIVED`` and this
-point (see PROGRESS.md); until they exist, moving straight from whatever
-status the sample is in is the honest reflection of what this system currently
-tracks, not a shortcut hidden behind the full lifecycle machinery in
-``domain/lifecycle.py``. A superseding result does not touch sample status —
-the sample was already ``ASSAYED``, and correcting a number is a different act
-from re-running the sample through the furnace (see
+**Entering a sample's first result genuinely calls
+``domain.lifecycle.check_transition`` for ``IN_ASSAY -> ASSAYED`` — not a
+bypass.** Earlier phases could not do this honestly: nothing existed yet to
+move a sample to ``IN_ASSAY``, so any non-``REJECTED`` sample was accepted
+with a hand-rolled guard and this docstring said so. As of
+``sample_lifecycle/service.py`` and ``batches/service.py``'s furnace-charging
+rewiring, a sample reaches ``IN_ASSAY`` for real, and entering a result now
+requires it — the same way charging a crucible requires the real
+``READY_FOR_ASSAY``. A sample still ``RECEIVED``, ``IN_PREP``,
+``READY_FOR_ASSAY``, or ``REJECTED`` is refused with the real
+``TransitionNotAllowedError`` (**409**), naming what it needs to reach
+first, rather than the old generic **422**. The check is skipped only when
+the sample already has a current result to point at instead — "supersede
+result #N" is a more useful refusal than "the sample is already assayed" for
+the identical underlying fact. A superseding result does not touch sample
+status at all — the sample was already ``ASSAYED``, and correcting a number
+is a different act from re-running the sample through the furnace (see
 ``domain.lifecycle``'s ``ASSAYED -> READY_FOR_ASSAY`` re-assay transition).
 
 **A result may name the crucible it came from; when it does, its numbers are
@@ -66,7 +75,7 @@ from msa_lims.domain.enums import (
     Role,
     SampleStatus,
 )
-from msa_lims.domain.lifecycle import InsufficientRoleError
+from msa_lims.domain.lifecycle import InsufficientRoleError, check_transition
 from msa_lims.domain.units import Unit
 from msa_lims.domain.values import MeasuredValue
 
@@ -184,6 +193,21 @@ class FireAssayResultService:
 
         current = current_result(self._session, sample.id)
 
+        if data.supersedes_id is None and current is None:
+            # The real transition, not a bypass — see the module docstring.
+            # Raises TransitionNotAllowedError (409) for a sample not yet
+            # IN_ASSAY; InsufficientRoleError cannot actually trigger here
+            # since this transition's allowed_roles (BENCH_ROLES) is a
+            # superset of MAY_ENTER_RESULTS, already checked above, but is
+            # not caught so a future change to either role set fails loudly
+            # instead of silently.
+            check_transition(
+                source=sample.status,
+                target=SampleStatus.ASSAYED,
+                sample_type=sample.sample_type,
+                role=actor_role,
+            )
+
         crucible, portion_weight, bead_weight, wiring_problems = self._resolve_weighing(
             data, sample
         )
@@ -257,8 +281,6 @@ class FireAssayResultService:
                     f"sample {sample.sample_id!r} already has a result (#{current.id}); "
                     "supersede it explicitly to correct it rather than entering a new one"
                 )
-            if sample.status is SampleStatus.REJECTED:
-                problems.append(f"sample {sample.sample_id!r} was rejected and cannot be assayed")
             return problems
 
         if current is None or current.id != data.supersedes_id:

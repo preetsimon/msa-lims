@@ -33,8 +33,8 @@ from sqlalchemy.orm import Session
 
 from msa_lims.certificates.pdf import CertificateContent, CertifiedSample, render_pdf
 from msa_lims.clients.service import ClientNotFoundError
+from msa_lims.db.audit import record_audit_event
 from msa_lims.db.models import (
-    AuditEvent,
     Certificate,
     CertificateResult,
     Client,
@@ -265,18 +265,17 @@ class CertificateService:
                 )
             )
 
-        self._session.add(
-            AuditEvent(
-                table_name="certificate",
-                record_id=certificate.id,
-                action="amend" if data.supersedes_id is not None else "create",
-                after={
-                    "certificate_number": certificate.certificate_number,
-                    "sample_count": len(samples),
-                },
-                reason=data.superseded_reason,
-                actor_id=issued_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="certificate",
+            record_id=certificate.id,
+            action="amend" if data.supersedes_id is not None else "create",
+            actor_id=issued_by.id,
+            after={
+                "certificate_number": certificate.certificate_number,
+                "sample_count": len(samples),
+            },
+            reason=data.superseded_reason,
         )
 
         return certificate

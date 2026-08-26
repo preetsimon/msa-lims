@@ -23,7 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from msa_lims.clients.service import ClientNotFoundError
-from msa_lims.db.models import AuditEvent, Client, DrillHole, LabUser, Project, Sample, Submission
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import Client, DrillHole, LabUser, Project, Sample, Submission
 from msa_lims.db.numbering import count_with_prefix, insert_with_unique_number
 from msa_lims.domain.enums import Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
@@ -158,10 +159,12 @@ class SubmissionService:
             lambda attempt: self._allocate_number(data.received_at, attempt),
         )
 
-        self._audit(
-            "submission",
-            submission.id,
-            received_by,
+        record_audit_event(
+            self._session,
+            table_name="submission",
+            record_id=submission.id,
+            action="create",
+            actor_id=received_by.id,
             after={
                 "submission_number": submission.submission_number,
                 "client_id": client.id,
@@ -190,10 +193,12 @@ class SubmissionService:
             )
             self._session.add(sample)
             self._session.flush()
-            self._audit(
-                "sample",
-                sample.id,
-                received_by,
+            record_audit_event(
+                self._session,
+                table_name="sample",
+                record_id=sample.id,
+                action="create",
+                actor_id=received_by.id,
                 after={"sample_id": sample.sample_id, "submission_id": submission.id},
             )
             samples.append(sample)
@@ -338,21 +343,3 @@ class SubmissionService:
         prefix = f"SUB-{received_at.year}-"
         count = count_with_prefix(self._session, Submission, "submission_number", prefix)
         return f"{prefix}{count + 1 + attempt:04d}"
-
-    def _audit(
-        self,
-        table_name: str,
-        record_id: int,
-        actor: LabUser,
-        *,
-        after: dict[str, object] | None = None,
-    ) -> None:
-        self._session.add(
-            AuditEvent(
-                table_name=table_name,
-                record_id=record_id,
-                action="create",
-                after=after,
-                actor_id=actor.id,
-            )
-        )

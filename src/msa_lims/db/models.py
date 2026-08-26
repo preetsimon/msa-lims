@@ -327,6 +327,16 @@ class AuditEvent(Base, TimestampMixin):
     reason is the single most common finding in a laboratory audit, so the
     column is NOT NULL for the actions where it applies rather than a hopeful
     convention in the service layer.
+
+    ``prev_entry_hash``/``entry_hash`` chain every row to the one before it
+    (audit idea #1, "The Ledger That Signs Itself") — see
+    :mod:`msa_lims.domain.audit_chain`. Append-only-by-grant stops this
+    application from editing history; the chain makes an edit from *outside*
+    the application (a direct `UPDATE` as a more privileged role, a restored
+    backup with one row altered) detectable by recomputing hashes, not just
+    forbidden. Written only through :func:`msa_lims.db.audit.record_audit_event`
+    — never construct this class directly outside that function, or the row
+    will carry no hash and silently break the chain for everything after it.
     """
 
     __tablename__ = "audit_event"
@@ -357,6 +367,18 @@ class AuditEvent(Base, TimestampMixin):
     happened to trigger it."""
     actor_ip: Mapped[str | None] = mapped_column(String(45))
     """45 characters holds an IPv6 address with an IPv4 tail."""
+
+    prev_entry_hash: Mapped[Sha256 | None]
+    """`NULL` for exactly one row: the genesis entry, the first one this
+    table ever held. Every other row's value is the `entry_hash` of the row
+    immediately before it by `id`."""
+    entry_hash: Mapped[Sha256]
+    """`sha256(prev_entry_hash ∥ canonical(this entry))`, hex-encoded — see
+    `domain/audit_chain.py`. Unique by construction (it commits to `id`'s own
+    predecessor chain, which is itself unique), but not declared `UNIQUE`:
+    that would let a stranger check "does this hash exist" without a
+    predecessor to compare against, which is a smaller claim than the real
+    one — that recomputing the *whole* chain reproduces this exact value."""
 
 
 class FireAssayResult(Base, TimestampMixin):

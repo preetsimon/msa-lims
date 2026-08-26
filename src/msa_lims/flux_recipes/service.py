@@ -15,7 +15,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, FluxRecipe, LabUser
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import FluxRecipe, LabUser
 from msa_lims.domain.enums import MAY_CONFIGURE_LAB, MatrixType, Role
 from msa_lims.domain.lifecycle import InsufficientRoleError
 
@@ -87,14 +88,13 @@ class FluxRecipeService:
         self._session.add(recipe)
         self._session.flush()
 
-        self._session.add(
-            AuditEvent(
-                table_name="flux_recipe",
-                record_id=recipe.id,
-                action="create",
-                after={"name": recipe.name, "matrix_type": recipe.matrix_type.value},
-                actor_id=registered_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="flux_recipe",
+            record_id=recipe.id,
+            action="create",
+            actor_id=registered_by.id,
+            after={"name": recipe.name, "matrix_type": recipe.matrix_type.value},
         )
         return recipe
 

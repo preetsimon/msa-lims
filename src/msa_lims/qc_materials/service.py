@@ -20,7 +20,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, LabUser, QcMaterial
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import LabUser, QcMaterial
 from msa_lims.domain.enums import MAY_CONFIGURE_LAB, QcMaterialType, Role
 from msa_lims.domain.lifecycle import InsufficientRoleError
 
@@ -117,22 +118,21 @@ class QcMaterialService:
         self._session.add(material)
         self._session.flush()
 
-        self._session.add(
-            AuditEvent(
-                table_name="qc_material",
-                record_id=material.id,
-                action="create",
-                after={
-                    "name": material.name,
-                    "qc_type": material.qc_type.value,
-                    "certified_au_value_g_t": (
-                        None
-                        if material.certified_au_value_g_t is None
-                        else str(material.certified_au_value_g_t)
-                    ),
-                },
-                actor_id=registered_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="qc_material",
+            record_id=material.id,
+            action="create",
+            actor_id=registered_by.id,
+            after={
+                "name": material.name,
+                "qc_type": material.qc_type.value,
+                "certified_au_value_g_t": (
+                    None
+                    if material.certified_au_value_g_t is None
+                    else str(material.certified_au_value_g_t)
+                ),
+            },
         )
         return material
 

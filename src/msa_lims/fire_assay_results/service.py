@@ -66,7 +66,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
-from msa_lims.db.models import AuditEvent, Crucible, FireAssayResult, LabUser, Sample
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import Crucible, FireAssayResult, LabUser, Sample
 from msa_lims.domain.assay import gravimetric_grade
 from msa_lims.domain.enums import (
     MAY_ENTER_RESULTS,
@@ -251,15 +252,14 @@ class FireAssayResultService:
         after: dict[str, object] = {"sample_id": sample.id, "au": str(grade)}
         if crucible is not None:
             after["crucible_id"] = crucible.id
-        self._session.add(
-            AuditEvent(
-                table_name="fire_assay_result",
-                record_id=result.id,
-                action="amend" if data.supersedes_id is not None else "create",
-                after=after,
-                reason=data.superseded_reason,
-                actor_id=analyst.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="fire_assay_result",
+            record_id=result.id,
+            action="amend" if data.supersedes_id is not None else "create",
+            actor_id=analyst.id,
+            after=after,
+            reason=data.superseded_reason,
         )
 
         if data.supersedes_id is None:

@@ -1,7 +1,7 @@
 PY := .venv/bin/python
 PIP := .venv/bin/pip
 
-.PHONY: install services test test-unit fuzz cov lint fmt typecheck check migrate seed revision run ui generate-types clean
+.PHONY: install services test test-unit fuzz cov lint fmt typecheck check migrate seed verify-chain revision run ui generate-types clean
 
 install:
 	$(PIP) install -q -e ".[dev,pdf,oidc]"
@@ -44,6 +44,12 @@ migrate:
 # Reference data the lab cannot operate without; safe to re-run.
 seed:
 	$(PY) -m msa_lims.db.seed
+
+# Recompute every audit_event hash independently and compare against what's
+# stored (audit idea #1, AUDIT_AND_BREAKTHROUGHS.md). Exits non-zero on a
+# broken chain.
+verify-chain:
+	$(PY) -m msa_lims.db.verify_chain
 
 revision:
 	.venv/bin/alembic revision --autogenerate -m "$(m)"

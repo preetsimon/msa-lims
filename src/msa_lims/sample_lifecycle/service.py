@@ -26,7 +26,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, LabUser, Sample
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import LabUser, Sample
 from msa_lims.domain.enums import Role, SampleStatus
 from msa_lims.domain.lifecycle import check_transition
 from msa_lims.fire_assay_results.service import SampleNotFoundError
@@ -62,15 +63,14 @@ class SampleLifecycleService:
         )
 
         sample.status = target
-        self._session.add(
-            AuditEvent(
-                table_name="sample",
-                record_id=sample.id,
-                action="transition",
-                before={"status": before.value},
-                after={"status": target.value},
-                reason=reason,
-                actor_id=actor.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="sample",
+            record_id=sample.id,
+            action="transition",
+            actor_id=actor.id,
+            before={"status": before.value},
+            after={"status": target.value},
+            reason=reason,
         )
         return sample

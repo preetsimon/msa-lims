@@ -44,6 +44,7 @@ from msa_lims.flux_recipes.service import FluxRecipeNotFoundError, FluxRecipeVal
 from msa_lims.qc_materials.service import QcMaterialNotFoundError, QcMaterialValidationError
 from msa_lims.submissions.service import SubmissionValidationError
 from msa_lims.web.routes import (
+    audit,
     batches,
     certificates,
     clients,
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(flux_recipes.router)
     app.include_router(batches.router)
     app.include_router(qc_materials.router)
+    app.include_router(audit.router)
     _register_error_handlers(app)
     return app
 

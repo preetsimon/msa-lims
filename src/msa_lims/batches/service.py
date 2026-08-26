@@ -61,7 +61,8 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, Batch, Crucible, FluxRecipe, LabUser, QcMaterial, Sample
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import Batch, Crucible, FluxRecipe, LabUser, QcMaterial, Sample
 from msa_lims.domain.batch_lifecycle import (
     bulk_crucible_status,
     check_batch_transition,
@@ -178,14 +179,13 @@ class BatchService:
         self._session.add(batch)
         self._session.flush()
 
-        self._session.add(
-            AuditEvent(
-                table_name="batch",
-                record_id=batch.id,
-                action="create",
-                after={"batch_number": batch.batch_number, "status": batch.status.value},
-                actor_id=opened_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="batch",
+            record_id=batch.id,
+            action="create",
+            actor_id=opened_by.id,
+            after={"batch_number": batch.batch_number, "status": batch.status.value},
         )
         return batch
 
@@ -303,14 +303,13 @@ class BatchService:
         else:
             assert material is not None
             after["qc_material_id"] = material.id
-        self._session.add(
-            AuditEvent(
-                table_name="crucible",
-                record_id=crucible.id,
-                action="create",
-                after=after,
-                actor_id=charged_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="crucible",
+            record_id=crucible.id,
+            action="create",
+            actor_id=charged_by.id,
+            after=after,
         )
         if sample is not None:
             sample.status = SampleStatus.IN_ASSAY
@@ -373,20 +372,19 @@ class BatchService:
         crucible.parting_acid_volume_ml = data.parting_acid_volume_ml
         crucible.parted_at = data.parted_at
 
-        self._session.add(
-            AuditEvent(
-                table_name="crucible",
-                record_id=crucible.id,
-                action="transition",
-                before={"status": before_status.value},
-                after={
-                    "status": CrucibleStatus.PARTED.value,
-                    "lead_button_weight_mg": str(data.lead_button_weight_mg),
-                    "prill_weight_mg": str(data.prill_weight_mg),
-                    "parting_acid_volume_ml": str(data.parting_acid_volume_ml),
-                },
-                actor_id=parted_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="crucible",
+            record_id=crucible.id,
+            action="transition",
+            actor_id=parted_by.id,
+            before={"status": before_status.value},
+            after={
+                "status": CrucibleStatus.PARTED.value,
+                "lead_button_weight_mg": str(data.lead_button_weight_mg),
+                "prill_weight_mg": str(data.prill_weight_mg),
+                "parting_acid_volume_ml": str(data.parting_acid_volume_ml),
+            },
         )
         return crucible
 
@@ -420,18 +418,17 @@ class BatchService:
         crucible.gold_bead_mg = data.gold_bead_mg
         crucible.weighed_at = data.weighed_at
 
-        self._session.add(
-            AuditEvent(
-                table_name="crucible",
-                record_id=crucible.id,
-                action="transition",
-                before={"status": before_status.value},
-                after={
-                    "status": CrucibleStatus.WEIGHED.value,
-                    "gold_bead_mg": str(data.gold_bead_mg),
-                },
-                actor_id=weighed_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="crucible",
+            record_id=crucible.id,
+            action="transition",
+            actor_id=weighed_by.id,
+            before={"status": before_status.value},
+            after={
+                "status": CrucibleStatus.WEIGHED.value,
+                "gold_bead_mg": str(data.gold_bead_mg),
+            },
         )
         return crucible
 
@@ -478,15 +475,14 @@ class BatchService:
             for crucible in batch.crucibles:
                 crucible.status = new_crucible_status
 
-        self._session.add(
-            AuditEvent(
-                table_name="batch",
-                record_id=batch.id,
-                action="transition",
-                before={"status": before_status.value},
-                after={"status": target.value},
-                actor_id=advanced_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="batch",
+            record_id=batch.id,
+            action="transition",
+            actor_id=advanced_by.id,
+            before={"status": before_status.value},
+            after={"status": target.value},
         )
         return batch
 

@@ -26,7 +26,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from msa_lims.clients.service import ProjectNotFoundError
-from msa_lims.db.models import AuditEvent, DrillHole, LabUser, Project
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import DrillHole, LabUser, Project
 from msa_lims.domain.enums import Role
 from msa_lims.domain.lifecycle import BENCH_ROLES, InsufficientRoleError
 from msa_lims.domain.sample_id import SampleIdError, canonical_hole_id
@@ -108,13 +109,12 @@ class DrillHoleService:
         self._session.add(hole)
         self._session.flush()
 
-        self._session.add(
-            AuditEvent(
-                table_name="drill_hole",
-                record_id=hole.id,
-                action="create",
-                after={"project_id": project.id, "hole_id": hole.hole_id},
-                actor_id=registered_by.id,
-            )
+        record_audit_event(
+            self._session,
+            table_name="drill_hole",
+            record_id=hole.id,
+            action="create",
+            actor_id=registered_by.id,
+            after={"project_id": project.id, "hole_id": hole.hole_id},
         )
         return hole

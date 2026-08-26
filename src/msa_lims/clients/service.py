@@ -24,7 +24,8 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, Client, LabUser, Project
+from msa_lims.db.audit import record_audit_event
+from msa_lims.db.models import Client, LabUser, Project
 from msa_lims.domain.enums import MAY_MANAGE_ACCOUNTS, Role
 from msa_lims.domain.lifecycle import InsufficientRoleError
 
@@ -80,20 +81,6 @@ class ProjectInput:
     end_date: date | None = None
 
 
-def _audit(
-    session: Session, table_name: str, record_id: int, actor: LabUser, after: dict[str, object]
-) -> None:
-    session.add(
-        AuditEvent(
-            table_name=table_name,
-            record_id=record_id,
-            action="create",
-            after=after,
-            actor_id=actor.id,
-        )
-    )
-
-
 class ClientService:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -133,11 +120,12 @@ class ClientService:
         self._session.add(client)
         self._session.flush()
 
-        _audit(
+        record_audit_event(
             self._session,
-            "client",
-            client.id,
-            registered_by,
+            table_name="client",
+            record_id=client.id,
+            action="create",
+            actor_id=registered_by.id,
             after={"code": client.code, "name": client.name},
         )
         return client
@@ -192,11 +180,12 @@ class ProjectService:
         self._session.add(project)
         self._session.flush()
 
-        _audit(
+        record_audit_event(
             self._session,
-            "project",
-            project.id,
-            registered_by,
+            table_name="project",
+            record_id=project.id,
+            action="create",
+            actor_id=registered_by.id,
             after={"client_id": client.id, "name": project.name},
         )
         return project

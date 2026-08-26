@@ -1,6 +1,6 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done, across audit follow-up passes: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API, which found and fixed two real crashes on its first run — plus a later, more serious fix to the fuzz fixture's own test-isolation, which had been silently leaking data into the test database); idea #4 (the furnace tray) in full — batch listing, an enriched detail response, two React screens drawing the tray as a grid, and charging/parting/weighing as modal forms directly against it; and idea #18 (generated TypeScript types) — `types.ts` is now a thin alias layer over a schema `openapi-typescript` derives from the live app, with a CI step that fails the build if they ever drift
+**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done, across audit follow-up passes: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API, which found and fixed two real crashes on its first run — plus a later, more serious fix to the fuzz fixture's own test-isolation, which had been silently leaking data into the test database); idea #4 (the furnace tray) in full — batch listing, an enriched detail response, two React screens drawing the tray as a grid, and charging/parting/weighing as modal forms directly against it; idea #18 (generated TypeScript types) — `types.ts` is now a thin alias layer over a schema `openapi-typescript` derives from the live app, with a CI step that fails the build if they ever drift; and idea #1's core (hash-chained audit trail) — every `audit_event` row now commits to the one before it, verifiable by anyone who can recompute a sha256, proven live by directly UPDATE-ing a row as the schema owner (bypassing the application's own append-only grant entirely) and watching both `GET /api/audit/verify` and `make verify-chain` catch it
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -26,7 +26,7 @@ numbers cheat sheet — lives in
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 513 tests passing (plus a Schemathesis contract-fuzz run kept
+**Health:** 534 tests passing (plus a Schemathesis contract-fuzz run kept
 separate, see below) · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible (Phase 3 needed none — both slices are
 service and route changes over the existing schema) · frontend builds and
@@ -965,6 +965,16 @@ existing suite (which was already green: the findings below are all things
   removing a vocabulary value is not a table rewrite.
 - `submission.declared_sample_count` records what the client's paperwork claimed
   separately from what arrived. A discrepancy is a conversation, not a fix.
+- `9e1d03d83772` — `audit_event.prev_entry_hash`/`entry_hash` (audit idea
+  #1). Schema-only in the grants sense — `msa_app`'s existing append-only
+  grant on `audit_event` already covers the new columns — but not
+  schema-only in effect: the migration also **backfills** any pre-existing
+  rows with their real hashes, walked in `id` order, using a frozen inline
+  copy of `domain/audit_chain.py`'s own logic rather than an import of it
+  (see "The audit trail's hash chain" above and the decision log for why).
+  `entry_hash` lands nullable, gets backfilled, then is altered to `NOT
+  NULL` in the same migration — the sequencing a genuinely reversible,
+  populated-table migration needs.
 
 ### HTTP API — `src/msa_lims/web/`
 - `GET /health` — reports database and QC Sentinel **separately**. Sentinel
@@ -978,16 +988,19 @@ existing suite (which was already green: the findings below are all things
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Fourteen write endpoints, and eight read endpoints:
+- Fourteen write endpoints, and nine read endpoints:
   `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
   result and every certificate that names it), `GET /api/certificates/{id}`
   (metadata, sharing the exact certified-samples query the issuance response
   uses), `GET /api/certificates/{id}/pdf` (the raw document),
   `GET /api/batches` (the list) and `GET /api/batches/{id}` (a batch and its
-  crucibles, ordered the way a technician reads a tray), and, new this pass,
+  crucibles, ordered the way a technician reads a tray),
   `GET /api/flux-recipes` and `GET /api/qc-materials` — the picker data a
   charge form needs, both `active_only=True` by default since a retired row
-  is refused at charge time regardless. `POST /api/fire-assay-results` was
+  is refused at charge time regardless — and, new this pass,
+  `GET /api/audit/verify`, the only read endpoint that answers a question
+  about the database's own integrity rather than about lab work.
+  `POST /api/fire-assay-results` was
   the first
   write to compute a response rather than only echo what it stored;
   `POST /api/batches/{id}/crucibles` is the second, computing scaled reagent
@@ -1106,8 +1119,86 @@ existing suite (which was already green: the findings below are all things
   app actually produced) rather than trusting a stale copy nobody
   re-exported. The cost is added CI wall-clock time; see the decision log.
 
-### Tests — 513
-- **Unit** (192): units and dimensions, censored values (including the audit's
+### The audit trail's hash chain — `domain/audit_chain.py`, `db/audit.py`, `db/verify_chain.py`, `web/routes/audit.py`
+- **[AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea
+  #1, "The Ledger That Signs Itself," core half.** Append-only-by-grant
+  (Phase 0) stops this application from rewriting `audit_event` — but says
+  nothing about a more privileged role doing it directly: a DBA, a support
+  engineer with a one-off `UPDATE`, a restored backup with one row quietly
+  altered. Hash-chaining makes that *detectable* rather than merely
+  unauthorized: every row's `entry_hash = sha256(prev_entry_hash ∥
+  canonical(entry))`, so flipping one bit anywhere in the history changes
+  every hash after it. External anchoring (OpenTimestamps — proving the
+  chain's head existed by a given point in time, to a party that trusts
+  nothing about this server) is the sketch's other half, deliberately not
+  built this pass; see next actions.
+- **`domain/audit_chain.py` is pure** — no session, no clock — matching
+  every other `domain/` module. `canonical_entry` (sorted keys, fixed
+  separators, JCS-style) is exported on its own, not folded into the hash
+  function, so an independent verifier can reconstruct the exact bytes a
+  hash commits to without trusting this module's own arithmetic — the same
+  "recompute, don't trust" posture `certificates/service.py`'s own PDF hash
+  check already takes, applied here to the whole audit history instead of
+  one document.
+- **`db/audit.py`'s `record_audit_event` is now the *only* place any
+  `AuditEvent` row gets constructed** — replacing thirteen separate call
+  sites across nine service modules (several with their own small
+  hand-rolled `_audit` helper, now deleted). This is not tidiness: a hash
+  chain with even one call site that forgot to link into it is not a
+  chain, it is a chain with an undetectable gap, and centralising the
+  write is what makes that structurally impossible for a call site written
+  tomorrow, not just the thirteen written today.
+- **The chain's ordering is single-writer-assumption, stated plainly, not
+  solved.** `record_audit_event` reads the current tip and links the next
+  row within the caller's own transaction — correct under one writer or
+  requests already serialized some other way, not defended against two
+  genuinely concurrent writers racing for the same tip the way
+  `db/numbering.py`'s own `insert_with_unique_number` defends sequential
+  document numbers. Matches the audit sketch's own scoping ("one writer,
+  one session, already serialized per request"); real remaining scope if
+  concurrent writers ever matter in production.
+- **The migration backfills existing rows**, not just adds nullable
+  columns. A schema-owner-run data migration walks any pre-existing
+  `audit_event` rows in `id` order and computes their hashes too, using a
+  **frozen copy** of the hashing logic — not an import of
+  `domain/audit_chain.py` — because a migration must reproduce the
+  identical result forever, even after that module's own logic changes for
+  a future need; this is the standard reason Alembic migrations never
+  depend on application code, followed here for the first time in this
+  repo (no earlier migration had needed to import a service or a domain
+  function). Verified directly: hand-inserted rows, migrated, byte-for-byte
+  matched against `domain/audit_chain.py`'s own live output for the
+  identical input.
+- **A real bug caught by writing the tamper-detection test, not left for
+  later:** `verify_chain`'s first draft queried `AuditEvent` rows straight
+  off `select(...)` with no `populate_existing`. A row already in the
+  calling session's identity map — true of every row *that same session*
+  had just written — came back from the query untouched from memory,
+  silently ignoring a change made through a completely different
+  connection. Exactly the scenario the whole feature exists to catch: a
+  verifier that trusts its own cache over the database would report
+  "valid" over data someone tampered with. Fixed with
+  `execution_options(populate_existing=True)`.
+- **Two ways to run the identical check**: `GET /api/audit/verify`
+  (`InternalActorDep`-gated, matching every other read endpoint's current
+  posture — a genuinely public, no-account-needed verifier is audit idea
+  #8's separate scope) and `python -m msa_lims.db.verify_chain` /
+  `make verify-chain` (mirrors `db/seed.py`'s own script/library split),
+  both calling the same `db/audit.py` function so the two can never
+  disagree about what "valid" means. The CLI exits non-zero on a broken
+  chain, safe to wire into a scheduled job.
+- 21 new tests (8 pure unit tests on the hashing itself — determinism,
+  every field participating, dict-key-order independence, the genesis
+  sentinel; 9 integration tests on `record_audit_event`/`verify_chain`
+  including the tamper-detection test against the schema owner's own
+  direct `UPDATE`; 4 over HTTP; a `test_append_only.py` update since its
+  raw-SQL fixtures now need to supply `entry_hash` too, the append-only
+  grant tests being deliberately the one place in the whole suite that
+  bypasses the ORM and `record_audit_event` entirely, on purpose, to prove
+  the grant itself).
+
+### Tests — 534
+- **Unit** (200): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
   refusal and its non-detect remedy), sample labels and intervals (including
@@ -1130,12 +1221,18 @@ existing suite (which was already green: the findings below are all things
   `None`, and the furnace-position bounds check on all four edges) and the
   hand-driven crucible moves (8 — cupelled→parted and parted→weighed
   accepted, every premature/skipped/backward move refused, no path to
-  `REJECTED`).
+  `REJECTED`); and, new this pass, the audit hash chain (8 — a 64-character
+  hex digest, deterministic for identical input, the genesis sentinel
+  hashing identically whether passed explicitly or as `None`, a different
+  `prev_entry_hash` changing the result, every one of the eight fields
+  independently changing the hash when it changes, dict-key-order not
+  affecting the result, and `canonical_entry`'s own output being valid,
+  sorted-key, whitespace-free JSON).
 - **Property** (17, Hypothesis): conversion round-trips within working
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (304, real Postgres): the append-only grants proven against
+- **Integration** (317, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -1235,7 +1332,19 @@ existing suite (which was already green: the findings below are all things
    pass, the tray's write-side picker endpoints (12 — flux recipes and QC
    materials each: listed by name, an empty lab, a retired row excluded by
    `active_only`'s default at the service layer, and over HTTP the listing
-   route, an empty list, and `client` refused with **403**).
+   route, an empty list, and `client` refused with **403**); and, new this
+   pass, the audit hash chain (13 — `record_audit_event`: the first row is
+   its own genesis, a second row links to the first, a five-row chain links
+   end to end; `verify_chain`: an empty table verifies trivially, a genuine
+   chain verifies with the correct head hash, `upto` stops the scan early,
+   a freshly-inserted row with a deliberately wrong `entry_hash` breaks the
+   chain at exactly that row (no `UPDATE` privilege needed — a legal
+   `INSERT` under `msa_app`'s own grants is enough), a row whose
+   `prev_entry_hash` points at the wrong predecessor breaks it the other
+   way, and a direct `UPDATE` by the schema owner — the actual scenario
+   idea #1 exists to catch — is detected; and over HTTP: an empty lab, a
+   real write producing a verifying chain, `upto` genuinely restricting the
+   scan, and `client` refused with **403**).
 - **Contract fuzz** (2 collected tests): one dynamically exercising all 24
   operations × up to 10 generated examples each (not a fixed assertion
   count in the usual sense) — Schemathesis-generated schema-valid and
@@ -1532,6 +1641,29 @@ Hypothesis's generation strategy for that one operation being too
 selective on an unlucky seed, not a server crash, and not something this
 pass's changes caused.
 
+The audit trail's hash chain verified live over a fresh curl chain, ending
+with the scenario the whole feature exists for: `GET /api/audit/verify`
+against an empty lab returned `{"valid": true, "verified_count": 0,
+"head_hash": null}`; registering a client and a flux recipe produced two
+real audit events, and the same endpoint then returned `verified_count: 2`
+with a real 64-character head hash — `make verify-chain` returned the
+identical hash from the command line, proving the HTTP route and the CLI
+script genuinely share one implementation rather than two that happen to
+agree today. Then, with a direct `psql` connection as the **schema owner**
+— not `msa_app`, which holds no UPDATE on `audit_event` at all, proven
+separately in `test_append_only.py` — a single `UPDATE audit_event SET
+after = '{"code": "HACKED", ...}'` was run against the client's own audit
+row, simulating exactly the threat idea #1's own thesis names: a DBA or a
+support engineer with direct database access, a class of tamper that
+append-only-by-grant cannot see at all. Both `GET /api/audit/verify` and
+`make verify-chain` immediately reported the tamper — `{"valid": false,
+"broke_at_id": 1, "broke_reason": "entry_hash does not match
+recomputation"}` from the HTTP route, `CHAIN BROKEN at audit_event.id=1:
+entry_hash does not match recomputation` with a non-zero exit code from
+the CLI — with no code changed and no special "tamper mode": the identical
+verification path that had just reported `valid: true` caught it on the
+very next call. Demo data was truncated from the dev database afterward.
+
 ---
 
 ## Decision log
@@ -1628,6 +1760,12 @@ pass's changes caused.
 | 2026-08-26 | `generated-types.ts` is **committed**; `openapi.json` (its input) is **gitignored** | The generated TypeScript is what the app actually imports and builds against — committing it means `npm install && npm run build` works with no Python toolchain present, and a reviewer sees the real wire-format diff in a PR. The raw schema JSON is a build artifact of a build artifact with no reason to live in git once the committed `.ts` exists. |
 | 2026-08-26 | `export_openapi.py` calls `create_app().openapi()` directly, with **no running server** required | FastAPI's own OpenAPI generation is a pure function of the route/schema definitions already in the process — spinning up uvicorn just to `curl /openapi.json` would add a real dependency (a live server, a port, a wait-until-ready loop) for a fact the app already knows about itself at import time. |
 | 2026-08-26 | The frontend CI job now **depends on the backend job** (`needs: backend`), serializing two previously independent jobs | The type-drift check is only meaningful against a schema the live app actually produced this run — trusting a stale `openapi.json` committed days earlier would let the exact "drifted silently" failure idea #18 exists to prevent happen one layer up, in the CI config itself. The added wall-clock cost is accepted as the honest price of a check that means something. |
+| 2026-08-26 | Idea #1 (the hash chain) is scoped to **chain integrity only**, deliberately deferring OpenTimestamps anchoring | Detecting *that* history was altered and proving *when* an untampered version existed relative to the outside world are separable claims. The first needs nothing but this database; the second needs a live external network dependency and a background scheduler — real infrastructure this pass did not need to build to close the audit finding the chain itself answers. Matches the sketch's own two-part shape. |
+| 2026-08-26 | `record_audit_event` **replaces** every service module's own `AuditEvent` construction, rather than each module hashing its own row | A hash chain with even one call site that forgot to link into it is not a chain — it is a chain with an undetectable gap. Centralising the write is the only way to make that structurally impossible for a call site written tomorrow, not just the thirteen written today; it also deleted two small duplicated `_audit` helpers (`clients/service.py`, `submissions/service.py`) that existed only because there was no shared one yet. |
+| 2026-08-26 | The chain's hashing logic is **duplicated, frozen, inline** in the migration rather than imported from `domain/audit_chain.py` | A migration must reproduce the identical backfill result forever, even after the domain module's own logic changes for a future need — the standard reason Alembic migrations never import application code, followed here for the first time in this repo (no earlier migration had needed to). Verified the two copies agree today by hand-computing a hash both ways and comparing. |
+| 2026-08-26 | `prev_entry_hash` is genuinely `NULL` for the genesis row; the sentinel (`GENESIS_PREV_HASH`, 64 zeros) exists **only inside the hash computation**, never stored | Mirrors `supersedes_id`'s own "nothing before this" convention elsewhere in the schema — a real absence stays a real `NULL`, not a magic value dressed up as data. The computation still needs *something* concrete to hash, which is the sentinel's only job. |
+| 2026-08-26 | `verify_chain` queries with `execution_options(populate_existing=True)`, found necessary by a failing test, not anticipated up front | A row already in the calling session's identity map — true of any row that session had itself just written — came back from a plain `select()` unchanged from memory, silently masking a change made through a different connection. For a feature whose entire point is "don't trust cached state," that is not a corner case, it is the central one; the test that caught it (a schema-owner `UPDATE`, then re-verify on the same session) stays in the suite specifically to keep this fixed. |
+| 2026-08-26 | `GET /api/audit/verify` is gated by `InternalActorDep`, the same posture as every other read endpoint, not left open to unauthenticated callers | A genuinely public, no-account verifier — the point being that *no one* has to trust this server to check the chain — is real, separate scope named as audit idea #8 ("The Verifier"), which also wants the OpenTimestamps anchor idea #1 itself defers. Opening this one endpoint early would be scope creep into a different, larger idea for no present consumer. |
 
 ---
 
@@ -1802,9 +1940,39 @@ pass's changes caused.
    `/samples/{id}`, and `/batches/{id}` all render correctly against the
    new types with zero console errors. **Idea #18 is done; every open
    audit item from this pass's queue is closed.**
+6. ~~**Idea #1, "The Ledger That Signs Itself" — chain integrity.**~~
+   **Done 2026-08-26** — every `audit_event` row now carries
+   `prev_entry_hash`/`entry_hash`, computed by the sole write path
+   (`db/audit.py`'s `record_audit_event`, replacing thirteen separate
+   `AuditEvent` construction sites across nine service modules), verifiable
+   independently via `GET /api/audit/verify` or `make verify-chain`. 21 new
+   tests; verified live end to end, including a direct schema-owner
+   `UPDATE` — the exact class of tamper append-only-by-grant cannot see —
+   caught immediately by both the endpoint and the CLI. See "The audit
+   trail's hash chain" above. **OpenTimestamps external anchoring — the
+   sketch's other half, proving *when* the chain's head existed to a party
+   trusting nothing about this server — is real remaining scope,
+   deliberately deferred; see open questions.**
 
 ## Open questions
 
+- **The audit hash chain has no external anchor yet.** It proves the
+  history is internally consistent — nothing between two points has been
+  altered — but not *when* the current head existed relative to the
+  outside world; a sufficiently privileged attacker who altered *and*
+  regenerated every hash after the alteration point, all in one sitting,
+  would leave a chain that still verifies. OpenTimestamps (or an
+  equivalent periodic external anchor) is what closes that gap — real,
+  named remaining scope from audit idea #1's own sketch, not attempted
+  this pass.
+- **The chain's ordering assumes one writer, like `db/numbering.py`'s own
+  sequential document numbers — but unlike numbering, nothing here retries
+  under a race.** Two genuinely concurrent requests could both read the
+  same tip and both write a row claiming to follow it, branching the chain
+  rather than extending it. Undefended in this pass, matching the audit
+  sketch's own scoping; would need either a `SELECT ... FOR UPDATE` on the
+  tip or a serializable transaction around the read-tip/write-row pair if
+  concurrent writers ever become real in production.
 - **The OpenAPI schema declares no accurate per-status response models for
   domain refusals**, so Schemathesis's `response_schema_conformance` and
   `positive_data_acceptance` checks cannot run meaningfully yet — see the

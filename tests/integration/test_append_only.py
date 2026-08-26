@@ -27,8 +27,9 @@ def an_audit_event(owner_engine: Engine) -> Iterator[int]:
     with owner_engine.begin() as connection:
         event_id = connection.execute(
             text(
-                "INSERT INTO audit_event (table_name, record_id, action, reason) "
-                "VALUES ('sample', 1, 'create', 'received from client') RETURNING id"
+                "INSERT INTO audit_event (table_name, record_id, action, reason, entry_hash) "
+                "VALUES ('sample', 1, 'create', 'received from client', repeat('a', 64)) "
+                "RETURNING id"
             )
         ).scalar_one()
     yield int(event_id)
@@ -46,8 +47,8 @@ class TestTheApplicationRoleCannotRewriteHistory:
     def test_it_can_append_a_new_event(self, app_session: Session) -> None:
         app_session.execute(
             text(
-                "INSERT INTO audit_event (table_name, record_id, action) "
-                "VALUES ('sample', 99, 'transition')"
+                "INSERT INTO audit_event (table_name, record_id, action, entry_hash) "
+                "VALUES ('sample', 99, 'transition', repeat('a', 64))"
             )
         )
 
@@ -130,8 +131,8 @@ class TestTheAmendmentReasonConstraint:
         with pytest.raises(IntegrityError, match="amendment_states_reason"):
             app_session.execute(
                 text(
-                    "INSERT INTO audit_event (table_name, record_id, action) "
-                    "VALUES ('fire_assay_result', 5, 'amend')"
+                    "INSERT INTO audit_event (table_name, record_id, action, entry_hash) "
+                    "VALUES ('fire_assay_result', 5, 'amend', repeat('a', 64))"
                 )
             )
 
@@ -139,15 +140,16 @@ class TestTheAmendmentReasonConstraint:
         with pytest.raises(IntegrityError, match="amendment_states_reason"):
             app_session.execute(
                 text(
-                    "INSERT INTO audit_event (table_name, record_id, action, reason) "
-                    "VALUES ('fire_assay_result', 5, 'amend', '   ')"
+                    "INSERT INTO audit_event (table_name, record_id, action, reason, entry_hash) "
+                    "VALUES ('fire_assay_result', 5, 'amend', '   ', repeat('a', 64))"
                 )
             )
 
     def test_an_amendment_with_a_reason_is_accepted(self, app_session: Session) -> None:
         app_session.execute(
             text(
-                "INSERT INTO audit_event (table_name, record_id, action, reason) "
-                "VALUES ('fire_assay_result', 5, 'amend', 'transcription error at the balance')"
+                "INSERT INTO audit_event (table_name, record_id, action, reason, entry_hash) "
+                "VALUES ('fire_assay_result', 5, 'amend', 'transcription error at the balance', "
+                "repeat('a', 64))"
             )
         )

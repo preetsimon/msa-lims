@@ -742,20 +742,41 @@ existing suite (which was already green: the findings below are all things
   rather than passed through like the other handlers, since `str(exc)` on a
   raw driver error leaks the query and its bind parameters where every
   other handler's message was written on purpose for a person to read.
-- **Each generated example runs inside its own `Session.begin_nested`
-  savepoint** — the identical primitive `db/numbering.py` already uses for
-  race-safe retries — unconditionally rolled back afterward, not merely
-  wrapped in the fixture's one outer transaction like every other
-  integration test. The first version of this fixture shared one plain
-  transaction across every example for an operation; the first crash it
-  found left Postgres refusing all further commands, and every example
-  after that one failed with an identical "transaction is aborted" error
-  that had nothing to do with what Schemathesis had actually generated,
-  burying the one request that mattered under noise. Recovery needed
-  `Session.rollback()` specifically — not the narrower
-  `SessionTransaction.rollback()` the savepoint object itself returns —
-  because a failed flush leaves the ORM Session flagged as needing a full
-  rollback, exactly what SQLAlchemy's own error message names as the fix.
+- **Each generated example runs isolated from every other**, so one
+  operation's writes never leak into `msa_test` and one crash's aftermath
+  never poisons the next generated example. The isolation itself went
+  through two versions:
+  - **v1** (this pass's original): a hand-rolled `Session.begin_nested()`
+    savepoint per request, unconditionally rolled back in the dependency's
+    `finally`. It looked right and passed every test at the time — but
+    **it silently leaked real data into `msa_test` across separate
+    `pytest -m fuzz` runs**, discovered days later while building an
+    unrelated feature, when a fresh "an empty lab lists nothing" test
+    unexpectedly found garbage rows (`QcMaterial` named `"0"`, stray
+    `Batch` rows) that had accumulated over several fuzz runs.
+  - **v2, the actual fix (2026-08-26):** `Session(bind=connection,
+    join_transaction_mode="create_savepoint")` — SQLAlchemy 2.0's own
+    built-in mechanism for exactly this "join a Session into an
+    externally-managed transaction" scenario, replacing the hand-rolled
+    version entirely. See the module's own docstring and decision log for
+    the root cause: `Session.commit()` correctly defers to an externally-
+    `connection.begin()`'d transaction (only releases the savepoint), but
+    **`Session.rollback()` does not defer the same way** — it ends the
+    *entire* enclosing transaction for real, not just the current
+    savepoint. Since most fuzzer-generated requests are refused (a
+    validation error, calling `session.rollback()`), the very first
+    refused request in a run silently killed the fixture's outer
+    transaction; every request after that ran inside a fresh,
+    session-owned transaction the fixture's teardown no longer held a
+    reference to, and any success among them committed to the database
+    permanently. `join_transaction_mode="create_savepoint"` makes
+    SQLAlchemy manage this correctly regardless of which of commit/
+    rollback runs. A direct regression test
+    (`TestFixtureIsolation::test_a_success_after_a_refusal_does_not_leak`)
+    reproduces the exact trigger — success, then a refusal, then another
+    success — deterministically, rather than relying on Hypothesis's own
+    randomness to occasionally hit it; verified to fail against v1 and
+    pass against v2 before landing.
 - **Scoped to Schemathesis's `not_a_server_error` check alone**, not its
   full default set. `response_schema_conformance` and
   `positive_data_acceptance` both fire constantly here for reasons that are
@@ -1177,12 +1198,15 @@ existing suite (which was already green: the findings below are all things
    materials each: listed by name, an empty lab, a retired row excluded by
    `active_only`'s default at the service layer, and over HTTP the listing
    route, an empty list, and `client` refused with **403**).
-- **Contract fuzz** (1 collected test, dynamically exercising all 24
-  operations × up to 10 generated examples each — not a fixed assertion
-  count in the usual sense): Schemathesis-generated schema-valid and
+- **Contract fuzz** (2 collected tests): one dynamically exercising all 24
+  operations × up to 10 generated examples each (not a fixed assertion
+  count in the usual sense) — Schemathesis-generated schema-valid and
   adversarial requests against the live app, asserting no operation ever
-  returns a server error. Found and fixed two real crashes on its first
-  run — see "Contract fuzzing" above.
+  returns a server error, which found and fixed two real crashes on its
+  first run; and one new, deterministic regression test
+  (`TestFixtureIsolation`) proving the fixture's own isolation — a success,
+  a refusal, then another success leaves nothing in `msa_test` — see
+  "Contract fuzzing" above.
 The stack driven through a browser: Vite dev server → proxy → FastAPI →
 Postgres, rendering `healthy` with the database connected and no console errors.
 Restarting the API with `MSA_SENTINEL_ENABLED=true` against a Sentinel that is
@@ -1560,6 +1584,8 @@ pass's changes caused.
 | 2026-08-26 | `api.ts`'s `errorMessage()` parses a response body as `{"detail": string}` and falls back to the raw text, rather than always showing a generic failure message | Every domain refusal in this API already returns exactly that shape (see `web/app.py`'s own comment) — discarding it into "something went wrong" would hide information the server went out of its way to state plainly for a person to read. The fallback covers the one case that isn't shaped that way (an unhandled 500, say). |
 | 2026-08-26 | `datetimeLocalValueToIso`/`nowAsDatetimeLocalValue` live in **one shared file**, not re-implemented per form | Three business-timestamp fields (`charged_at`, `parted_at`, `weighed_at`) all need the identical `<input type="datetime-local">`-to-ISO-instant conversion. Three independently hand-rolled versions is exactly the kind of drift this codebase's own `format_hole_id` precedent (Phase 1) already refused to risk. |
 | 2026-08-26 | `Modal` is a **shared generic shell** across the three write-side forms, breaking with this session's own general preference for duplication over premature abstraction | The three forms' fields differ completely, but their overlay/dialog chrome — backdrop, close button, Escape-to-close — really is identical, not just superficially similar. Abstracting the chrome and leaving the fields as three separate components keeps the one genuinely shared part shared without forcing the differing parts into a single configurable component. |
+| 2026-08-26 | The fuzz fixture's hand-rolled `Session.begin_nested()`-per-request isolation is **replaced** with `Session(..., join_transaction_mode="create_savepoint")`, SQLAlchemy 2.0's own built-in mechanism, rather than patched in place | The hand-rolled version had a real, silent bug: `Session.commit()` correctly defers to an externally-owned transaction, but `Session.rollback()` does not — it ends the whole transaction for real, and fuzzing's mostly-refused requests call rollback() constantly. Once found (real garbage rows accumulated in `msa_test` across separate fuzz runs), the fix was to use the primitive SQLAlchemy actually built for this exact "join a Session into an external transaction" scenario rather than trying to patch the manual version's specific failure mode and risk another one just like it. |
+| 2026-08-26 | The fuzz fixture's isolation bug gets a **direct, deterministic regression test**, not just a corrected fixture | The bug was invisible to every existing test — the old fixture "passed" for weeks. A test exercising Schemathesis's own randomness might not reliably hit the exact success-then-refusal-then-success sequence that triggers it. `TestFixtureIsolation` reproduces that sequence directly and was verified to fail against the old code and pass against the new, so a future regression here fails loudly and immediately rather than silently accumulating garbage again. |
 
 ---
 
@@ -1715,7 +1741,15 @@ pass's changes caused.
    needed. 12 new tests; verified live end to end — the full
    open→charge→fuse→cupel→part→weigh→close walk driven entirely by
    clicking — see "Verified live." **Idea #4 is now fully complete.**
-4. **Idea #18, generated TypeScript types from `/openapi.json`**, remains
+4. ~~**A real isolation bug in the Schemathesis fuzz fixture itself**~~
+   **Fixed 2026-08-26** — the hand-rolled `Session.begin_nested()`-per-
+   request scheme silently let successful writes leak permanently into
+   `msa_test` across separate `pytest -m fuzz` runs, discovered while
+   building idea #4's write side. Replaced with SQLAlchemy 2.0's own
+   `join_transaction_mode="create_savepoint"`. A new deterministic
+   regression test proves it; two consecutive real `pytest -m fuzz` runs
+   verified clean. See "Contract fuzzing" above and the decision log.
+5. **Idea #18, generated TypeScript types from `/openapi.json`**, remains
    unbuilt. `types.ts` gained `FluxRecipe`/`QcMaterial`/`Crucible` this
    pass, hand-written under the same standing note every other type in the
    file already carries — now thirteen hand-kept interfaces deep, the

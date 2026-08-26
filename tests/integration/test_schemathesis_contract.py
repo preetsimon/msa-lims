@@ -16,20 +16,30 @@ include it) — the point is exercising each endpoint's own request validation,
 not re-discovering the role gates the unit and integration suites already
 cover directly.
 
-Every generated example for one operation runs inside its own
-:meth:`Session.begin_nested` savepoint (the same primitive
-``db/numbering.py`` uses for race-safe retries), unconditionally rolled back
-afterward — not merely wrapped in the fixture's one outer transaction like
-every other integration test. A crash Schemathesis triggers is often a raw,
-uncaught database error (a CHECK constraint reached directly, bypassing the
-service-level pre-check that normally refuses it first), which leaves
-Postgres refusing every further command until a rollback happens. Sharing
-one plain transaction across many generated examples would let the first
-such crash poison every example after it in the same operation, burying the
-one request that actually mattered under a wall of identical "transaction is
-aborted" noise — the savepoint is what keeps each generated example an
-independent trial, the way each one would be an independent request in
-production.
+Every request a generated example sends runs a real ``session.commit()``
+inside the route handler it exercises — the fixture's session is
+constructed with ``join_transaction_mode="create_savepoint"``
+(SQLAlchemy 2.0), so each commit or rollback the application code performs
+is transparently scoped to its own SAVEPOINT rather than reaching the
+fixture's own outer, externally-managed transaction. This is the
+difference between "isolated" and "merely wrapped": a plain
+``Session(bind=connection)`` bound to an already-``connection.begin()``'d
+connection *looks* isolated because ``session.commit()`` correctly defers
+to the external owner — but ``session.rollback()`` does **not** defer the
+same way. The very first generated example that gets refused (a validation
+error, overwhelmingly the common case when fuzzing) calls
+``session.rollback()``, which — absent ``create_savepoint`` mode — ends the
+whole outer transaction for real, not just that one example's work. Every
+request after that point runs inside a *fresh, session-owned* transaction
+that the fixture's teardown no longer has a reference to, and any
+one of those that succeeds commits to the database permanently. This was
+found the hard way: real garbage rows (`QcMaterial` named ``"0"``,
+stray ``Batch`` rows, and more) kept surviving into ``msa_test`` across
+separate ``pytest -m fuzz`` runs despite this fixture's teardown appearing
+to roll everything back — ``join_transaction_mode="create_savepoint"``
+makes SQLAlchemy manage the SAVEPOINT-per-operation bookkeeping itself
+instead of this fixture doing it by hand with :meth:`Session.begin_nested`,
+closing the exact gap a hand-rolled version left open.
 
 **Scoped to ``not_a_server_error`` alone, not Schemathesis's full default
 check set.** Two of its other built-in checks fire constantly here for
@@ -59,11 +69,13 @@ from collections.abc import Iterator
 
 import pytest
 import schemathesis
+from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, settings
 from schemathesis import Case
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from msa_lims.db.models import FluxRecipe
 from msa_lims.web.app import create_app
 from msa_lims.web.deps import get_db
 
@@ -76,20 +88,17 @@ MANAGER_HEADERS = {"X-Actor": "fuzz@lab", "X-Actor-Role": "lab_manager"}
 def api_schema(app_engine: Engine) -> Iterator[schemathesis.BaseSchema]:
     connection = app_engine.connect()
     outer_transaction = connection.begin()
-    session = Session(bind=connection, expire_on_commit=False)
+    # `join_transaction_mode="create_savepoint"` is what actually makes this
+    # safe — see the module docstring. Every `session.commit()`/
+    # `session.rollback()` the application performs while handling one
+    # generated request is transparently scoped to its own SAVEPOINT;
+    # `outer_transaction` is the only thing this fixture itself ever needs
+    # to roll back.
+    session = Session(
+        bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )
 
     def override_get_db() -> Iterator[Session]:
-        """One savepoint per fake request — see the module docstring.
-
-        ``session.rollback()``, not the returned ``SessionTransaction``'s own
-        ``.rollback()``: a raw ``IntegrityError`` during flush (a CHECK
-        constraint reached directly, past the service's own pre-check)
-        leaves the ORM Session itself flagged as needing an explicit
-        rollback, not only the savepoint — ``Session.rollback()`` is what
-        SQLAlchemy's own error message names as the recovery, and it
-        correctly unwinds to the savepoint either way.
-        """
-        session.begin_nested()
         try:
             yield session
         finally:
@@ -101,16 +110,7 @@ def api_schema(app_engine: Engine) -> Iterator[schemathesis.BaseSchema]:
         yield schemathesis.openapi.from_asgi("/openapi.json", app)
     finally:
         session.close()
-        # A route's own successful `session.commit()` can end the outer
-        # transaction's association with the connection before this runs
-        # (the savepoint machinery above interacts with SQLAlchemy's own
-        # transaction-stack tracking in a way the simpler fixtures in every
-        # other integration test file never trigger, since none of them nest
-        # a transaction). Guarded rather than unconditional so cleanup after
-        # a run that ended this way doesn't raise on an already-ended
-        # transaction.
-        if connection.in_transaction():
-            outer_transaction.rollback()
+        outer_transaction.rollback()
         connection.close()
 
 
@@ -121,3 +121,86 @@ schema = schemathesis.pytest.from_fixture("api_schema")
 @settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 def test_no_endpoint_returns_a_server_error(case: Case) -> None:
     case.call_and_validate(headers=MANAGER_HEADERS, checks=[schemathesis.checks.not_a_server_error])
+
+
+def _flux_recipe_body(name: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "matrix_type": "silicate",
+        "nominal_portion_g": "30",
+        "litharge_g": "60",
+        "soda_ash_g": "90",
+        "borax_g": "30",
+        "silica_g": "15",
+        "flour_g": "3",
+        "nitre_g": "0",
+    }
+
+
+class TestFixtureIsolation:
+    """A direct regression test for the isolation bug this fixture's own
+    ``api_schema`` used to have — not exercised through Schemathesis's own
+    randomness, so it fails deterministically if the isolation ever breaks
+    again, rather than only occasionally when a fuzz run happens to land on
+    the right mix of inputs.
+
+    Found the hard way: a plain ``Session(bind=connection)`` wrapping an
+    externally-``connection.begin()``'d transaction *looks* isolated
+    because ``session.commit()`` correctly defers to the external owner —
+    but ``session.rollback()`` does not defer the same way, and ends the
+    whole outer transaction for real the first time it runs. Fuzzing
+    triggers exactly that: most generated requests are refused (a
+    validation error), which calls ``session.rollback()`` on nearly every
+    request. Reproduced here directly: one request that succeeds, followed
+    by one that is refused (calling ``session.rollback()``, the trigger),
+    followed by a second request that succeeds — without
+    ``join_transaction_mode="create_savepoint"`` on the fixture's session,
+    that second success used to commit to the database for real.
+    """
+
+    def test_a_success_after_a_refusal_does_not_leak(self, app_engine: Engine) -> None:
+        connection = app_engine.connect()
+        outer_transaction = connection.begin()
+        session = Session(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        )
+
+        def override_get_db() -> Iterator[Session]:
+            try:
+                yield session
+            finally:
+                session.rollback()
+
+        app = create_app()
+        app.dependency_overrides[get_db] = override_get_db
+        client = TestClient(app)
+
+        first = client.post(
+            "/api/flux-recipes", json=_flux_recipe_body("isolation-a"), headers=MANAGER_HEADERS
+        )
+        assert first.status_code == 201
+
+        # Refused by the service's own uniqueness check — this is what
+        # calls session.rollback() mid-run, the exact trigger.
+        refused = client.post(
+            "/api/flux-recipes", json=_flux_recipe_body("isolation-a"), headers=MANAGER_HEADERS
+        )
+        assert refused.status_code == 422
+
+        second = client.post(
+            "/api/flux-recipes", json=_flux_recipe_body("isolation-b"), headers=MANAGER_HEADERS
+        )
+        assert second.status_code == 201
+
+        session.close()
+        outer_transaction.rollback()
+        connection.close()
+
+        with (
+            app_engine.connect() as fresh_connection,
+            Session(bind=fresh_connection) as fresh_session,
+        ):
+            leaked = fresh_session.scalars(
+                select(FluxRecipe).where(FluxRecipe.name.in_(["isolation-a", "isolation-b"]))
+            ).all()
+            assert leaked == []

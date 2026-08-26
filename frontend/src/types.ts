@@ -135,3 +135,62 @@ export interface BatchDetail {
   furnace_columns: number;
   crucibles: CrucibleSlot[];
 }
+
+/** A registered flux recipe — the picker a charge form draws from. */
+export interface FluxRecipe {
+  id: number;
+  name: string;
+  matrix_type: string;
+  nominal_portion_g: string;
+  litharge_g: string;
+  soda_ash_g: string;
+  borax_g: string;
+  silica_g: string;
+  flour_g: string;
+  nitre_g: string;
+  is_active: boolean;
+}
+
+/** A registered QC material (CRM or blank) — the picker a QC charge form
+ * draws from. `certified_au_value_g_t`/`certified_au_uncertainty_g_t` are
+ * null for a blank, which is defined by carrying no certified grade. */
+export interface QcMaterial {
+  id: number;
+  name: string;
+  qc_type: string;
+  lot_number: string | null;
+  certified_au_value_g_t: string | null;
+  certified_au_uncertainty_g_t: string | null;
+  is_active: boolean;
+}
+
+/** The full crucible row `POST /api/batches/{id}/crucibles` and the
+ * parting/weighing endpoints return — every flux amount and measurement
+ * column, unlike the tray's own lean `CrucibleSlot`. Nothing here renders
+ * this shape directly; a batch detail refetch after each write is what the
+ * tray actually redraws from. */
+export interface Crucible {
+  id: number;
+  batch_id: number;
+  sample_id: number | null;
+  qc_material_id: number | null;
+  flux_recipe_id: number;
+  position_row: number;
+  position_col: number;
+  status: string;
+  sample_weight_g: string;
+  litharge_g: string;
+  soda_ash_g: string;
+  borax_g: string;
+  silica_g: string;
+  flour_g: string;
+  nitre_g: string;
+  lead_button_weight_mg: string | null;
+  prill_weight_mg: string | null;
+  parting_acid_volume_ml: string | null;
+  parted_at: string | null;
+  gold_bead_mg: string | null;
+  weighed_at: string | null;
+  charged_at: string;
+  notes: string | null;
+}

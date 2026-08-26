@@ -21,6 +21,7 @@ from msa_lims.qc_materials.service import (
     QcMaterialInput,
     QcMaterialService,
     QcMaterialValidationError,
+    list_qc_materials,
 )
 
 pytestmark = pytest.mark.integration
@@ -203,3 +204,41 @@ class TestStockRowsAreMutable:
         )
         with pytest.raises(IntegrityError):
             app_session.flush()
+
+
+class TestListingMaterials:
+    def test_materials_come_back_by_name(self, app_session: Session, supervisor: LabUser) -> None:
+        service = QcMaterialService(app_session)
+        service.create(
+            crm_input(name="OREAS 501d"), registered_by=supervisor, actor_role=Role.SUPERVISOR
+        )
+        service.create(
+            crm_input(
+                name="Silica Blank",
+                qc_type=QcMaterialType.BLANK,
+                lot_number=None,
+                certified_au_value_g_t=None,
+                certified_au_uncertainty_g_t=None,
+            ),
+            registered_by=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        app_session.flush()
+
+        names = [material.name for material in list_qc_materials(app_session)]
+        assert names == ["OREAS 501d", "Silica Blank"]
+
+    def test_an_empty_lab_lists_nothing(self, app_session: Session) -> None:
+        assert list_qc_materials(app_session) == []
+
+    def test_a_retired_material_is_excluded_by_default(
+        self, app_session: Session, supervisor: LabUser
+    ) -> None:
+        material = QcMaterialService(app_session).create(
+            crm_input(), registered_by=supervisor, actor_role=Role.SUPERVISOR
+        )
+        material.is_active = False
+        app_session.flush()
+
+        assert list_qc_materials(app_session) == []
+        assert list_qc_materials(app_session, active_only=False) == [material]

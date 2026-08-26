@@ -44,6 +44,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 SUPERVISOR = {"X-Actor": "sup@lab", "X-Actor-Role": "supervisor"}
 ANALYST = {"X-Actor": "analyst@lab", "X-Actor-Role": "analyst"}
+CLIENT = {"X-Actor": "geo@mineco", "X-Actor-Role": "client"}
 
 
 def recipe_body(**overrides: object) -> dict[str, object]:
@@ -86,3 +87,21 @@ class TestRegisteringARecipe:
             "/api/flux-recipes", json=recipe_body(litharge_g="-1"), headers=SUPERVISOR
         )
         assert response.status_code == 422
+
+
+class TestListingRecipesThroughHttp:
+    def test_a_recipe_appears_in_the_list(self, client: TestClient) -> None:
+        client.post("/api/flux-recipes", json=recipe_body(), headers=SUPERVISOR)
+        response = client.get("/api/flux-recipes", headers=ANALYST)
+        assert response.status_code == 200
+        names = [recipe["name"] for recipe in response.json()]
+        assert names == ["Standard Silicate"]
+
+    def test_a_client_role_is_refused_with_403(self, client: TestClient) -> None:
+        response = client.get("/api/flux-recipes", headers=CLIENT)
+        assert response.status_code == 403
+
+    def test_an_empty_lab_lists_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/flux-recipes", headers=ANALYST)
+        assert response.status_code == 200
+        assert response.json() == []

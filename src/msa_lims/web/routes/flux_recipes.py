@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
-from msa_lims.flux_recipes.service import FluxRecipeInput, FluxRecipeService
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.flux_recipes.service import FluxRecipeInput, FluxRecipeService, list_flux_recipes
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.schemas import FluxRecipeCreate, FluxRecipeOut
 
 router = APIRouter(prefix="/api", tags=["flux-recipes"])
+
+
+@router.get("/flux-recipes", response_model=list[FluxRecipeOut])
+def read_flux_recipes(session: SessionDep, actor: InternalActorDep) -> list[FluxRecipeOut]:
+    return [FluxRecipeOut.from_model(recipe) for recipe in list_flux_recipes(session)]
 
 
 @router.post("/flux-recipes", response_model=FluxRecipeOut, status_code=status.HTTP_201_CREATED)

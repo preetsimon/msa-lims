@@ -44,6 +44,7 @@ def client(app: FastAPI) -> Iterator[TestClient]:
 
 SUPERVISOR = {"X-Actor": "sup@lab", "X-Actor-Role": "supervisor"}
 ANALYST = {"X-Actor": "analyst@lab", "X-Actor-Role": "analyst"}
+CLIENT = {"X-Actor": "geo@mineco", "X-Actor-Role": "client"}
 
 
 def crm_body(**overrides: object) -> dict[str, object]:
@@ -102,3 +103,21 @@ class TestRegisteringAMaterial:
             headers=SUPERVISOR,
         )
         assert response.status_code == 422
+
+
+class TestListingMaterialsThroughHttp:
+    def test_a_material_appears_in_the_list(self, client: TestClient) -> None:
+        client.post("/api/qc-materials", json=crm_body(), headers=SUPERVISOR)
+        response = client.get("/api/qc-materials", headers=ANALYST)
+        assert response.status_code == 200
+        names = [material["name"] for material in response.json()]
+        assert names == ["OREAS 501d"]
+
+    def test_a_client_role_is_refused_with_403(self, client: TestClient) -> None:
+        response = client.get("/api/qc-materials", headers=CLIENT)
+        assert response.status_code == 403
+
+    def test_an_empty_lab_lists_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/qc-materials", headers=ANALYST)
+        assert response.status_code == 200
+        assert response.json() == []

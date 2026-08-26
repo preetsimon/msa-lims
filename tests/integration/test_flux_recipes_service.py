@@ -15,6 +15,7 @@ from msa_lims.flux_recipes.service import (
     FluxRecipeInput,
     FluxRecipeService,
     FluxRecipeValidationError,
+    list_flux_recipes,
 )
 
 pytestmark = pytest.mark.integration
@@ -112,3 +113,36 @@ class TestRegisteringARecipe:
         assert event is not None
         assert event.action == "create"
         assert event.actor_id == supervisor.id
+
+
+class TestListingRecipes:
+    def test_recipes_come_back_by_name(self, app_session: Session, supervisor: LabUser) -> None:
+        service = FluxRecipeService(app_session)
+        service.create(
+            recipe_input(name="Zinc Matrix"), registered_by=supervisor, actor_role=Role.SUPERVISOR
+        )
+        service.create(
+            recipe_input(name="Argillite Matrix"),
+            registered_by=supervisor,
+            actor_role=Role.SUPERVISOR,
+        )
+        app_session.flush()
+
+        names = [recipe.name for recipe in list_flux_recipes(app_session)]
+        assert names == ["Argillite Matrix", "Zinc Matrix"]
+
+    def test_an_empty_lab_lists_nothing(self, app_session: Session) -> None:
+        assert list_flux_recipes(app_session) == []
+
+    def test_a_retired_recipe_is_excluded_by_default(
+        self, app_session: Session, supervisor: LabUser
+    ) -> None:
+        service = FluxRecipeService(app_session)
+        recipe = service.create(
+            recipe_input(), registered_by=supervisor, actor_role=Role.SUPERVISOR
+        )
+        recipe.is_active = False
+        app_session.flush()
+
+        assert list_flux_recipes(app_session) == []
+        assert list_flux_recipes(app_session, active_only=False) == [recipe]

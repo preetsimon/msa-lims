@@ -293,3 +293,173 @@ h2 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* An empty cell becomes a real control only while the batch is open for
+   charging — everywhere else it stays the plain dashed placeholder, so a
+   reviewer never sees an affordance the server would refuse anyway. */
+.tray-cell-charge {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tray-cell-empty .tray-cell-charge:hover {
+  color: var(--ink);
+}
+
+.tray-cell-empty:has(.tray-cell-charge) {
+  border-style: dashed;
+  align-items: center;
+  justify-content: center;
+}
+
+.tray-action {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Buttons — one filled, one outlined, shared by the batch-advance control
+   and every modal form's submit/cancel pair. */
+.btn-primary,
+.btn-secondary {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.btn-secondary {
+  background: none;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+/* Modal — a single overlay/dialog shell shared by the charge, parting, and
+   weighing forms. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 26rem;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.modal-header h2 {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 1.05rem;
+}
+
+.modal-close {
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.4rem;
+}
+
+.modal-close:hover {
+  color: var(--ink);
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+
+.form-field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.4rem;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.form-field textarea {
+  resize: vertical;
+}
+
+.radio-row {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.radio-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.2rem;
+}

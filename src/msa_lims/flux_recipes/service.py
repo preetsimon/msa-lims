@@ -97,3 +97,14 @@ class FluxRecipeService:
             )
         )
         return recipe
+
+
+def list_flux_recipes(session: Session, *, active_only: bool = True) -> list[FluxRecipe]:
+    """Every registered recipe, by name — the picker a charge form needs.
+    ``active_only`` defaults true: a retired recipe is not a legal choice for
+    a new charge, the same reason a retired QC material is refused at charge
+    time (see ``batches/service.py``)."""
+    stmt = select(FluxRecipe).order_by(FluxRecipe.name)
+    if active_only:
+        stmt = stmt.where(FluxRecipe.is_active.is_(True))
+    return list(session.scalars(stmt))

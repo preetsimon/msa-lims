@@ -135,3 +135,14 @@ class QcMaterialService:
             )
         )
         return material
+
+
+def list_qc_materials(session: Session, *, active_only: bool = True) -> list[QcMaterial]:
+    """Every registered material, by name — the picker a charge form needs.
+    ``active_only`` defaults true for the same reason
+    ``flux_recipes/service.py``'s own ``list_flux_recipes`` does: a retired
+    lot is refused at charge time, so it is not a legal choice to offer."""
+    stmt = select(QcMaterial).order_by(QcMaterial.name)
+    if active_only:
+        stmt = stmt.where(QcMaterial.is_active.is_(True))
+    return list(session.scalars(stmt))

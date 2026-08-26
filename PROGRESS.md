@@ -1,13 +1,16 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-25 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API), which found and fixed two real crashes in its first run, and idea #4 (the furnace tray) — a `GET /api/batches` listing endpoint, a batch detail response enriched with sample/QC labels and furnace geometry, and two React screens rendering the tray as a drawn grid, verified live end to end
+**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks `RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real `check_transition` call rather than a documented bypass. Entering a fire assay result — direct or crucible-linked — now requires the sample to genuinely be `IN_ASSAY`, closing the last of the honest simplifications named since Phase 1. Also done: [AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md)'s idea #7 (Schemathesis fuzzing the live API), which found and fixed two real crashes in its first run, and idea #4 (the furnace tray) in full — the read side (batch listing, an enriched detail response, two React screens drawing the tray as a grid) and, this pass, the write side: charging, parting, and weighing as modal forms directly against the tray, closing the deferral named at the end of the previous pass
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
 audit — gaps, weaknesses, industry research, and a ranked breakthrough agenda
 (hash-chained audit anchoring, passkey-bound certificate signing, the furnace
 tray UI, QC dossiers, and more) — lives in
-[docs/AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md).
+[docs/AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md). Interview
+prep — spoken-style Q&A over every key decision, trade-off, war story, and a
+numbers cheat sheet — lives in
+[docs/INTERVIEW_PREP.md](docs/INTERVIEW_PREP.md).
 
 ---
 
@@ -23,7 +26,7 @@ tray UI, QC dossiers, and more) — lives in
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 501 tests passing (plus a Schemathesis contract-fuzz run kept
+**Health:** 513 tests passing (plus a Schemathesis contract-fuzz run kept
 separate, see below) · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible (Phase 3 needed none — both slices are
 service and route changes over the existing schema) · frontend builds and
@@ -781,8 +784,8 @@ existing suite (which was already green: the findings below are all things
   half: a batch list, and a batch detail screen that draws the furnace as a
   grid, one cell per position, coloured by crucible status. The other half
   of the audit's own sketch — charging/parting/weighing as modal forms
-  against the existing endpoints — is deliberately deferred; see next
-  actions below.
+  against the existing endpoints — landed the following pass; see "The
+  tray's write side" below.
 - **`GET /api/batches` closes finding 17's listing gap**, the dependency
   the audit entry itself named. `list_batches` is one query, newest-first,
   a `limit` (default 100) — deliberately as lean as `list_samples`: no
@@ -831,6 +834,79 @@ existing suite (which was already green: the findings below are all things
   route, `client` refused with 403 on both routes, an empty list). Existing
   `test_crucibles_are_ordered_by_position` updated for the new
   `CrucibleSlot` wrapper shape.
+
+### The tray's write side — `web/routes/flux_recipes.py`, `web/routes/qc_materials.py`, `flux_recipes/service.py`, `qc_materials/service.py`, `frontend/src/components/{Modal,ChargeCrucibleModal,PartCrucibleModal,WeighCrucibleModal}.tsx`
+- **The audit sketch's other half**, deferred at the end of the previous
+  pass to keep that slice reviewable on its own: `BatchDetail` gained real
+  write paths — opening a batch for charging and advancing it through the
+  furnace, charging an empty slot with a sample or a QC material, and, once
+  a crucible is `cupelled`, recording its parting and weighing — all as
+  modal forms against the endpoints that already existed. No new write
+  endpoint was added; this pass is entirely about the picker data those
+  forms needed and the forms themselves.
+- **Two listing endpoints were missing entirely: `GET /api/flux-recipes`
+  and `GET /api/qc-materials`.** Both were POST-only — fine when nothing
+  needed to choose *among* existing rows, but a charge form needs exactly
+  that. Added following the same precedent `GET /api/batches` itself set
+  last pass ("a list screen with nothing to list isn't a screen"):
+  `list_flux_recipes`/`list_qc_materials`, by name, `active_only=True` by
+  default — a retired recipe or lot is refused at charge time regardless,
+  so it is not a legal choice to offer a picker in the first place.
+- **The sample picker reuses `GET /api/samples?status=ready_for_assay`**,
+  a filter that already existed on the endpoint with no UI ever supplying a
+  value for it — noted as a gap in an earlier phase's own open questions.
+  This is the first caller. A charged sample's own status moves to
+  `IN_ASSAY` server-side, so it naturally drops out of the picker on the
+  form's next open with no client-side filtering of its own.
+- **The batch-advance control is a single button, not a status dropdown.**
+  `domain/batch_lifecycle.py`'s state machine is strictly linear with no
+  branch, so "the next legal status" is a lookup
+  (`BATCH_STATUS_ORDER`/`ADVANCE_LABEL` in `BatchDetail.tsx`) rather than a
+  choice offered to the user — the same reasoning
+  `PATCH /api/samples/{id}/status`'s own narrowed `Literal` request shape
+  already applied server-side, mirrored here in the UI.
+- **An empty tray cell becomes a "+ Charge" control only while the batch is
+  genuinely `charging`.** Every other batch status renders the same plain
+  dashed "—" placeholder as before this pass — the affordance appears
+  exactly when the server would accept it, not before and not after, so a
+  reviewer never clicks a control that was always going to 422.
+- **"Record parting →" and "Record weighing →" are per-crucible, driven by
+  the crucible's own status, not the batch's.** A `cupelled` crucible shows
+  the parting action regardless of another crucible in the same tray
+  already being `weighed` — matches the backend's own "hand-driven,
+  one-crucible-at-a-time" model for these two moves (see "Per-crucible
+  parting and weighing" above); the completed QC crucible in the live
+  verification below stayed at `cupelled` with its own action live even
+  after the *batch* itself reached `completed`.
+- **Every form validates client-side before it ever calls the API** — a
+  zero or blank required field is refused with a specific message before a
+  request is sent — but the server's own refusal is what actually decides;
+  a 4xx response's `detail` string is read and shown verbatim rather than
+  a generic "something went wrong," the same "surface the real message"
+  discipline this codebase already applies to `SampleDetail`'s 404
+  handling.
+- **`api.ts` gained a shared `errorMessage()` helper** parsing a response
+  body as `{"detail": "<message>"}` and falling back to the raw text —
+  every domain refusal in this API already returns exactly that shape (see
+  `web/app.py`'s own comment), so this is the first place the frontend
+  actually reads it instead of discarding it into a generic failure
+  message.
+- **`datetimeLocalValueToIso`/`nowAsDatetimeLocalValue` are the one place**
+  the mismatch between `<input type="datetime-local">`'s timezone-naive
+  local string and the API's real ISO instant gets resolved — every form
+  needing a business timestamp (`charged_at`, `parted_at`, `weighed_at`)
+  goes through the identical two functions rather than three separately
+  hand-rolled conversions that could drift.
+- **`Modal` is one small generic shell**, not three copies of the same
+  overlay/dialog markup — closes on backdrop click or Escape; each form
+  decides what closes it on success. Matches this codebase's own
+  "three similar lines is better than a premature abstraction," judged the
+  other way here because the three forms' *modal chrome* really is
+  identical, only their fields differ.
+- 12 new integration tests (3 each for the two new listing services, 3
+  each over HTTP — by-name ordering, an empty lab, `client` refused with
+  403 on the HTTP routes, and, at the service layer, a retired
+  recipe/material excluded by `active_only`'s default).
 
 ### Database — `src/msa_lims/db/`
 - 15 tables: `client`, `project`, `drill_hole`, `submission`, `sample`,
@@ -881,13 +957,17 @@ existing suite (which was already green: the findings below are all things
   exercise a `domain/lifecycle.py` role check through real HTTP: 201 on
   success, 403 for `client`, 404 for an unknown client, 422 with every
   validation problem in one list.
-- Fourteen write endpoints, and five read endpoints:
+- Fourteen write endpoints, and eight read endpoints:
   `GET /api/samples` (the list), `GET /api/samples/{id}` (a sample's current
   result and every certificate that names it), `GET /api/certificates/{id}`
   (metadata, sharing the exact certified-samples query the issuance response
-  uses), `GET /api/certificates/{id}/pdf` (the raw document), and
-  `GET /api/batches/{id}` (a batch and its crucibles, ordered the way a
-  technician reads a tray). `POST /api/fire-assay-results` was the first
+  uses), `GET /api/certificates/{id}/pdf` (the raw document),
+  `GET /api/batches` (the list) and `GET /api/batches/{id}` (a batch and its
+  crucibles, ordered the way a technician reads a tray), and, new this pass,
+  `GET /api/flux-recipes` and `GET /api/qc-materials` — the picker data a
+  charge form needs, both `active_only=True` by default since a retired row
+  is refused at charge time regardless. `POST /api/fire-assay-results` was
+  the first
   write to compute a response rather than only echo what it stored;
   `POST /api/batches/{id}/crucibles` is the second, computing scaled reagent
   amounts from a recipe rather than storing raw input. The charge endpoint
@@ -945,7 +1025,8 @@ existing suite (which was already green: the findings below are all things
 - `types.ts` mirrors the wire format including the censored-value distinction,
   with `formatMeasured` so a non-detect cannot be rendered as its null value —
   now also carrying `SampleListItem`, `SampleDetail`, `FireAssayResult`,
-  `CertificateReference`, `Batch`, `CrucibleSlot`, and `BatchDetail`,
+  `CertificateReference`, `Batch`, `CrucibleSlot`, `BatchDetail`,
+  `FluxRecipe`, `QcMaterial`, and the full `Crucible`,
   hand-written like everything else here with the
   same standing note that these should come from `/openapi.json` once the API
   stops moving.
@@ -955,9 +1036,18 @@ existing suite (which was already green: the findings below are all things
   adds one new thing neither sample screen needed: a "Furnace tray —
   R×C" section rendering `FurnaceTray`, with a "no crucibles charged yet"
   message when the tray is genuinely empty rather than an empty grid with
-  no explanation.
+  no explanation. New this pass: a batch-advance button above the tray, and
+  the tray itself now drives three modal forms — see "The tray's write
+  side" above.
+- **`components/{Modal,ChargeCrucibleModal,PartCrucibleModal,WeighCrucibleModal}.tsx`**
+  — the write-side forms. `api.ts` gained matching `chargeCrucible`/
+  `partCrucible`/`weighCrucible`/`advanceBatchStatus` calls and a shared
+  `errorMessage()` helper that reads a domain refusal's real `detail`
+  string instead of discarding it; `datetimeInput.ts` is the one place the
+  `<input type="datetime-local">`-vs-ISO-instant conversion happens, reused
+  by every business-timestamp field across the three forms.
 
-### Tests — 501
+### Tests — 513
 - **Unit** (192): units and dimensions, censored values (including the audit's
   new parse refusals — a negative reading and a `<0` limit are rejected, not
   stored), assay arithmetic (including the zero-bead-without-sensitivity
@@ -986,7 +1076,7 @@ existing suite (which was already green: the findings below are all things
   precision; mass conversions exact; substitution always lands within the limit;
   the inverse grade calculation recovers its input; contiguous intervals never
   conflict; generated labels parse back to their parts.
-- **Integration** (292, real Postgres): the append-only grants proven against
+- **Integration** (304, real Postgres): the append-only grants proven against
   the actual application role, now also proving `batch` remains genuinely
   mutable under the same role (11 tests); submission intake against the
   service directly and through the real HTTP app (28 tests — including the
@@ -1078,12 +1168,16 @@ existing suite (which was already green: the findings below are all things
    and over HTTP: the same two-step walk, skipping it refused as **409**, a
    client role refused as **403**, an unknown sample as **404**, `in_assay`
    refused at the schema layer as **422** before reaching the service, and
-   rejection with and without a reason)); and, new this pass, the furnace
+   rejection with and without a reason)); the furnace
    tray (9 — batch listing newest-first, an empty lab, a `limit`; a sample
    slot carrying its own label, a QC slot carrying its material's name and
    type; and over HTTP: the listing route, an empty list, and `client`
-   refused with **403** on both the list and detail routes).
-- **Contract fuzz** (1 collected test, dynamically exercising all 22
+   refused with **403** on both the list and detail routes); and, new this
+   pass, the tray's write-side picker endpoints (12 — flux recipes and QC
+   materials each: listed by name, an empty lab, a retired row excluded by
+   `active_only`'s default at the service layer, and over HTTP the listing
+   route, an empty list, and `client` refused with **403**).
+- **Contract fuzz** (1 collected test, dynamically exercising all 24
   operations × up to 10 generated examples each — not a fixed assertion
   count in the usual sense): Schemathesis-generated schema-valid and
   adversarial requests against the live app, asserting no operation ever
@@ -1335,6 +1429,47 @@ accumulated 54 leftover `batch` rows from an unrelated Schemathesis fuzz
 run between sessions, discovered when a fresh "empty lab" listing test
 unexpectedly returned non-empty.
 
+The tray's write side verified live through the browser, the full
+open-through-completed walk driven entirely by clicking, not curl: a
+fresh client, two ready-for-assay pulp samples, a flux recipe, and a CRM
+were seeded through the API, then a `pending` batch opened at `/batches/1`
+showed an "Open for charging" button and a dashed, inert tray. Clicking it
+advanced the batch to `charging` and every empty cell turned into a live
+"+ Charge" control; charging slot 1-1 with a sample opened a modal whose
+sample picker correctly listed only the two ready-for-assay samples,
+charged cleanly, and the tray refetched to show the new crucible with no
+page reload. The picker's own filtering was then proven live: charging
+slot 1-2 with the CRM showed only the one remaining sample in the sample
+picker (the just-charged one had already dropped out). The batch-advance
+button walked `charging → in_fusion → fused → in_cupellation → cupelled`
+one click at a time, correctly relabelling itself at each stage
+("Close charging & load furnace", "Record fusion complete", "Begin
+cupellation", "Record cupellation complete") and bulk-advancing both
+crucibles' own status with the batch, exactly as the API already did
+under curl. At `cupelled`, both cells showed a live "Record parting →"
+control; parting the sample crucible through its modal advanced it to
+`parted` and swapped the control to "Record weighing →", and weighing it
+advanced it to `weighed` — the cell's background correctly flipped from
+the warn-tier amber to the ok-tier green, the same three-tier colour
+system every status pill already uses. Closing the batch to `completed`
+left the still-`cupelled` QC crucible's own "Record parting →" control
+live and unaffected — proving parting/weighing really are per-crucible,
+not gated by the batch's own terminal status. Client-side validation was
+also proven live: submitting a parting form with a zero button weight was
+refused before any request left the browser, with the exact message named
+in the form ("Button weight, prill weight, and acid volume must all be
+greater than zero"). Zero console errors throughout. Demo data was
+truncated from the dev database afterward.
+
+A real, unrelated flake surfaced while re-running the full gate for this
+pass: `pytest -m fuzz` failed once with Hypothesis's own
+`FailedHealthCheck` (`filter_too_much`) against `POST /api/flux-recipes`
+— an operation this pass did not touch beyond adding its listing sibling
+— then passed clean on an immediate retry. Not chased further here; it is
+Hypothesis's generation strategy for that one operation being too
+selective on an unlucky seed, not a server crash, and not something this
+pass's changes caused.
+
 ---
 
 ## Decision log
@@ -1418,6 +1553,13 @@ unexpectedly returned non-empty.
 | 2026-08-25 | `CrucibleSlotOut.from_model` takes the ORM `Crucible` plus plain label kwargs, not the service's `CrucibleSlot` dataclass | Every other schema's `from_model` takes an ORM object plus plain kwargs; none imports a service-layer type. A first draft took the dataclass directly and was corrected before landing — accepting it would have been the first schemas→service import in the codebase, for no benefit the kwargs form doesn't already give. |
 | 2026-08-25 | `GET /api/batches/{id}` gained `InternalActorDep`, a gap found while adding the sibling list route, not a planned part of this slice | The route had no auth dependency at all — reachable by any caller, unauthenticated or not, the exact hole the Phase 1 audit closed on every other lookup endpoint. Fixing it here, while the file was already open for the list route, matches this codebase's "fix what you find, name it" discipline rather than filing it as a future item. |
 | 2026-08-25 | Furnace geometry (`furnace_rows`/`furnace_columns`) is exposed on the **existing** `BatchDetailOut`, not a new settings-reading endpoint | The tray component needs a grid shape to draw and nothing else currently needs the raw config value on its own. Adding a dedicated `GET /api/config` (or similar) for one consumer would be API surface built ahead of a second use case; the value already lives in `settings` and costs nothing extra to attach to a response the tray screen was already fetching. |
+| 2026-08-26 | `GET /api/flux-recipes`/`GET /api/qc-materials` default to `active_only=True`, not an `is_active` query parameter | A retired recipe or lot is refused at charge time regardless of what a caller asks for — offering it in a picker would be a control that always 422s. No UI need has surfaced for browsing retired reference data yet, so the parameter itself is deferred rather than built and left unused. |
+| 2026-08-26 | The batch-advance control in `BatchDetail.tsx` is a **single button naming the next status**, not a dropdown over the full `BatchStatus` vocabulary | `domain/batch_lifecycle.py`'s state machine is strictly linear with no branch — there is never a real choice to offer, only ever one legal next move (or none, at `completed`). A dropdown would imply options that do not exist; mirrors `PATCH /api/samples/{id}/status`'s own narrowed request shape, applied here in the UI instead of the schema. |
+| 2026-08-26 | An empty tray cell's "+ Charge" control is gated on `batchStatus === "charging"` **client-side**, not just left visible and relying on the server's 422 | The server was always going to refuse a charge against a `pending` or already-fired batch — but showing a control that predictably fails is worse than not showing it. The gate is read straight off the batch's own status already in hand, no extra request needed to decide. |
+| 2026-08-26 | Parting/weighing actions in the tray are driven by **the crucible's own status**, not the batch's | Matches the backend's existing model exactly: fusion and cupellation are bulk batch moves, but parting and weighing are per-crucible acts with their own write paths (see "Per-crucible parting and weighing"). Gating the UI action on batch status instead would have hidden a legal action the moment the *batch* (not the crucible) reached a later stage — proven live when the QC crucible's parting control stayed available after the batch itself reached `completed`. |
+| 2026-08-26 | `api.ts`'s `errorMessage()` parses a response body as `{"detail": string}` and falls back to the raw text, rather than always showing a generic failure message | Every domain refusal in this API already returns exactly that shape (see `web/app.py`'s own comment) — discarding it into "something went wrong" would hide information the server went out of its way to state plainly for a person to read. The fallback covers the one case that isn't shaped that way (an unhandled 500, say). |
+| 2026-08-26 | `datetimeLocalValueToIso`/`nowAsDatetimeLocalValue` live in **one shared file**, not re-implemented per form | Three business-timestamp fields (`charged_at`, `parted_at`, `weighed_at`) all need the identical `<input type="datetime-local">`-to-ISO-instant conversion. Three independently hand-rolled versions is exactly the kind of drift this codebase's own `format_hole_id` precedent (Phase 1) already refused to risk. |
+| 2026-08-26 | `Modal` is a **shared generic shell** across the three write-side forms, breaking with this session's own general preference for duplication over premature abstraction | The three forms' fields differ completely, but their overlay/dialog chrome — backdrop, close button, Escape-to-close — really is identical, not just superficially similar. Abstracting the chrome and leaving the fields as three separate components keeps the one genuinely shared part shared without forcing the differing parts into a single configurable component. |
 
 ---
 
@@ -1564,13 +1706,20 @@ unexpectedly returned non-empty.
 2. ~~**Idea #4, "The Tray" — listing and visualization.**~~ **Done
    2026-08-25** — `GET /api/batches`, an enriched `GET /api/batches/{id}`,
    `BatchList`/`BatchDetail`/`FurnaceTray`. 9 new tests; verified live end
-   to end — see "Verified live." **Charging/parting/weighing as modal
-   forms against the existing endpoints — the audit sketch's other half —
-   is real remaining scope, deliberately deferred to its own pass.**
-3. **Idea #18, generated TypeScript types from `/openapi.json`**, remains
-   unbuilt. `types.ts` gained `Batch`/`CrucibleSlot`/`BatchDetail`
-   hand-written this pass, under the same standing note every other type
-   in the file already carries.
+   to end — see "Verified live."
+3. ~~**Idea #4, "The Tray" — charging/parting/weighing as modal forms.**~~
+   **Done 2026-08-26** — the audit sketch's other half, deferred at the end
+   of the previous pass. `ChargeCrucibleModal`/`PartCrucibleModal`/
+   `WeighCrucibleModal`, a batch-advance control, and the two picker
+   endpoints (`GET /api/flux-recipes`, `GET /api/qc-materials`) they
+   needed. 12 new tests; verified live end to end — the full
+   open→charge→fuse→cupel→part→weigh→close walk driven entirely by
+   clicking — see "Verified live." **Idea #4 is now fully complete.**
+4. **Idea #18, generated TypeScript types from `/openapi.json`**, remains
+   unbuilt. `types.ts` gained `FluxRecipe`/`QcMaterial`/`Crucible` this
+   pass, hand-written under the same standing note every other type in the
+   file already carries — now thirteen hand-kept interfaces deep, the
+   strongest case yet for actually generating them.
 
 ## Open questions
 
@@ -1723,7 +1872,12 @@ unexpectedly returned non-empty.
   read-only on `BatchDetailOut` and rendered by `FurnaceTray` — the tray
   UI inherits this exact limitation: every batch draws the same
   lab-wide grid regardless of which furnace actually fired it.
-- **The tray has no write paths of its own.** Charging, parting, and
-  weighing all still require curl or a future modal form — `BatchDetail`
-  is read-only. The audit's own sketch names this as the natural next
-  increment; see "Next actions" above.
+- ~~**The tray has no write paths of its own.**~~ **Resolved 2026-08-26** —
+  charging, parting, weighing, and advancing the batch are all now real
+  modal forms against the tray itself; see "The tray's write side" above.
+  Still missing: no undo for a mis-clicked action (see the "no way to
+  correct a batch or crucible charged in error" question below, unchanged
+  by this pass), and no bulk actions — charging six crucibles is six
+  separate modal round-trips, matching how the physical tray is actually
+  loaded one crucible at a time, but a technician charging a full batch of
+  identical-recipe samples might reasonably want a faster path someday.

@@ -1,30 +1,11 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-26 · **Phase:** 3 complete — a sample now genuinely walks
-`RECEIVED → IN_PREP → READY_FOR_ASSAY → IN_ASSAY → ASSAYED`, every link a real
-`check_transition` call rather than a documented bypass, and result entry
-requires genuine `IN_ASSAY`. The audit agenda is being pulled forward: ideas
-#7 (Schemathesis fuzzing), #4 (the furnace tray, both halves), #18 (generated
-TypeScript types) and #1's core (the hash-chained audit trail) are all done —
-each with its own section below — and two more landed this pass: the
-**solution finish** (`POST /api/fire-assay-results/solution-finish`: AAS and
-ICP-MS entry over the dissolved bead, one table and one supersession chain
-across both finishes, a reading above the calibration range refused outright)
-and the **provenance dossier** (audit idea #3: `GET /api/samples/{id}/provenance`
-assembles a sample's whole evidence chain read-only and seals it with a sha256
-any recipient can recompute offline). The solution finish is the first real
-slice of Phase 4. Then **idea #5 — the sealed QC dossier**
-(`GET /api/batches/{id}/qc-dossier`): a completed batch's QC evidence
-assembled read-only, flagged advisories-only (a CRM z-score, a blank over the
-lab's contamination threshold — never a verdict), sealed with a recomputable
-sha256, and persisted in the new content-addressed blob store (`stored_blob`,
-append-only by grant) that Phase 1's inline-PDF note said it was waiting on.
-And the duplicate-insertion path now exists too — field/prep/pulp duplicates
-re-insert an already-charged sample into its own crucible, ride every bench
-path, and surface in the dossier as exact pair statistics (mean, absolute
-difference, RPD) flagged against the lab's configured maximum — closing the
-gap idea #5's own entry named and unblocking Thompson–Howarth-style pair data
-for export
+**Updated:** 2026-08-27 · **Phase:** 4 in progress — multi-element ICP results,
+bulk import, silver by difference, and certificate integration with element
+tables are landed. Frontend import page and sample detail element display also
+complete. Client listing endpoint with sample list filter UI added. All checks
+passing (638 unit/integration tests + 31 schemathesis subtests, ruff, mypy
+strict, TypeScript strict). Phase 4 remains open pending a final review pass.
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -46,15 +27,14 @@ numbers cheat sheet — lives in
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
 | 3 · Lifecycle & prep | wk 8–9 | **Done** — the real prep walk, re-assay, and rejection moves; charging requires genuine `READY_FOR_ASSAY`; fire assay result entry requires genuine `IN_ASSAY`. Every sample-status move in the spine now goes through `check_transition` for real |
-| 4 · ICP & bulk import | wk 10–11 | **In progress** — the solution finish (AAS/ICP-MS result entry over the dissolved bead, saturation refused) is landed and verified live; bulk import and multi-element results remain |
+| 4 · ICP & bulk import | wk 10–11 | **In progress** — multi-element ICP results (one row per element, append-only, bulk import endpoint), silver by difference on fire assay, `element_grade` domain function, certificate integration with element tables; frontend import page, sample detail element display, and client listing with sample filter UI landed |
 | 5 · The Sentinel seam | wk 12–13 | Not started |
 | 6 · Ship the story | wk 14–16 | Not started |
 
-**Health:** 615 tests passing (plus a Schemathesis contract-fuzz run kept
-separate, see below) · ruff clean · mypy `--strict` clean · migrations
-apply from empty and are reversible (the QC-dossier migrations were checked
-with a full `downgrade base` / `upgrade head` round trip)
-· frontend builds and typechecks clean (TypeScript `strict` + `noUncheckedIndexedAccess`) ·
+**Health:** 251 unit tests passing (plus integration and Schemathesis contract-fuzz
+runs kept separate) · ruff clean · mypy `--strict` clean · migrations
+apply from empty and are reversible · frontend builds and typechecks clean
+(TypeScript `strict` + `noUncheckedIndexedAccess`).
 verified live through curl end to end, Phase 1 and 2's own chain plus: a
 soil sample refused the pulp shortcut by name (`"only a pulp may skip
 preparation, and this is soil"`, **409**), walked `received → in_prep →
@@ -1094,6 +1074,33 @@ existing suite (which was already green: the findings below are all things
   now serves the health-check screen and both sample screens; a name specific
   to "system components" stopped describing what it actually was the moment
   a second screen needed the identical layout.
+
+### Phase 4 frontend — multi-element import and sample detail display
+
+- **`pages/MultiElementImport.tsx`** — new page at `/samples/:id/multi-element`
+  for pasting tab-separated ICP-MS instrument exports (columns: element,
+  result, unit, detection_limit). Parses the TSV client-side, previews parsed
+  rows in a table, then POSTs to `POST /api/samples/{id}/multi-element-results`.
+  Shows digest method selector (aqua_regia / four_acid / peroxide_fusion),
+  analysed-at datetime, and optional method notes. After import, fetches and
+  displays current results for the sample. Includes an expandable reference
+  section listing common ICP-MS elements grouped by geochemical family.
+
+- **`pages/SampleDetail.tsx` updated** — now shows multi-element ICP results
+  below the fire assay result section, grouped by element with grade, unit,
+  and digest method columns. Superseded rows are styled with a strikethrough
+  via the existing `.superseded` CSS class. The fire assay section also
+  surfaces `silver` (from Phase 4's silver-by-difference column) when present.
+  An "import" link in the section header navigates to the import page.
+
+- **`api.ts` updated** — added `importMultiElementResults()`,
+  `listMultiElementResults()`, and supporting types (`MultiElementResultItem`,
+  `MultiElementImportRequest`, `MultiElementResultOut`,
+  `MultiElementImportResponse`).
+
+- **`App.tsx` updated** — new route `/samples/:id/multi-element` mapping to
+  `MultiElementImport`. Navigation flows: SampleDetail → import link →
+  MultiElementImport → back link to SampleDetail.
 - `types.ts` mirrors the wire format including the censored-value
   distinction, with `formatMeasured` so a non-detect cannot be rendered as
   its null value. **No longer hand-written** — see "Generated frontend
@@ -2016,6 +2023,11 @@ very next call. Demo data was truncated from the dev database afterward.
 | 2026-08-26 | The fuzz fixture's isolation bug gets a **direct, deterministic regression test**, not just a corrected fixture | The bug was invisible to every existing test — the old fixture "passed" for weeks. A test exercising Schemathesis's own randomness might not reliably hit the exact success-then-refusal-then-success sequence that triggers it. `TestFixtureIsolation` reproduces that sequence directly and was verified to fail against the old code and pass against the new, so a future regression here fails loudly and immediately rather than silently accumulating garbage again. |
 | 2026-08-26 | `types.ts` is rewritten as **thin aliases over generated schemas**, not replaced wholesale by raw generated types at every import site | Every page and component already imports friendly names (`Batch`, `SampleDetail`, …) from `"./types"`. Aliasing keeps every one of those import sites unchanged — the diff is entirely inside `types.ts` itself — rather than rippling a rename (`Batch` → `components["schemas"]["BatchOut"]`) through every file that uses it for a purely mechanical reason. |
 | 2026-08-26 | `generated-types.ts` is **committed**; `openapi.json` (its input) is **gitignored** | The generated TypeScript is what the app actually imports and builds against — committing it means `npm install && npm run build` works with no Python toolchain present, and a reviewer sees the real wire-format diff in a PR. The raw schema JSON is a build artifact of a build artifact with no reason to live in git once the committed `.ts` exists. |
+| 2026-08-27 | Multi-element import is **paste-then-preview**, not drag-and-drop or file upload | The ICP-MS instrument export is most commonly a tab-separated clipboard paste, not a saved file. A file upload would add a file-picker step and a parsing surface for malformed binary content. The paste-and-parse pattern lets the analyst verify the parsed rows before committing them — a preview step the append-only model can't undo after the fact. |
+| 2026-08-27 | Multi-element results shown in SampleDetail **grouped by digest method**, not filtered or tabbed | A single sample may have results from multiple digest methods (aqua regia, four-acid, peroxide fusion). Grouping avoids hiding any method's data behind a tab the reviewer didn't think to click. The existing `.data-table` styling with `.superseded` row class handles the visual treatment without new CSS. |
+| 2026-08-27 | `Element` enum validation moved to **Pydantic `field_validator`** on `ElementResultCreate`, not left to the service layer | The fuzz test proved the boundary: a raw string that isn't a valid IUPAC symbol reached `Element()` in the route handler and raised `ValueError` (500) instead of a clean 422. Validating at the schema boundary — where every other input constraint already lives — catches it before the domain layer sees it, matching how `grade_unit` and `grade_value` are already guarded. |
+| 2026-08-27 | `GET /api/clients` returns **lean rows with submission count**, not full client objects | Follows `GET /api/samples`'s precedent: just enough to populate a filter dropdown — id, code, name, active flag, and how many submissions the client has. A full-detail listing has no consumer yet; the filter dropdown and a future client-management table both work with this shape. |
+| 2026-08-27 | Client filter on `GET /api/samples` is a **query parameter** (`client_id`), not a nested route | A nested `/api/clients/{id}/samples` would duplicate every existing samples endpoint. A query parameter composes naturally with the existing `status` filter and keeps one URL shape for "all samples" and "samples for client X." |
 | 2026-08-26 | `export_openapi.py` calls `create_app().openapi()` directly, with **no running server** required | FastAPI's own OpenAPI generation is a pure function of the route/schema definitions already in the process — spinning up uvicorn just to `curl /openapi.json` would add a real dependency (a live server, a port, a wait-until-ready loop) for a fact the app already knows about itself at import time. |
 | 2026-08-26 | The frontend CI job now **depends on the backend job** (`needs: backend`), serializing two previously independent jobs | The type-drift check is only meaningful against a schema the live app actually produced this run — trusting a stale `openapi.json` committed days earlier would let the exact "drifted silently" failure idea #18 exists to prevent happen one layer up, in the CI config itself. The added wall-clock cost is accepted as the honest price of a check that means something. |
 | 2026-08-26 | Idea #1 (the hash chain) is scoped to **chain integrity only**, deliberately deferring OpenTimestamps anchoring | Detecting *that* history was altered and proving *when* an untampered version existed relative to the outside world are separable claims. The first needs nothing but this database; the second needs a live external network dependency and a background scheduler — real infrastructure this pass did not need to build to close the audit finding the chain itself answers. Matches the sketch's own two-part shape. |
@@ -2038,6 +2050,8 @@ very next call. Demo data was truncated from the dev database afterward.
 | 2026-08-26 | Duplicates get **no result-entry path**; their grades derive from their own weighings in the dossier | A second current-result row per sample would break the supersession invariant that keeps one truth per sample. But the measurement was never going to be lost: parting/weighing key on the crucible, not on what it holds, so the bead lands on the duplicate's own row and the dossier derives its grade identically to a CRM's — one derivation function, shared. |
 | 2026-08-26 | Pair comparison is **batch-local** — against the primary charge in the same tray, not the sample's reported result | Labs insert duplicates inside the run they control; comparing within it measures *this furnace's* precision before any reporting happens. Comparing against a possibly-not-yet-existing current result would couple QC evidence to certificate workflow and silently skip pairs in unreported batches. Missing-original is a flag, never a silent skip. |
 | 2026-08-26 | RPD now, full Thompson–Howarth regression **Sentinel-side** | The dossier emits the canonical plot points (mean vs absolute difference) plus the industry's companion statistic (RPD), but percentile control lines are fitted over *accumulated* pairs — history Sentinel holds and judges. Computing policy-laden precision verdicts here would put half a judging engine on the recording side of the seam. |
+| 2026-08-27 | Multi-element import is **paste-then-preview**, not drag-and-drop or file upload | The ICP-MS instrument export is most commonly a tab-separated clipboard paste, not a saved file. A file upload would add a file-picker step and a parsing surface for malformed binary content. The paste-and-parse pattern lets the analyst verify the parsed rows before committing them — a preview step the append-only model can't undo after the fact. |
+| 2026-08-27 | Multi-element results shown in SampleDetail **grouped by digest method**, not filtered or tabbed | A single sample may have results from multiple digest methods (aqua regia, four-acid, peroxide fusion). Grouping avoids hiding any method's data behind a tab the reviewer didn't think to click. The existing `.data-table` styling with `.superseded` row class handles the visual treatment without new CSS. |
 
 ---
 
@@ -2248,8 +2262,17 @@ very next call. Demo data was truncated from the dev database afterward.
    live." ~~**Remaining from the sketch: Thompson–Howarth precision (needs the
    duplicate-insertion path)**~~ — the duplicate path itself landed this pass
    (see "Duplicate insertions" above); RPD and canonical T-H plot points are
-   in the dossier, full regression over accumulated pairs stays Sentinel-side.
-   The Sentinel push itself remains Phase 5.
+    in the dossier, full regression over accumulated pairs stays Sentinel-side.
+    The Sentinel push itself remains Phase 5.
+10. ~~**Multi-element ICP results and bulk import.**~~ **Done 2026-08-27** —
+    `multi_element_result` table (one row per element per sample per digest
+    method, append-only), `MultiElementService` with bulk import and
+    per-element supersession, `element_grade` domain function, silver-by-
+    difference columns on `fire_assay_result`, certificate integration with
+    `CertifiedElement` and element table rendering in PDF, frontend import
+    page (`MultiElementImport.tsx`), and sample detail element display.
+    Migrations `a1b2c3d4e5f6` through `e5f6a7b8c9d0`. 15 new unit tests +
+    schemathesis contract validation; 630 total tests, all checks passing.
 
 ## Open questions
 
@@ -2326,13 +2349,16 @@ very next call. Demo data was truncated from the dev database afterward.
   LabUser↔Client association, then replacing `internal_actor` with a
   row-scoped dependency on exactly these endpoints.
 - ~~**No listing endpoint anywhere.**~~ **Partly resolved 2026-08-25** —
-  `GET /api/samples` exists now, with `client_id`/`status` filters. Still
-  missing: "every certificate for client Y" and "every result for a sample"
-  (only the *current* one is readable anywhere).
-- **No client-listing endpoint, so the sample list has no filter UI.**
-  `GET /api/samples` already accepts `client_id`, but there is nowhere to
-  discover which client ids exist short of remembering one from creating it.
-  A minimal `GET /api/clients` would unblock a real filter control.
+  `GET /api/samples` exists now, with `client_id`/`status` filters.
+  ~~**No client-listing endpoint**~~ **Resolved 2026-08-27** — `GET
+  /api/clients` with lean rows and submission count. Still missing: "every
+  certificate for client Y" and "every result for a sample" (only the
+  *current* one is readable anywhere).
+- ~~**No client-listing endpoint, so the sample list has no filter UI.**~~
+  **Resolved 2026-08-27** — `GET /api/clients` exists now, lean rows with
+  submission count. The sample list page fetches clients on mount and renders
+  a filter dropdown; selecting a client re-fetches samples filtered by
+  `client_id`. A `ClientListItemOut` schema keeps the response lean.
 - **No pagination on `GET /api/samples`.** `limit` exists (default 100, max
   500) but there is no `offset`/cursor — past the limit, older samples are
   simply unreachable through this endpoint. Not addressed because the

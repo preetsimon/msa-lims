@@ -119,6 +119,68 @@ MATERIAL_TYPES: frozenset[QcMaterialType] = frozenset(
 )
 
 
+class Element(Enum):
+    """An analyte measured by multi-element ICP analysis.
+
+    The string values are IUPAC symbols — the same labels an instrument export
+    uses in its header row, and the same labels a certificate must carry. The
+    set is a reasonable ICP-MS suite for gold-ore geochemistry; extending it is
+    a code change, not a data migration, because the enum is the closed
+    vocabulary a typo-free import depends on.
+    """
+
+    AG = "Ag"
+    AL = "Al"
+    AS = "As"
+    AU = "Au"
+    B = "B"
+    BA = "Ba"
+    BE = "Be"
+    BI = "Bi"
+    CA = "Ca"
+    CD = "Cd"
+    CO = "Co"
+    CR = "Cr"
+    CU = "Cu"
+    FE = "Fe"
+    GA = "Ga"
+    GE = "Ge"
+    HG = "Hg"
+    IN = "In"
+    K = "K"
+    LA = "La"
+    LI = "Li"
+    MG = "Mg"
+    MN = "Mn"
+    MO = "Mo"
+    NA = "Na"
+    NB = "Nb"
+    NI = "Ni"
+    P = "P"
+    PB = "Pb"
+    PD = "Pd"
+    PT = "Pt"
+    RE = "Re"
+    S = "S"
+    SB = "Sb"
+    SC = "Sc"
+    SE = "Se"
+    SN = "Sn"
+    SR = "Sr"
+    TA = "Ta"
+    TE = "Te"
+    TH = "Th"
+    TI = "Ti"
+    TL = "Tl"
+    U = "U"
+    V = "V"
+    W = "W"
+    Y = "Y"
+    YB = "Yb"
+    ZN = "Zn"
+    ZR = "Zr"
+
+
 class AssayMethod(Enum):
     """How the gold finish was determined.
 

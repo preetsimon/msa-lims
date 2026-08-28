@@ -95,3 +95,7 @@ export type ProvenanceCrucible = components["schemas"]["ProvenanceCrucibleOut"];
 export type ProvenanceResult = components["schemas"]["ProvenanceResultOut"];
 export type ProvenanceCertificate = components["schemas"]["ProvenanceCertificateOut"];
 export type ProvenanceAuditEntry = components["schemas"]["ProvenanceAuditEntryOut"];
+
+/** A client listing row — `GET /api/clients`. Lean: code, name, active flag,
+ * and submission count for filter dropdowns. */
+export type ClientListItem = components["schemas"]["ClientListItemOut"];

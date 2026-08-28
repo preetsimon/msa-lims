@@ -142,3 +142,68 @@ class TestCreatingAProject:
             headers=ANALYST,
         )
         assert response.status_code == 201
+
+
+class TestListingClients:
+    def test_an_empty_lab_lists_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/clients", headers=MANAGER)
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_a_client_appears_in_the_list(self, client: TestClient) -> None:
+        client.post("/api/clients", json=create_client_body(), headers=MANAGER)
+        response = client.get("/api/clients", headers=MANAGER)
+        assert response.status_code == 200
+        items = response.json()
+        assert len(items) == 1
+        assert items[0]["code"] == "MSA"
+        assert items[0]["name"] == "MSA Test Mining Co"
+        assert items[0]["is_active"] is True
+        assert items[0]["submission_count"] == 0
+
+    def test_newest_client_first(self, client: TestClient) -> None:
+        client.post(
+            "/api/clients",
+            json=create_client_body(code="OLD", name="Old Client"),
+            headers=MANAGER,
+        )
+        client.post(
+            "/api/clients",
+            json=create_client_body(code="NEW", name="New Client"),
+            headers=MANAGER,
+        )
+        response = client.get("/api/clients", headers=MANAGER)
+        items = response.json()
+        assert len(items) == 2
+        assert items[0]["code"] == "NEW"
+        assert items[1]["code"] == "OLD"
+
+    def test_submission_count_increments(self, client: TestClient) -> None:
+        client_id = client.post("/api/clients", json=create_client_body(), headers=MANAGER).json()[
+            "id"
+        ]
+        project_id = client.post(
+            "/api/projects",
+            json={"client_id": client_id, "name": "Drill Program"},
+            headers=MANAGER,
+        ).json()["id"]
+        client.post(
+            "/api/submissions",
+            json={
+                "client_id": client_id,
+                "project_id": project_id,
+                "received_at": "2026-08-24T10:00:00Z",
+                "samples": [{"sample_id": "MSA-24-SO-00417", "sample_type": "soil"}],
+            },
+            headers=ANALYST,
+        )
+        response = client.get("/api/clients", headers=MANAGER)
+        items = response.json()
+        assert len(items) == 1
+        assert items[0]["submission_count"] == 1
+
+    def test_a_client_role_is_refused_with_403(self, client: TestClient) -> None:
+        client.post("/api/clients", json=create_client_body(), headers=MANAGER)
+        headers = {"X-Actor": "ext@lab", "X-Actor-Role": "client"}
+        response = client.get("/api/clients", headers=headers)
+        assert response.status_code == 403

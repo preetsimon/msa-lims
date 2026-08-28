@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { ApiError, getSample } from "../api";
+import { ApiError, getSample, listMultiElementResults, type MultiElementResultOut } from "../api";
 import { StatusPill } from "../components/StatusPill";
 import { formatMeasured, type SampleDetail as SampleDetailData } from "../types";
 
@@ -9,15 +9,21 @@ export function SampleDetail() {
   const { id } = useParams<{ id: string }>();
   const [sample, setSample] = useState<SampleDetailData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [elements, setElements] = useState<MultiElementResultOut[]>([]);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setSample(null);
     setError(null);
+    setElements([]);
     getSample(Number(id))
       .then((data) => {
         if (!cancelled) setSample(data);
+        return listMultiElementResults(Number(id));
+      })
+      .then((els) => {
+        if (!cancelled) setElements(els);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -79,6 +85,12 @@ export function SampleDetail() {
               <dl className="detail-grid">
                 <dt>Au</dt>
                 <dd className="grade">{formatMeasured(sample.current_result.au)}</dd>
+                {sample.current_result.silver && (
+                  <>
+                    <dt>Ag</dt>
+                    <dd className="grade">{formatMeasured(sample.current_result.silver)}</dd>
+                  </>
+                )}
                 <dt>Method</dt>
                 <dd className="muted">{sample.current_result.method}</dd>
                 <dt>Bead weight</dt>
@@ -96,6 +108,44 @@ export function SampleDetail() {
               </dl>
             ) : (
               <p className="muted">No result yet.</p>
+            )}
+          </section>
+
+          <section>
+            <h2>
+              Multi-element results{" "}
+              <Link
+                to={`/samples/${sample.id}/multi-element`}
+                style={{ fontSize: "0.8rem", fontWeight: 400 }}
+              >
+                import
+              </Link>
+            </h2>
+            {elements.length === 0 ? (
+              <p className="muted">No ICP results yet.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Element</th>
+                      <th>Grade</th>
+                      <th>Unit</th>
+                      <th>Digest</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {elements.map((el) => (
+                      <tr key={el.id} className={el.supersedes_id !== null ? "superseded" : undefined}>
+                        <td>{el.element}</td>
+                        <td>{el.grade_value}</td>
+                        <td className="muted">{el.grade_unit}</td>
+                        <td className="muted">{el.digest_method.replace(/_/g, " ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
 

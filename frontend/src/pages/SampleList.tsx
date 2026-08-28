@@ -1,17 +1,28 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { listSamples } from "../api";
+import { listClients, listSamples, type ClientListItem } from "../api";
 import { StatusPill } from "../components/StatusPill";
 import type { SampleListItem } from "../types";
 
 export function SampleList() {
   const [samples, setSamples] = useState<SampleListItem[] | null>(null);
+  const [clients, setClients] = useState<ClientListItem[]>([]);
+  const [clientId, setClientId] = useState<number | "">("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    listClients()
+      .then(setClients)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
-    listSamples()
+    setSamples(null);
+    setError(null);
+    const params = clientId !== "" ? { client_id: clientId } : undefined;
+    listSamples(params)
       .then((data) => {
         if (!cancelled) setSamples(data);
       })
@@ -21,7 +32,7 @@ export function SampleList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [clientId]);
 
   return (
     <main>
@@ -29,6 +40,27 @@ export function SampleList() {
         <h1>Samples</h1>
         <p className="lede">Every sample received, most recent first.</p>
       </header>
+
+      {clients.length > 0 && (
+        <div className="filter-bar">
+          <label htmlFor="client-filter">Client</label>
+          <select
+            id="client-filter"
+            value={clientId}
+            onChange={(e) => {
+              const val = e.target.value;
+              setClientId(val === "" ? "" : Number(val));
+            }}
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.code} — {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
       {!samples && !error && <p className="muted">Loading…</p>}

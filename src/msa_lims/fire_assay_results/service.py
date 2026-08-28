@@ -77,7 +77,7 @@ from sqlalchemy.orm import Session, aliased
 
 from msa_lims.db.audit import record_audit_event
 from msa_lims.db.models import Crucible, FireAssayResult, LabUser, Sample
-from msa_lims.domain.assay import gravimetric_grade, solution_finish_grade
+from msa_lims.domain.assay import gravimetric_grade, silver_by_difference, solution_finish_grade
 from msa_lims.domain.enums import (
     MAY_ENTER_RESULTS,
     AssayMethod,
@@ -133,6 +133,9 @@ class FireAssayResultInput:
     sample_weight_g: Decimal | None
     balance_sensitivity_mg: Decimal | None
     analysed_at: datetime
+    #: The doré bead weight (Au + Ag) before parting. When supplied alongside
+    #: ``gold_bead_mg``, silver by difference is computed and stored.
+    dore_bead_mg: Decimal | None = None
     notes: str | None = None
     #: Set both to correct an existing result; see the module docstring.
     supersedes_id: int | None = None
@@ -337,6 +340,19 @@ class FireAssayResultService:
             balance_sensitivity_mg=data.balance_sensitivity_mg,
         )
 
+        # Silver by difference: computed when both doré and gold bead weights
+        # are present.  The doré weight comes from the caller; the gold weight
+        # is always resolved above.  Absent a doré weight, silver columns stay
+        # null — the lab did not supply the measurement, not "zero silver".
+        silver = None
+        dore_weight = data.dore_bead_mg
+        if dore_weight is not None:
+            silver = silver_by_difference(
+                dore_bead_mg=dore_weight,
+                gold_bead_mg=bead_weight,
+                sample_weight_g=portion_weight,
+            )
+
         result = FireAssayResult(
             sample_id=sample.id,
             method=AssayMethod.FIRE_ASSAY_GRAVIMETRIC,
@@ -347,6 +363,11 @@ class FireAssayResultService:
             au_detection_limit=grade.detection_limit,
             au_censored=grade.censored,
             au_unit=grade.unit.value,
+            silver_bead_mg=dore_weight - bead_weight if dore_weight is not None else None,
+            silver_value=silver.value if silver is not None else None,
+            silver_detection_limit=silver.detection_limit if silver is not None else None,
+            silver_censored=silver.censored if silver is not None else None,
+            silver_unit=silver.unit.value if silver is not None else None,
             analyst_id=analyst.id,
             analysed_at=data.analysed_at,
             crucible_id=crucible.id if crucible is not None else None,

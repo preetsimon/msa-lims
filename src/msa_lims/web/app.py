@@ -38,9 +38,17 @@ from msa_lims.drill_holes.service import DrillHoleValidationError
 from msa_lims.fire_assay_results.service import (
     CrucibleNotFoundError,
     FireAssayResultValidationError,
-    SampleNotFoundError,
+)
+from msa_lims.fire_assay_results.service import (
+    SampleNotFoundError as FireAssaySampleNotFoundError,
 )
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError, FluxRecipeValidationError
+from msa_lims.multi_element.service import (
+    MultiElementResultError,
+)
+from msa_lims.multi_element.service import (
+    SampleNotFoundError as MultiElementSampleNotFoundError,
+)
 from msa_lims.qc_materials.service import QcMaterialNotFoundError, QcMaterialValidationError
 from msa_lims.submissions.service import SubmissionValidationError
 from msa_lims.web.routes import (
@@ -52,6 +60,7 @@ from msa_lims.web.routes import (
     fire_assay_results,
     flux_recipes,
     health,
+    multi_element,
     qc_materials,
     sample_lifecycle,
     samples,
@@ -94,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(batches.router)
     app.include_router(qc_materials.router)
     app.include_router(audit.router)
+    app.include_router(multi_element.router)
     _register_error_handlers(app)
     return app
 
@@ -116,7 +126,7 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     ProjectNotFoundError: status.HTTP_404_NOT_FOUND,
     ProjectValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     DrillHoleValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
-    SampleNotFoundError: status.HTTP_404_NOT_FOUND,
+    FireAssaySampleNotFoundError: status.HTTP_404_NOT_FOUND,
     CrucibleNotFoundError: status.HTTP_404_NOT_FOUND,
     FireAssayResultValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     SubmissionValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -134,6 +144,8 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     CrucibleValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     QcMaterialNotFoundError: status.HTTP_404_NOT_FOUND,
     QcMaterialValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    MultiElementSampleNotFoundError: status.HTTP_404_NOT_FOUND,
+    MultiElementResultError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 
 

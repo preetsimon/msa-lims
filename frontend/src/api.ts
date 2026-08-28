@@ -62,8 +62,11 @@ async function sendJSON<T>(method: "POST" | "PATCH", path: string, body: unknown
   return response.json() as Promise<T>;
 }
 
-export function listSamples(params?: { status?: string }): Promise<SampleListItem[]> {
-  const query = params?.status ? `?status=${encodeURIComponent(params.status)}` : "";
+export function listSamples(params?: { status?: string; client_id?: number }): Promise<SampleListItem[]> {
+  const queryParts: string[] = [];
+  if (params?.status) queryParts.push(`status=${encodeURIComponent(params.status)}`);
+  if (params?.client_id !== undefined) queryParts.push(`client_id=${params.client_id}`);
+  const query = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
   return getJSON<SampleListItem[]>(`/api/samples${query}`);
 }
 
@@ -85,6 +88,18 @@ export function listFluxRecipes(): Promise<FluxRecipe[]> {
 
 export function listQcMaterials(): Promise<QcMaterial[]> {
   return getJSON<QcMaterial[]>("/api/qc-materials");
+}
+
+export interface ClientListItem {
+  id: number;
+  code: string;
+  name: string;
+  is_active: boolean;
+  submission_count: number;
+}
+
+export function listClients(): Promise<ClientListItem[]> {
+  return getJSON<ClientListItem[]>("/api/clients");
 }
 
 /** Exactly one of `sample_id`/`qc_material_id`, mirroring the API's own
@@ -147,6 +162,64 @@ export function advanceBatchStatus(batchId: number, targetStatus: string): Promi
 
 export function getSampleProvenance(id: number): Promise<Provenance> {
   return getJSON<Provenance>(`/api/samples/${id}/provenance`);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-element ICP results
+// ---------------------------------------------------------------------------
+
+export interface MultiElementResultItem {
+  element: string;
+  grade_value: string;
+  grade_unit: string;
+  detection_limit: string | null;
+}
+
+export interface MultiElementImportRequest {
+  sample_id: number;
+  digest_method: string;
+  method_notes: string | null;
+  analysed_at: string;
+  results: MultiElementResultItem[];
+}
+
+export interface MultiElementResultOut {
+  id: number;
+  sample_id: number;
+  element: string;
+  grade_value: string;
+  grade_unit: string;
+  detection_limit: string | null;
+  digest_method: string;
+  method_notes: string | null;
+  analyst_id: number;
+  analysed_at: string;
+  supersedes_id: number | null;
+  superseded_reason: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface MultiElementImportResponse {
+  sample_id: number;
+  digest_method: string;
+  analysed_at: string;
+  imported: MultiElementResultOut[];
+}
+
+export function importMultiElementResults(
+  sampleId: number,
+  body: MultiElementImportRequest,
+): Promise<MultiElementImportResponse> {
+  return sendJSON<MultiElementImportResponse>(
+    "POST",
+    `/api/samples/${sampleId}/multi-element-results`,
+    body,
+  );
+}
+
+export function listMultiElementResults(sampleId: number): Promise<MultiElementResultOut[]> {
+  return getJSON<MultiElementResultOut[]>(`/api/samples/${sampleId}/multi-element-results`);
 }
 
 export { ApiError };

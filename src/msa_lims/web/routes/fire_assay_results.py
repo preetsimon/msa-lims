@@ -45,6 +45,7 @@ def create_fire_assay_result(
             gold_bead_mg=body.gold_bead_mg,
             sample_weight_g=body.sample_weight_g,
             balance_sensitivity_mg=body.balance_sensitivity_mg,
+            dore_bead_mg=body.dore_bead_mg,
             analysed_at=body.analysed_at,
             notes=body.notes,
             supersedes_id=body.supersedes_id,

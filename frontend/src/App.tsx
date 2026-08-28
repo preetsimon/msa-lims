@@ -2,6 +2,7 @@ import { Link, Route, Routes } from "react-router-dom";
 
 import { BatchDetail } from "./pages/BatchDetail";
 import { BatchList } from "./pages/BatchList";
+import { MultiElementImport } from "./pages/MultiElementImport";
 import { SampleDetail } from "./pages/SampleDetail";
 import { SampleList } from "./pages/SampleList";
 import { SampleProvenance } from "./pages/SampleProvenance";
@@ -22,6 +23,7 @@ export function App() {
         <Route path="/" element={<SampleList />} />
         <Route path="/samples" element={<SampleList />} />
         <Route path="/samples/:id" element={<SampleDetail />} />
+        <Route path="/samples/:id/multi-element" element={<MultiElementImport />} />
         <Route path="/samples/:id/provenance" element={<SampleProvenance />} />
         <Route path="/batches" element={<BatchList />} />
         <Route path="/batches/:id" element={<BatchDetail />} />

@@ -16,6 +16,7 @@ from msa_lims.clients.service import (
     ProjectInput,
     ProjectService,
     ProjectValidationError,
+    list_clients,
 )
 from msa_lims.db.models import AuditEvent, LabUser
 from msa_lims.domain.enums import Role
@@ -268,3 +269,43 @@ class TestRegisteringAProject:
                 registered_by=manager,
                 actor_role=Role.LAB_MANAGER,
             )
+
+
+class TestListingClients:
+    def test_an_empty_lab_lists_nothing(self, app_session: Session) -> None:
+        items = list_clients(app_session)
+        assert items == []
+
+    def test_clients_are_listed_newest_first(self, app_session: Session, manager: LabUser) -> None:
+        service = ClientService(app_session)
+        service.create(
+            ClientInput(code="OLD", name="Old Client"),
+            registered_by=manager,
+            actor_role=Role.LAB_MANAGER,
+        )
+        service.create(
+            ClientInput(code="NEW", name="New Client"),
+            registered_by=manager,
+            actor_role=Role.LAB_MANAGER,
+        )
+        app_session.flush()
+
+        items = list_clients(app_session)
+        assert len(items) == 2
+        assert items[0].client.code == "NEW"
+        assert items[1].client.code == "OLD"
+
+    def test_submission_count_is_zero_when_no_submissions(
+        self, app_session: Session, manager: LabUser
+    ) -> None:
+        service = ClientService(app_session)
+        service.create(
+            ClientInput(code="MSA", name="MSA Test Mining Co"),
+            registered_by=manager,
+            actor_role=Role.LAB_MANAGER,
+        )
+        app_session.flush()
+
+        items = list_clients(app_session)
+        assert len(items) == 1
+        assert items[0].submission_count == 0

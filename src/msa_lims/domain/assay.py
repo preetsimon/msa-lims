@@ -221,6 +221,96 @@ def solution_finish_grade(
         return MeasuredValue.detected(as_grade(mg_per_l), Unit.G_PER_TONNE, grade_detection_limit)
 
 
+def element_grade(
+    *,
+    concentration: Decimal,
+    concentration_unit: Unit,
+    solution_volume_ml: Decimal,
+    sample_weight_g: Decimal,
+    output_unit: Unit = Unit.PPM,
+    detection_limit: Decimal | None = None,
+) -> MeasuredValue:
+    """Grade in a mass-fraction unit from a dissolved sample read on an ICP.
+
+    This is the multi-element companion to :func:`solution_finish_grade`.
+    Where ``solution_finish_grade`` computes gold grade in g/t from the
+    dissolved fire-assay bead, ``element_grade`` computes *any* element's
+    grade from a digest solution (aqua regia, four-acid, peroxide fusion)
+    read on an ICP-MS or ICP-OES. The math is identical — concentration ×
+    volume ÷ sample weight — but the output unit is a mass fraction (ppm,
+    ppb, g/t) chosen by the caller rather than always g/t.
+
+    ``concentration_unit`` must measure mass *concentration* (mg/L, µg/L).
+    A mass-*fraction* unit (ppm) is refused for the same reason as in
+    ``solution_finish_grade``: it describes the solid, not the liquid, and
+    conflating the two produces a wrong grade.
+
+    ``output_unit`` must be a mass-fraction dimension (ppm, ppb, g/t,
+    percent). The caller names it because different elements and matrix types
+    have different reporting conventions — trace elements in ppb, major
+    oxides in percent — and the function must not guess.
+
+    A concentration at or below the detection limit returns a non-detect at
+    the grade that limit corresponds to. A zero concentration with no
+    detection limit is refused, for the same reason as in
+    ``solution_finish_grade``: a reading of zero cannot be told apart from
+    one below the method's floor.
+    """
+    _require_positive(sample_weight_g, "sample weight")
+    _require_positive(solution_volume_ml, "solution volume")
+    if concentration < 0:
+        raise AssayCalculationError(f"concentration cannot be negative: {concentration}")
+    if dimension_of(concentration_unit) is not Dimension.MASS_CONCENTRATION:
+        raise AssayCalculationError(
+            f"{concentration_unit.value} measures "
+            f"{dimension_of(concentration_unit).value}, but an ICP reading is a mass "
+            "concentration (mg/L, ug/L); a solid's units cannot describe what is in the flask"
+        )
+    if dimension_of(output_unit) is not Dimension.MASS_FRACTION:
+        raise AssayCalculationError(
+            f"{output_unit.value} measures "
+            f"{dimension_of(output_unit).value}, but a grade must be a mass fraction "
+            "(ppm, g/t, percent); use solution_finish_grade for g/t from a fire assay bead"
+        )
+
+    with localcontext() as ctx:
+        ctx.prec = CONVERSION_PRECISION
+        mg_per_l = convert(concentration, concentration_unit, Unit.MG_PER_L)
+
+        def as_grade(value_mg_per_l: Decimal) -> Decimal:
+            # mg/L × mL = µg; µg / g = µg/g = ppm (the canonical mass fraction).
+            return value_mg_per_l * solution_volume_ml / sample_weight_g
+
+        grade_ppm = as_grade(mg_per_l)
+
+        if detection_limit is not None:
+            _require_positive(detection_limit, "detection limit")
+            limit_mg_per_l = convert(detection_limit, concentration_unit, Unit.MG_PER_L)
+            grade_detection_limit = as_grade(limit_mg_per_l)
+            if mg_per_l <= limit_mg_per_l:
+                return MeasuredValue.non_detect(
+                    convert(grade_detection_limit, Unit.PPM, output_unit), output_unit
+                )
+        else:
+            grade_detection_limit = None
+
+        if detection_limit is None and concentration == 0:
+            raise AssayCalculationError(
+                "a concentration of zero requires detection_limit to be stated: without it "
+                "the reading cannot be distinguished from one below the method's detection "
+                "limit, so no grade can be reported"
+            )
+
+        final_limit = (
+            None
+            if grade_detection_limit is None
+            else convert(grade_detection_limit, Unit.PPM, output_unit)
+        )
+        return MeasuredValue.detected(
+            convert(grade_ppm, Unit.PPM, output_unit), output_unit, final_limit
+        )
+
+
 def silver_by_difference(
     *,
     dore_bead_mg: Decimal,

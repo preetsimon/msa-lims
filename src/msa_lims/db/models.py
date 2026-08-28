@@ -47,7 +47,9 @@ from msa_lims.domain.enums import (
     AssayMethod,
     BatchStatus,
     CrucibleStatus,
+    DigestMethod,
     DuplicateInsertionType,
+    Element,
     InstrumentStatus,
     InstrumentType,
     MatrixType,
@@ -489,6 +491,16 @@ class FireAssayResult(Base, TimestampMixin):
     au_censored: Mapped[bool] = mapped_column(Boolean)
     au_unit: Mapped[str] = mapped_column(String(16))
 
+    # Silver by difference — computed from dore_bead_mg - gold_bead_mg when
+    # both are present.  Null on a solution finish row (no bead to part) and
+    # on a gravimetric row where only gold_bead_mg was entered (no doré
+    # weight supplied).  See domain.assay.silver_by_difference.
+    silver_bead_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+    silver_value: Mapped[Decimal | None] = mapped_column(Numeric)
+    silver_detection_limit: Mapped[Decimal | None] = mapped_column(Numeric)
+    silver_censored: Mapped[bool | None] = mapped_column(Boolean)
+    silver_unit: Mapped[str | None] = mapped_column(String(16))
+
     analyst_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
     analysed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -574,6 +586,30 @@ class CertificateResult(Base, TimestampMixin):
     certificate_id: Mapped[int] = mapped_column(ForeignKey("certificate.id"), index=True)
     sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
     fire_assay_result_id: Mapped[int] = mapped_column(ForeignKey("fire_assay_result.id"))
+
+
+class CertificateMultiElementResult(Base, TimestampMixin):
+    """One element reading, frozen into a certificate at the moment it was issued.
+
+    Same principle as ``CertificateResult``: points at the **specific**
+    ``multi_element_result`` row certified, not just the sample. If that reading
+    is later superseded, this row still records what the certificate actually
+    reported.
+
+    A certificate that covers a sample with multi-element results freezes one
+    row per element per digest method — the current, un-superseded reading at
+    issuance time. A certificate that covers a sample with no multi-element
+    results simply has no rows for that sample here.
+    """
+
+    __tablename__ = "certificate_multi_element_result"
+
+    id: Mapped[IdPk]
+    certificate_id: Mapped[int] = mapped_column(ForeignKey("certificate.id"), index=True)
+    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    multi_element_result_id: Mapped[int] = mapped_column(
+        ForeignKey("multi_element_result.id")
+    )
 
 
 class FluxRecipe(Base, TimestampMixin):
@@ -847,3 +883,66 @@ class Crucible(Base, TimestampMixin):
     notes: Mapped[str | None] = mapped_column(Text)
 
     batch: Mapped[Batch] = relationship(back_populates="crucibles")
+
+
+class MultiElementResult(Base, TimestampMixin):
+    """One element's concentration from a multi-element ICP analysis.
+
+    **Append-only, enforced by database grants** — same mechanism as
+    ``fire_assay_result`` and ``audit_event``. A corrected reading is a new row
+    whose ``supersedes_id`` points at the one it corrects, with a required
+    ``superseded_reason`` — never an ``UPDATE``.
+
+    Each row stores the *grade* (mass fraction in the solid sample), not the
+    raw instrument reading. The lab converts mg/L from the ICP to ppm or ppb
+    using the digest solution volume and sample weight before entry, or the
+    service layer computes it from the raw reading. The certificate quotes
+    this number, so it must be the final grade, not an intermediate.
+
+    One row per element per sample per digest method. A sample digested by
+    both aqua regia and four-acid gets two rows for the same element —
+    different digest, different statement, both valid and both on record. A
+    superseding row replaces the *same* (sample, element, digest) triple;
+    it does not create a third row.
+
+    ``digest_method`` is mandatory here and absent from ``fire_assay_result``
+    because fire assay is a single method (fusion) while multi-element work
+    genuinely varies: aqua regia is partial, four-acid is total, and the
+    certificate must name which was used. The element enum is the closed
+    vocabulary that keeps instrument exports typo-free.
+    """
+
+    __tablename__ = "multi_element_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "sample_id", "element", "digest_method", name="uq_multi_element_sample_element_digest"
+        ),
+        CheckConstraint(
+            "supersedes_id IS NULL OR "
+            "(superseded_reason IS NOT NULL AND length(trim(superseded_reason)) > 0)",
+            name="mer_supersession_states_reason",
+        ),
+        CheckConstraint("grade_value >= 0", name="mer_grade_non_negative"),
+    )
+
+    id: Mapped[IdPk]
+    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    element: Mapped[Element] = mapped_column(_enum(Element, "element_type"))
+    grade_value: Mapped[Decimal] = mapped_column(Numeric)
+    grade_unit: Mapped[str] = mapped_column(String(16), default="ppm")
+    detection_limit: Mapped[Decimal | None] = mapped_column(Numeric)
+
+    digest_method: Mapped[DigestMethod] = mapped_column(
+        _enum(DigestMethod, "digest_method_type")
+    )
+    method_notes: Mapped[str | None] = mapped_column(Text)
+
+    analyst_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    analysed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    supersedes_id: Mapped[int | None] = mapped_column(
+        ForeignKey("multi_element_result.id")
+    )
+    superseded_reason: Mapped[str | None] = mapped_column(Text)
+
+    notes: Mapped[str | None] = mapped_column(Text)

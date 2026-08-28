@@ -10,13 +10,43 @@ agrees with the body shape in one place and disagrees in another.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
-from msa_lims.clients.service import ClientInput, ClientService, ProjectInput, ProjectService
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
-from msa_lims.web.schemas import ClientCreate, ClientOut, ProjectCreate, ProjectOut
+from msa_lims.clients.service import (
+    ClientInput,
+    ClientService,
+    ProjectInput,
+    ProjectService,
+    list_clients,
+)
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.schemas import (
+    ClientCreate,
+    ClientListItemOut,
+    ClientOut,
+    ProjectCreate,
+    ProjectOut,
+)
 
 router = APIRouter(prefix="/api", tags=["clients"])
+
+
+@router.get("/clients", response_model=list[ClientListItemOut])
+def read_clients(
+    session: SessionDep,
+    actor: InternalActorDep,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[ClientListItemOut]:
+    """List all clients, newest first, with submission count.
+
+    Lean rows like ``GET /api/samples``: just enough to populate a filter
+    dropdown or a client-management table, no per-row deep lookup.
+    """
+    items = list_clients(session, limit=limit)
+    return [
+        ClientListItemOut.from_model(item.client, submission_count=item.submission_count)
+        for item in items
+    ]
 
 
 @router.post("/clients", response_model=ClientOut, status_code=status.HTTP_201_CREATED)

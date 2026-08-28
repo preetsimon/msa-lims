@@ -12,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from msa_lims.db.models import (
     Batch,
@@ -22,12 +22,13 @@ from msa_lims.db.models import (
     DrillHole,
     FireAssayResult,
     FluxRecipe,
+    MultiElementResult,
     Project,
     QcMaterial,
     Sample,
     Submission,
 )
-from msa_lims.domain.enums import BatchStatus, MatrixType, QcMaterialType, SampleType
+from msa_lims.domain.enums import BatchStatus, Element, MatrixType, QcMaterialType, SampleType
 from msa_lims.domain.values import MeasuredValue
 
 
@@ -61,6 +62,26 @@ class ClientOut(BaseModel):
             phone=client.phone,
             billing_address=client.billing_address,
             is_active=client.is_active,
+        )
+
+
+class ClientListItemOut(BaseModel):
+    """Lean client row for listing — code, name, and submission count."""
+
+    id: int
+    code: str
+    name: str
+    is_active: bool
+    submission_count: int
+
+    @classmethod
+    def from_model(cls, client: Client, *, submission_count: int) -> ClientListItemOut:
+        return cls(
+            id=client.id,
+            code=client.code,
+            name=client.name,
+            is_active=client.is_active,
+            submission_count=submission_count,
         )
 
 
@@ -356,6 +377,14 @@ class FireAssayResultCreate(BaseModel):
         ),
     )
     balance_sensitivity_mg: Decimal | None = Field(default=None, gt=0)
+    dore_bead_mg: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Doré bead weight (Au + Ag) before parting. When supplied alongside "
+            "gold_bead_mg, silver by difference is computed and stored."
+        ),
+    )
     analysed_at: datetime = Field(
         description="When the weighing happened, not when it was entered."
     )
@@ -383,6 +412,10 @@ class FireAssayResultOut(BaseModel):
     a solution row has no bead. ``method`` says which set to expect, and ``au``
     — the grade, the thing every consumer actually wants — is present and
     identically shaped on both.
+
+    Silver is nullable: it is computed only when both doré and gold bead
+    weights are present (gravimetric finish), and is absent on a solution
+    finish or when the lab did not supply a doré weight.
     """
 
     id: int
@@ -396,6 +429,7 @@ class FireAssayResultOut(BaseModel):
     solution_volume_ml: Decimal | None
     solution_detection_limit: Decimal | None
     au: MeasuredValueOut
+    silver: MeasuredValueOut | None
     analysed_at: datetime
     supersedes_id: int | None
     superseded_reason: str | None
@@ -404,6 +438,18 @@ class FireAssayResultOut(BaseModel):
 
     @classmethod
     def from_model(cls, result: FireAssayResult) -> FireAssayResultOut:
+        silver = None
+        if result.silver_value is not None:
+            silver = MeasuredValueOut(
+                value=str(result.silver_value),
+                detection_limit=(
+                    None
+                    if result.silver_detection_limit is None
+                    else str(result.silver_detection_limit)
+                ),
+                censored=result.silver_censored or False,
+                unit=result.silver_unit or "g/t",
+            )
         return cls(
             id=result.id,
             sample_id=result.sample_id,
@@ -423,6 +469,7 @@ class FireAssayResultOut(BaseModel):
                 censored=result.au_censored,
                 unit=result.au_unit,
             ),
+            silver=silver,
             analysed_at=result.analysed_at,
             supersedes_id=result.supersedes_id,
             superseded_reason=result.superseded_reason,
@@ -444,6 +491,16 @@ class CertificateCreate(BaseModel):
     )
 
 
+class CertifiedElementOut(BaseModel):
+    """One element reading frozen into a certificate."""
+
+    element: str
+    grade_value: str
+    grade_unit: str
+    detection_limit: str | None
+    digest_method: str
+
+
 class CertifiedSampleOut(BaseModel):
     """One sample a certificate covers, and the specific result it certified —
     see ``certificates/service.py``'s ``CertifiedSampleInfo`` for why this is
@@ -454,6 +511,8 @@ class CertifiedSampleOut(BaseModel):
     fire_assay_result_id: int
     method: str
     au: MeasuredValueOut
+    elements: list[CertifiedElementOut] = []
+    digest_method: str | None = None
 
 
 class CertificateOut(BaseModel):
@@ -1056,3 +1115,116 @@ class QcDuplicateOut(_SealedModel):
     original_au: QcAuPair | None
     stats: QcDuplicateStatsOut | None
     advisories: list[QcAdvisoryOut]
+
+
+# ---------------------------------------------------------------------------
+# Multi-element ICP results
+# ---------------------------------------------------------------------------
+
+
+class ElementResultCreate(BaseModel):
+    """One element's grade from an ICP run, as entered by the analyst."""
+
+    element: str = Field(
+        min_length=1,
+        max_length=3,
+        description="IUPAC symbol — the same label the instrument export uses (e.g. 'Au', 'Cu').",
+    )
+
+    @field_validator("element")
+    @classmethod
+    def _check_element(cls, v: str) -> str:
+        try:
+            Element(v)
+        except ValueError:
+            raise ValueError(
+                f"unknown element {v!r}; must be one of the IUPAC symbols "
+                f"({', '.join(e.value for e in Element)})"
+            ) from None
+        return v
+    grade_value: Decimal = Field(
+        ge=0, description="Grade in the solid sample, in grade_unit."
+    )
+    grade_unit: Literal["ppm", "ppb", "g/t", "%"] = Field(
+        default="ppm",
+        description="Mass-fraction unit of the grade.",
+    )
+    detection_limit: Decimal | None = Field(
+        default=None, gt=0, description="Method detection limit, in grade_unit."
+    )
+
+
+class MultiElementImportCreate(BaseModel):
+    """Bulk import of one ICP run's worth of elements for a sample.
+
+    The endpoint accepts the whole run at once rather than one element at a
+    time: an instrument exports dozens of elements per sample, and a partial
+    write would leave the sample with half its elements assayed.
+    """
+
+    sample_id: int
+    digest_method: Literal["aqua_regia", "four_acid", "peroxide_fusion"] = Field(
+        description=(
+            "How the sample was taken into solution. The certificate must name "
+            "the digest: aqua regia is partial, four-acid is total."
+        )
+    )
+    method_notes: str | None = Field(
+        default=None,
+        description="Free-text notes about the digest or instrument setup.",
+    )
+    analysed_at: datetime = Field(
+        description="When the instrument read it, not when it was entered."
+    )
+    results: list[ElementResultCreate] = Field(
+        min_length=1, description="30-50 elements typical; at least one required."
+    )
+
+
+class MultiElementResultOut(BaseModel):
+    """One element's stored result, on the way out."""
+
+    id: int
+    sample_id: int
+    element: str
+    grade_value: str
+    grade_unit: str
+    detection_limit: str | None
+    digest_method: str
+    method_notes: str | None
+    analyst_id: int
+    analysed_at: datetime
+    supersedes_id: int | None
+    superseded_reason: str | None
+    notes: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, row: MultiElementResult) -> MultiElementResultOut:
+        return cls(
+            id=row.id,
+            sample_id=row.sample_id,
+            element=row.element.value,
+            grade_value=str(row.grade_value),
+            grade_unit=row.grade_unit,
+            detection_limit=(
+                None if row.detection_limit is None else str(row.detection_limit)
+            ),
+            digest_method=row.digest_method.value,
+            method_notes=row.method_notes,
+            analyst_id=row.analyst_id,
+            analysed_at=row.analysed_at,
+            supersedes_id=row.supersedes_id,
+            superseded_reason=row.superseded_reason,
+            notes=row.notes,
+            created_at=row.created_at,
+        )
+
+
+class MultiElementImportOut(BaseModel):
+    """The result of a bulk import: the rows created and audit events."""
+
+    sample_id: int
+    digest_method: str
+    analysed_at: datetime
+    imported: list[MultiElementResultOut]

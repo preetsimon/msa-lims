@@ -64,6 +64,14 @@ class CertifiedSample:
     sample_id: str
     method: str
     au_display: str
+    elements: tuple[CertifiedElement, ...] = ()
+    digest_method: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CertifiedElement:
+    element: str
+    grade_display: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +172,30 @@ def render_pdf(content: CertificateContent) -> bytes:
         c.drawString(col_method, y, sample.method)
         c.drawString(col_au, y, sample.au_display)
         y -= 0.2 * inch
+
+        # Multi-element results, if present, are rendered as a compact
+        # indented block below the gold line — same row of the table, but
+        # with the element and grade filling the space where method and Au
+        # would otherwise go.  The digest method is shown once as a header.
+        if sample.elements:
+            if sample.digest_method:
+                c.setFont("Helvetica-Oblique", 8)
+                c.drawString(col_method, y, f"Digest: {sample.digest_method}")
+                y -= 0.16 * inch
+            c.setFont("Helvetica", 8)
+            for elem in sample.elements:
+                if y < MARGIN + 0.3 * inch:
+                    c.showPage()
+                    c.setFont("Helvetica", 9)
+                    y = PAGE_HEIGHT - MARGIN
+                    draw_table_header()
+                    draw_header_rule()
+                    y -= 0.25 * inch
+                    c.setFont("Helvetica", 8)
+                c.drawString(col_method, y, elem.element)
+                c.drawString(col_au, y, elem.grade_display)
+                y -= 0.14 * inch
+            y -= 0.06 * inch
 
     if content.notes:
         if y < MARGIN + _TEXT_LEADING:

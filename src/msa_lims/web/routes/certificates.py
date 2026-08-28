@@ -25,6 +25,7 @@ from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.schemas import (
     CertificateCreate,
     CertificateOut,
+    CertifiedElementOut,
     CertifiedSampleOut,
     MeasuredValueOut,
 )
@@ -40,6 +41,17 @@ def _certificate_out(session: Session, certificate: Certificate) -> CertificateO
             fire_assay_result_id=info.fire_assay_result_id,
             method=info.method,
             au=MeasuredValueOut.from_domain(info.grade),
+            elements=[
+                CertifiedElementOut(
+                    element=el.element,
+                    grade_value=el.grade_value,
+                    grade_unit=el.grade_unit,
+                    detection_limit=el.detection_limit,
+                    digest_method=el.digest_method,
+                )
+                for el in info.elements
+            ],
+            digest_method=info.digest_method,
         )
         for info in get_certified_samples(session, certificate.id)
     ]

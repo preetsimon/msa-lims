@@ -21,11 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from msa_lims.db.audit import record_audit_event
-from msa_lims.db.models import Client, LabUser, Project
+from msa_lims.db.models import Client, LabUser, Project, Submission
 from msa_lims.domain.enums import MAY_MANAGE_ACCOUNTS, Role
 from msa_lims.domain.lifecycle import InsufficientRoleError
 
@@ -189,3 +189,35 @@ class ProjectService:
             after={"client_id": client.id, "name": project.name},
         )
         return project
+
+
+@dataclass(frozen=True, slots=True)
+class ClientListItem:
+    """A client with its submission count, for the listing endpoint."""
+
+    client: Client
+    submission_count: int
+
+
+def list_clients(session: Session, *, limit: int = 100) -> list[ClientListItem]:
+    """All clients, newest first, with submission count.
+
+    Follows the same pattern as ``list_samples``: lean rows, no per-row
+    deep lookup, newest-first ordering. The submission count lets the
+    sample-list filter show which clients have active work.
+    """
+    stmt = (
+        select(
+            Client,
+            func.coalesce(func.count(Submission.id), 0).label("submission_count"),
+        )
+        .outerjoin(Submission, Submission.client_id == Client.id)
+        .group_by(Client.id)
+        .order_by(Client.id.desc())
+        .limit(limit)
+    )
+    rows = session.execute(stmt).all()
+    return [
+        ClientListItem(client=client, submission_count=submission_count)
+        for client, submission_count in rows
+    ]

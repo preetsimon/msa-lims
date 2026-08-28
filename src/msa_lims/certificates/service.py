@@ -31,15 +31,22 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from msa_lims.certificates.pdf import CertificateContent, CertifiedSample, render_pdf
+from msa_lims.certificates.pdf import (
+    CertificateContent,
+    CertifiedElement,
+    CertifiedSample,
+    render_pdf,
+)
 from msa_lims.clients.service import ClientNotFoundError
 from msa_lims.db.audit import record_audit_event
 from msa_lims.db.models import (
     Certificate,
+    CertificateMultiElementResult,
     CertificateResult,
     Client,
     FireAssayResult,
     LabUser,
+    MultiElementResult,
     Sample,
 )
 from msa_lims.db.numbering import count_with_prefix, insert_with_unique_number
@@ -47,6 +54,7 @@ from msa_lims.domain.enums import MAY_SIGN_CERTIFICATE, Role, SampleStatus
 from msa_lims.domain.lifecycle import InsufficientRoleError, check_transition
 from msa_lims.domain.values import MeasuredValue
 from msa_lims.fire_assay_results.service import current_result, measured_value
+from msa_lims.multi_element.service import current_results
 
 #: Three decimal places, the precision already used throughout this
 #: codebase's own examples (a 30 g portion, a 0.150 mg bead) and a standard
@@ -70,6 +78,17 @@ def _display_grade(measured: MeasuredValue) -> str:
     assert measured.value is not None  # guaranteed by MeasuredValue.__post_init__
     rounded = measured.value.quantize(_CERTIFICATE_GRADE_PRECISION, rounding=ROUND_HALF_EVEN)
     return f"{rounded} {measured.unit.value}"
+
+
+def _display_element_grade(mer: MultiElementResult) -> str:
+    """Render a multi-element grade for the certificate.
+
+    Same rounding discipline as ``_display_grade`` but reads directly from
+    the model row rather than reconstructing a MeasuredValue.
+    """
+    assert mer.grade_value is not None
+    rounded = mer.grade_value.quantize(_CERTIFICATE_GRADE_PRECISION, rounding=ROUND_HALF_EVEN)
+    return f"{rounded} {mer.grade_unit}"
 
 
 class CertificateNotFoundError(ValueError):
@@ -107,6 +126,17 @@ def get_pdf(session: Session, certificate_id: int) -> tuple[Certificate, bytes]:
 
 
 @dataclass(frozen=True, slots=True)
+class CertifiedElementInfo:
+    """One element reading frozen into a certificate."""
+
+    element: str
+    grade_value: str
+    grade_unit: str
+    detection_limit: str | None
+    digest_method: str
+
+
+@dataclass(frozen=True, slots=True)
 class CertifiedSampleInfo:
     """One sample this certificate covers, read back from ``certificate_result``.
 
@@ -114,6 +144,9 @@ class CertifiedSampleInfo:
     frozen at issuance — see the module docstring — not whatever the sample's
     current result happens to be now. If that result was later superseded,
     this is still what the certificate actually said.
+
+    ``elements`` holds any multi-element readings frozen at the same moment.
+    Empty when the sample has no ICP results.
     """
 
     sample_id: int
@@ -121,6 +154,8 @@ class CertifiedSampleInfo:
     fire_assay_result_id: int
     method: str
     grade: MeasuredValue
+    elements: tuple[CertifiedElementInfo, ...] = ()
+    digest_method: str | None = None
 
 
 def get_certified_samples(session: Session, certificate_id: int) -> list[CertifiedSampleInfo]:
@@ -128,7 +163,10 @@ def get_certified_samples(session: Session, certificate_id: int) -> list[Certifi
 
     Used by both the issuance response and the detail `GET` — one query, one
     shape, so the two can never show a certificate's contents differently.
+    Multi-element results are fetched separately and attached by sample id.
     """
+    from msa_lims.db.models import MultiElementResult
+
     rows = session.execute(
         select(CertificateResult, Sample, FireAssayResult)
         .join(Sample, CertificateResult.sample_id == Sample.id)
@@ -136,6 +174,34 @@ def get_certified_samples(session: Session, certificate_id: int) -> list[Certifi
         .where(CertificateResult.certificate_id == certificate_id)
         .order_by(CertificateResult.id)
     ).all()
+
+    # Fetch frozen multi-element results for this certificate.
+    element_rows = session.execute(
+        select(CertificateMultiElementResult, MultiElementResult)
+        .join(
+            MultiElementResult,
+            CertificateMultiElementResult.multi_element_result_id == MultiElementResult.id,
+        )
+        .where(CertificateMultiElementResult.certificate_id == certificate_id)
+        .order_by(CertificateMultiElementResult.id)
+    ).all()
+
+    # Group element results by sample_id.
+    elements_by_sample: dict[int, list[CertifiedElementInfo]] = {}
+    digest_by_sample: dict[int, str] = {}
+    for _cmr, mer in element_rows:
+        info = CertifiedElementInfo(
+            element=mer.element.value,
+            grade_value=str(mer.grade_value),
+            grade_unit=mer.grade_unit,
+            detection_limit=(
+                None if mer.detection_limit is None else str(mer.detection_limit)
+            ),
+            digest_method=mer.digest_method.value,
+        )
+        elements_by_sample.setdefault(mer.sample_id, []).append(info)
+        digest_by_sample[mer.sample_id] = mer.digest_method.value
+
     return [
         CertifiedSampleInfo(
             sample_id=sample.id,
@@ -143,6 +209,8 @@ def get_certified_samples(session: Session, certificate_id: int) -> list[Certifi
             fire_assay_result_id=result.id,
             method=result.method.value,
             grade=measured_value(result),
+            elements=tuple(elements_by_sample.get(sample.id, [])),
+            digest_method=digest_by_sample.get(sample.id),
         )
         for _certificate_result, sample, result in rows
     ]
@@ -214,21 +282,40 @@ class CertificateService:
         # The PDF embeds the certificate number, so it is rendered inside the
         # build step: a retried attempt renders a fresh document with its own
         # number, and the stored bytes always match the stored number.
+        #
+        # Multi-element results are frozen at issuance time: for each sample,
+        # the current (un-superseded) element readings are captured into the
+        # PDF and into certificate_multi_element_result, so the certificate
+        # is a historical snapshot that cannot drift.
         def build_certificate(number: str) -> Certificate:
+            certified_samples: list[CertifiedSample] = []
+            for sample, result in zip(samples, results, strict=True):
+                elements = current_results(self._session, sample.id)
+                certified_elements = tuple(
+                    CertifiedElement(
+                        element=el.element.value,
+                        grade_display=_display_element_grade(el),
+                    )
+                    for el in elements
+                )
+                digest = elements[0].digest_method.value if elements else None
+                certified_samples.append(
+                    CertifiedSample(
+                        sample_id=sample.sample_id,
+                        method=result.method.value,
+                        au_display=_display_grade(measured_value(result)),
+                        elements=certified_elements,
+                        digest_method=digest,
+                    )
+                )
+
             pdf_bytes = render_pdf(
                 CertificateContent(
                     certificate_number=number,
                     client_name=client.name,
                     issued_at=data.issued_at,
                     issued_by_name=issued_by.full_name,
-                    samples=tuple(
-                        CertifiedSample(
-                            sample_id=sample.sample_id,
-                            method=result.method.value,
-                            au_display=_display_grade(measured_value(result)),
-                        )
-                        for sample, result in zip(samples, results, strict=True)
-                    ),
+                    samples=tuple(certified_samples),
                     supersedes_number=superseded.certificate_number if superseded else None,
                     superseded_reason=data.superseded_reason,
                     notes=data.notes,
@@ -264,6 +351,15 @@ class CertificateService:
                     fire_assay_result_id=result.id,
                 )
             )
+            # Freeze the current multi-element readings for this sample.
+            for mer in current_results(self._session, sample.id):
+                self._session.add(
+                    CertificateMultiElementResult(
+                        certificate_id=certificate.id,
+                        sample_id=sample.id,
+                        multi_element_result_id=mer.id,
+                    )
+                )
 
         record_audit_event(
             self._session,

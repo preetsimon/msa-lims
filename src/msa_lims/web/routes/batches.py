@@ -22,6 +22,15 @@ from msa_lims.qc_dossiers.service import (
     persist_dossier,
 )
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep, SettingsDep
+from msa_lims.web.routes.error_responses import (
+    BATCH_NOT_FOUND,
+    CONFLICT_409,
+    FORBIDDEN_403,
+    QC_MATERIAL_NOT_FOUND,
+    SAMPLE_NOT_FOUND,
+    VALIDATION_422,
+    merge_responses,
+)
 from msa_lims.web.schemas import (
     BatchCreate,
     BatchDetailOut,
@@ -44,7 +53,12 @@ def _service(session: SessionDep, settings: SettingsDep) -> BatchService:
     )
 
 
-@router.post("/batches", response_model=BatchOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/batches",
+    response_model=BatchOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403, CONFLICT_409),
+)
 def create_batch(
     body: BatchCreate,
     session: SessionDep,
@@ -54,7 +68,7 @@ def create_batch(
 ) -> BatchOut:
     service = _service(session, settings)
     batch = service.create_batch(
-        BatchInput(opened_at=body.opened_at, notes=body.notes),
+        BatchInput(opened_at=body.opened_at, notes=body.notes, instrument_id=body.instrument_id),
         opened_by=opened_by,
         actor_role=actor.role,
     )
@@ -66,6 +80,13 @@ def create_batch(
     "/batches/{batch_id}/crucibles",
     response_model=CrucibleOut,
     status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(
+        FORBIDDEN_403,
+        BATCH_NOT_FOUND,
+        SAMPLE_NOT_FOUND,
+        QC_MATERIAL_NOT_FOUND,
+        CONFLICT_409,
+    ),
 )
 def charge_crucible(
     batch_id: int,
@@ -101,6 +122,7 @@ def charge_crucible(
 @router.post(
     "/batches/{batch_id}/crucibles/{crucible_id}/parting",
     response_model=CrucibleOut,
+    responses=merge_responses(FORBIDDEN_403, BATCH_NOT_FOUND, CONFLICT_409),
 )
 def record_crucible_parting(
     batch_id: int,
@@ -131,6 +153,7 @@ def record_crucible_parting(
 @router.post(
     "/batches/{batch_id}/crucibles/{crucible_id}/weighing",
     response_model=CrucibleOut,
+    responses=merge_responses(FORBIDDEN_403, BATCH_NOT_FOUND, CONFLICT_409),
 )
 def record_crucible_weighing(
     batch_id: int,
@@ -153,7 +176,11 @@ def record_crucible_weighing(
     return CrucibleOut.from_model(crucible)
 
 
-@router.patch("/batches/{batch_id}/status", response_model=BatchOut)
+@router.patch(
+    "/batches/{batch_id}/status",
+    response_model=BatchOut,
+    responses=merge_responses(FORBIDDEN_403, BATCH_NOT_FOUND, CONFLICT_409),
+)
 def advance_batch_status(
     batch_id: int,
     body: BatchStatusUpdate,
@@ -170,7 +197,7 @@ def advance_batch_status(
     return BatchOut.from_model(batch)
 
 
-@router.get("/batches", response_model=list[BatchOut])
+@router.get("/batches", response_model=list[BatchOut], responses=merge_responses(BATCH_NOT_FOUND))
 def read_batches(
     session: SessionDep,
     actor: InternalActorDep,
@@ -179,7 +206,11 @@ def read_batches(
     return [BatchOut.from_model(batch) for batch in list_batches(session, limit=limit)]
 
 
-@router.get("/batches/{batch_id}", response_model=BatchDetailOut)
+@router.get(
+    "/batches/{batch_id}",
+    response_model=BatchDetailOut,
+    responses=merge_responses(BATCH_NOT_FOUND),
+)
 def read_batch(
     batch_id: int, session: SessionDep, settings: SettingsDep, actor: InternalActorDep
 ) -> BatchDetailOut:
@@ -200,7 +231,11 @@ def read_batch(
     )
 
 
-@router.get("/batches/{batch_id}/qc-dossier", response_model=QcDossierOut)
+@router.get(
+    "/batches/{batch_id}/qc-dossier",
+    response_model=QcDossierOut,
+    responses=merge_responses(FORBIDDEN_403, BATCH_NOT_FOUND, CONFLICT_409, VALIDATION_422),
+)
 def read_batch_qc_dossier(
     batch_id: int,
     session: SessionDep,

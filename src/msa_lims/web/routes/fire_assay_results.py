@@ -23,17 +23,52 @@ from msa_lims.domain.enums import AssayMethod
 from msa_lims.domain.units import Unit
 from msa_lims.fire_assay_results.service import (
     FireAssayResultInput,
+    FireAssayResultNotFoundError,
     FireAssayResultService,
     SolutionFinishInput,
+    get_fire_assay_result,
 )
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import (
+    CONFLICT_409,
+    FORBIDDEN_403,
+    NOT_FOUND_404,
+    SAMPLE_NOT_FOUND,
+    merge_responses,
+)
 from msa_lims.web.schemas import FireAssayResultCreate, FireAssayResultOut, SolutionFinishCreate
 
 router = APIRouter(prefix="/api", tags=["fire-assay-results"])
 
 
+@router.get(
+    "/fire-assay-results/{result_id}",
+    response_model=FireAssayResultOut,
+    responses=merge_responses(FORBIDDEN_403, NOT_FOUND_404),
+)
+def read_fire_assay_result(
+    result_id: int, session: SessionDep, actor: InternalActorDep
+) -> FireAssayResultOut:
+    """A single fire assay result by id — gravimetric or solution finish."""
+    try:
+        result = get_fire_assay_result(session, result_id)
+    except FireAssayResultNotFoundError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return FireAssayResultOut.from_model(result)
+
+
 @router.post(
-    "/fire-assay-results", response_model=FireAssayResultOut, status_code=status.HTTP_201_CREATED
+    "/fire-assay-results",
+    response_model=FireAssayResultOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(
+        FORBIDDEN_403, SAMPLE_NOT_FOUND, NOT_FOUND_404, CONFLICT_409
+    ),
 )
 def create_fire_assay_result(
     body: FireAssayResultCreate, session: SessionDep, actor: ActorDep, analyst: LabUserDep
@@ -51,6 +86,7 @@ def create_fire_assay_result(
             supersedes_id=body.supersedes_id,
             superseded_reason=body.superseded_reason,
             crucible_id=body.crucible_id,
+            instrument_id=body.instrument_id,
         ),
         analyst=analyst,
         actor_role=actor.role,
@@ -63,6 +99,9 @@ def create_fire_assay_result(
     "/fire-assay-results/solution-finish",
     response_model=FireAssayResultOut,
     status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(
+        FORBIDDEN_403, SAMPLE_NOT_FOUND, NOT_FOUND_404, CONFLICT_409
+    ),
 )
 def create_solution_finish(
     body: SolutionFinishCreate, session: SessionDep, actor: ActorDep, analyst: LabUserDep
@@ -83,6 +122,7 @@ def create_solution_finish(
             supersedes_id=body.supersedes_id,
             superseded_reason=body.superseded_reason,
             crucible_id=body.crucible_id,
+            instrument_id=body.instrument_id,
         ),
         analyst=analyst,
         actor_role=actor.role,

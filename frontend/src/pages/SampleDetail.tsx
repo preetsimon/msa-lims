@@ -97,10 +97,14 @@ export function SampleDetail() {
                 <dd>{sample.current_result.gold_bead_mg} mg</dd>
                 <dt>Portion</dt>
                 <dd>{sample.current_result.sample_weight_g} g</dd>
-                {sample.current_result.crucible_id !== null && (
+                {sample.crucible !== null && (
                   <>
                     <dt>Crucible</dt>
-                    <dd className="muted">#{sample.current_result.crucible_id}</dd>
+                    <dd className="muted">
+                      #{sample.crucible.id} (batch #{sample.crucible.batch_id},
+                      row {sample.crucible.position_row}, col {sample.crucible.position_col},
+                      {sample.crucible.status})
+                    </dd>
                   </>
                 )}
                 <dt>Analysed</dt>
@@ -110,6 +114,38 @@ export function SampleDetail() {
               <p className="muted">No result yet.</p>
             )}
           </section>
+
+          {sample.result_history.length > 1 && (
+            <section>
+              <h2>Result history</h2>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Au</th>
+                      <th>Method</th>
+                      <th>Bead</th>
+                      <th>Portion</th>
+                      <th>Analysed</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sample.result_history.map((r, i) => (
+                      <tr key={r.id} className={i > 0 ? "superseded" : undefined}>
+                        <td className="grade">{formatMeasured(r.au)}</td>
+                        <td className="muted">{r.method}</td>
+                        <td>{r.gold_bead_mg} mg</td>
+                        <td>{r.sample_weight_g} g</td>
+                        <td className="muted">{r.analysed_at}</td>
+                        <td className="muted">{r.superseded_reason ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           <section>
             <h2>

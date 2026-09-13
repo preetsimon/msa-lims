@@ -96,6 +96,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/fire-assay-results/{result_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Fire Assay Result
+         * @description A single fire assay result by id — gravimetric or solution finish.
+         */
+        get: operations["read_fire_assay_result_api_fire_assay_results__result_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/fire-assay-results": {
         parameters: {
             query?: never;
@@ -258,6 +278,26 @@ export interface paths {
         patch: operations["advance_sample_status_api_samples__sample_id__status_patch"];
         trace?: never;
     };
+    "/api/submissions/{submission_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Submission
+         * @description A single submission by id, with its samples.
+         */
+        get: operations["read_submission_api_submissions__submission_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/submissions": {
         parameters: {
             query?: never;
@@ -300,6 +340,42 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/instruments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Instruments Endpoint */
+        get: operations["list_instruments_endpoint_api_instruments_get"];
+        put?: never;
+        /** Create Instrument Endpoint */
+        post: operations["create_instrument_endpoint_api_instruments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/instruments/{instrument_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Instrument Endpoint */
+        get: operations["read_instrument_endpoint_api_instruments__instrument_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Instrument Endpoint */
+        patch: operations["update_instrument_endpoint_api_instruments__instrument_id__patch"];
         trace?: never;
     };
     "/api/batches": {
@@ -467,6 +543,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/anchors/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Latest Anchor
+         * @description The most recent audit chain anchor, or null if none exists.
+         */
+        get: operations["read_latest_anchor_api_audit_anchors_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/anchors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Audit Anchor
+         * @description Anchor the current audit chain head via OpenTimestamps.
+         *
+         *     Creates a detached timestamp proof and submits it to OTS calendar
+         *     servers. The proof is stored in the database (append-only) and can
+         *     be downloaded for independent verification.
+         */
+        post: operations["create_audit_anchor_api_audit_anchors_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/anchors/{anchor_id}/proof": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Anchor Proof
+         * @description Download the raw OTS proof bytes for an anchor.
+         *
+         *     The proof is sufficient to re-verify the timestamp against a Bitcoin
+         *     node without any other context.
+         */
+        get: operations["download_anchor_proof_api_audit_anchors__anchor_id__proof_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/samples/{sample_id}/multi-element-results": {
         parameters: {
             query?: never;
@@ -495,10 +638,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/samples/{sample_id}/multi-element-results/{element}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Supersede Multi Element Result
+         * @description Correct a single element reading with a new row in the chain.
+         */
+        patch: operations["supersede_multi_element_result_api_samples__sample_id__multi_element_results__element__patch"];
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/submit-to-sentinel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit To Sentinel
+         * @description Submit a batch's QC dossier to Sentinel.
+         *
+         *     The batch must have a sealed dossier (``batch.qc_dossier_sha256 IS NOT
+         *     NULL``).  If Sentinel is disabled or unreachable, the attempt is still
+         *     recorded.
+         */
+        post: operations["submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/sentinel-verdict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sentinel Verdict
+         * @description Get the latest Sentinel verdict for a batch.
+         *
+         *     Returns the verdict from the most recent submission that has one,
+         *     or an empty verdict if none has been returned yet.
+         */
+        get: operations["get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AuditAnchorOut */
+        AuditAnchorOut: {
+            /** Id */
+            id: number;
+            /** Anchored Hash */
+            anchored_hash: string;
+            /** Chain Event Id */
+            chain_event_id: number;
+            /** Ots Proof Sha256 */
+            ots_proof_sha256: string;
+            /**
+             * Anchored At
+             * Format: date-time
+             */
+            anchored_at: string;
+        };
         /** AuditChainVerificationOut */
         AuditChainVerificationOut: {
             /** Valid */
@@ -521,6 +747,11 @@ export interface components {
             opened_at: string;
             /** Notes */
             notes?: string | null;
+            /**
+             * Instrument Id
+             * @description The furnace that fired this batch.
+             */
+            instrument_id?: number | null;
         };
         /** BatchDetailOut */
         BatchDetailOut: {
@@ -563,6 +794,8 @@ export interface components {
             opened_at: string;
             /** Notes */
             notes: string | null;
+            /** Instrument Id */
+            instrument_id: number | null;
         };
         /**
          * BatchStatus
@@ -623,6 +856,8 @@ export interface components {
             supersedes_id: number | null;
             /** Superseded Reason */
             superseded_reason: string | null;
+            /** Is Stale */
+            is_stale: boolean;
             /** Notes */
             notes: string | null;
             /** Samples */
@@ -848,6 +1083,29 @@ export interface components {
             parted_at: string;
         };
         /**
+         * CrucibleReferenceOut
+         * @description A crucible the current result was charged into — lean, not the full
+         *     ``CrucibleOut``.  Enough to show batch, position, and status on the
+         *     sample detail page.
+         */
+        CrucibleReferenceOut: {
+            /** Id */
+            id: number;
+            /** Batch Id */
+            batch_id: number;
+            /** Position Row */
+            position_row: number;
+            /** Position Col */
+            position_col: number;
+            /** Status */
+            status: string;
+            /**
+             * Charged At
+             * Format: date-time
+             */
+            charged_at: string;
+        };
+        /**
          * CrucibleSlotOut
          * @description One crucible as it appears in a batch's tray — lean, unlike
          *     `CrucibleOut`: a grid of up to 36 of these needs a position, a status to
@@ -973,6 +1231,18 @@ export interface components {
              */
             detection_limit?: number | string | null;
         };
+        /**
+         * ErrorResponse
+         * @description Standard error response shape returned by domain exception handlers.
+         *
+         *     Matches FastAPI's built-in HTTPException response format. The ``detail``
+         *     message is written for the human who hit the refusal, not a
+         *     machine-parseable field list — this is deliberate (see ``web/app.py``).
+         */
+        ErrorResponse: {
+            /** Detail */
+            detail: string;
+        };
         /** FireAssayResultCreate */
         FireAssayResultCreate: {
             /** Sample Id */
@@ -1017,6 +1287,11 @@ export interface components {
              * @description The crucible this assay came from; its recorded charge is derived as the portion weight.
              */
             crucible_id?: number | null;
+            /**
+             * Instrument Id
+             * @description The instrument that performed this assay.
+             */
+            instrument_id?: number | null;
         };
         /**
          * FireAssayResultOut
@@ -1068,6 +1343,8 @@ export interface components {
             notes: string | null;
             /** Crucible Id */
             crucible_id: number | null;
+            /** Instrument Id */
+            instrument_id: number | null;
         };
         /** FluxRecipeCreate */
         FluxRecipeCreate: {
@@ -1136,6 +1413,69 @@ export interface components {
             version: string;
             database: components["schemas"]["ComponentHealth"];
             qc_sentinel: components["schemas"]["ComponentHealth"];
+        };
+        /** InstrumentCreate */
+        InstrumentCreate: {
+            /** Name */
+            name: string;
+            instrument_type: components["schemas"]["InstrumentType"];
+            /** Manufacturer */
+            manufacturer?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Serial Number */
+            serial_number?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Calibration Due On */
+            calibration_due_on?: string | null;
+        };
+        /** InstrumentOut */
+        InstrumentOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Instrument Type */
+            instrument_type: string;
+            /** Manufacturer */
+            manufacturer: string | null;
+            /** Model */
+            model: string | null;
+            /** Serial Number */
+            serial_number: string | null;
+            /** Location */
+            location: string | null;
+            /** Status */
+            status: string;
+            /** Calibration Due On */
+            calibration_due_on: string | null;
+        };
+        /**
+         * InstrumentStatus
+         * @enum {string}
+         */
+        InstrumentStatus: "active" | "maintenance" | "out_of_service" | "retired";
+        /**
+         * InstrumentType
+         * @enum {string}
+         */
+        InstrumentType: "aas" | "icp_ms" | "icp_oes" | "xrf" | "microbalance" | "crusher" | "pulverizer" | "furnace";
+        /** InstrumentUpdate */
+        InstrumentUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Manufacturer */
+            manufacturer?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Serial Number */
+            serial_number?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Calibration Due On */
+            calibration_due_on?: string | null;
+            status?: components["schemas"]["InstrumentStatus"] | null;
         };
         /**
          * MatrixType
@@ -1237,6 +1577,8 @@ export interface components {
             grade_unit: string;
             /** Detection Limit */
             detection_limit: string | null;
+            /** Grade Censored */
+            grade_censored: boolean;
             /** Digest Method */
             digest_method: string;
             /** Method Notes */
@@ -1259,6 +1601,58 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * MultiElementSupersedeCreate
+         * @description Correct a single element reading with a new row in the chain.
+         */
+        MultiElementSupersedeCreate: {
+            /**
+             * Digest Method
+             * @description How the sample was taken into solution. The certificate must name the digest: aqua regia is partial, four-acid is total.
+             * @enum {string}
+             */
+            digest_method: "aqua_regia" | "four_acid" | "peroxide_fusion";
+            /**
+             * Grade Value
+             * @description Corrected grade in grade_unit.
+             */
+            grade_value: number | string;
+            /**
+             * Grade Unit
+             * @description Mass-fraction unit of the grade.
+             * @default ppm
+             * @enum {string}
+             */
+            grade_unit: "ppm" | "ppb" | "g/t" | "%";
+            /**
+             * Detection Limit
+             * @description Method detection limit, in grade_unit.
+             */
+            detection_limit?: number | string | null;
+            /**
+             * Analysed At
+             * Format: date-time
+             * @description When the instrument read it, not when it was entered.
+             */
+            analysed_at: string;
+            /**
+             * Method Notes
+             * @description Free-text notes about the digest or instrument setup.
+             */
+            method_notes?: string | null;
+            /**
+             * Reason
+             * @description Why this reading is being corrected.
+             */
+            reason: string;
+        };
+        /** PaginatedResponse[SampleListItemOut] */
+        PaginatedResponse_SampleListItemOut_: {
+            /** Items */
+            items: components["schemas"]["SampleListItemOut"][];
+            /** Next Cursor */
+            next_cursor: number | null;
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -1691,6 +2085,9 @@ export interface components {
             /** To Depth M */
             to_depth_m: string | null;
             current_result: components["schemas"]["FireAssayResultOut"] | null;
+            /** Result History */
+            result_history: components["schemas"]["FireAssayResultOut"][];
+            crucible: components["schemas"]["CrucibleReferenceOut"] | null;
             /** Certificates */
             certificates: components["schemas"]["CertificateReferenceOut"][];
         };
@@ -1846,6 +2243,11 @@ export interface components {
              * @description The crucible this assay came from; its recorded charge is derived as the portion weight.
              */
             crucible_id?: number | null;
+            /**
+             * Instrument Id
+             * @description The instrument that performed this assay.
+             */
+            instrument_id?: number | null;
         };
         /** SubmissionCreate */
         SubmissionCreate: {
@@ -2039,6 +2441,24 @@ export interface operations {
                     "application/json": components["schemas"]["ClientOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2074,6 +2494,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2113,6 +2542,77 @@ export interface operations {
                     "application/json": components["schemas"]["DrillHoleOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_fire_assay_result_api_fire_assay_results__result_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                result_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FireAssayResultOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2148,6 +2648,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FireAssayResultOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2187,6 +2714,33 @@ export interface operations {
                     "application/json": components["schemas"]["FireAssayResultOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2224,6 +2778,24 @@ export interface operations {
                     "application/json": components["schemas"]["CertificateOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2231,6 +2803,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -2259,6 +2840,15 @@ export interface operations {
                     "application/json": components["schemas"]["CertificateOut"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2266,6 +2856,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -2292,6 +2891,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2299,6 +2907,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Internal server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -2309,6 +2926,7 @@ export interface operations {
                 client_id?: number | null;
                 status?: components["schemas"]["SampleStatus"] | null;
                 limit?: number;
+                cursor?: number | null;
             };
             header?: {
                 authorization?: string | null;
@@ -2326,7 +2944,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SampleListItemOut"][];
+                    "application/json": components["schemas"]["PaginatedResponse_SampleListItemOut_"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2364,6 +2991,15 @@ export interface operations {
                     "application/json": components["schemas"]["SampleDetailOut"];
                 };
             };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2397,6 +3033,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProvenanceOut"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2438,6 +3083,86 @@ export interface operations {
                     "application/json": components["schemas"]["SampleOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_submission_api_submissions__submission_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                submission_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2473,6 +3198,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubmissionOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2545,6 +3288,180 @@ export interface operations {
                     "application/json": components["schemas"]["FluxRecipeOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_instruments_endpoint_api_instruments_get: {
+        parameters: {
+            query?: {
+                instrument_type?: components["schemas"]["InstrumentType"] | null;
+                status?: components["schemas"]["InstrumentStatus"] | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstrumentOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_instrument_endpoint_api_instruments_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstrumentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstrumentOut"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_instrument_endpoint_api_instruments__instrument_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                instrument_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstrumentOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_instrument_endpoint_api_instruments__instrument_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                instrument_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstrumentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstrumentOut"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2578,6 +3495,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchOut"][];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2617,6 +3543,24 @@ export interface operations {
                     "application/json": components["schemas"]["BatchOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2654,6 +3598,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CrucibleOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2696,6 +3667,33 @@ export interface operations {
                     "application/json": components["schemas"]["CrucibleOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2734,6 +3732,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CrucibleOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2775,6 +3800,33 @@ export interface operations {
                     "application/json": components["schemas"]["BatchOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2808,6 +3860,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BatchDetailOut"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2845,13 +3906,40 @@ export interface operations {
                     "application/json": components["schemas"]["QcDossierOut"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -2915,6 +4003,15 @@ export interface operations {
                     "application/json": components["schemas"]["QcMaterialOut"];
                 };
             };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2961,6 +4058,127 @@ export interface operations {
             };
         };
     };
+    read_latest_anchor_api_audit_anchors_latest_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditAnchorOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_audit_anchor_api_audit_anchors_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditAnchorOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_anchor_proof_api_audit_anchors__anchor_id__proof_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                anchor_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_multi_element_results_api_samples__sample_id__multi_element_results_get: {
         parameters: {
             query?: never;
@@ -2983,6 +4201,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MultiElementResultOut"][];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3022,6 +4249,192 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MultiElementImportOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    supersede_multi_element_result_api_samples__sample_id__multi_element_results__element__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                sample_id: number;
+                element: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MultiElementSupersedeCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MultiElementResultOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */

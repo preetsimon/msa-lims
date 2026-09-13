@@ -53,6 +53,7 @@ from msa_lims.domain.enums import (
     InstrumentStatus,
     InstrumentType,
     MatrixType,
+    PrepStage,
     QcMaterialType,
     Role,
     SampleStatus,
@@ -385,6 +386,40 @@ class AuditEvent(Base, TimestampMixin):
     one — that recomputing the *whole* chain reproduces this exact value."""
 
 
+class AuditAnchor(Base, TimestampMixin):
+    """An external timestamp proof for the audit chain head.
+
+    **Append-only, enforced by database grants** — same mechanism as
+    ``audit_event`` and ``fire_assay_result``.  Each row captures one
+    anchoring event: the chain head hash at a point in time, and the
+    OpenTimestamps proof that ties that hash to a Bitcoin block.
+
+    The anchor does not change the chain — it sits beside it.  Verifying
+    the chain is still :func:`msa_lims.db.audit.verify_chain`; the anchor
+    additionally proves *when* the chain head existed, independently of
+    any clock the lab controls.
+    """
+
+    __tablename__ = "audit_anchor"
+
+    id: Mapped[IdPk]
+    anchored_hash: Mapped[Sha256]
+    """The ``entry_hash`` of the audit chain head at the moment of anchoring."""
+    chain_event_id: Mapped[int] = mapped_column(BigInteger)
+    """The ``audit_event.id`` of the chain head — not a FK because the anchor
+    must be append-only and cannot enforce referential integrity on a table
+    the application cannot update."""
+    ots_proof: Mapped[bytes] = mapped_column(LargeBinary)
+    """The serialized OpenTimestamps proof (``DetachedTimestampFile`` bytes).
+    Sufficient to re-verify the timestamp against a Bitcoin node without
+    any other context."""
+    ots_proof_sha256: Mapped[Sha256]
+    """Content hash of ``ots_proof`` — re-verified on every read, same
+    posture as ``certificate.pdf_sha256``."""
+    anchored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    """Wall-clock time the anchor was created (lab's own clock, not Bitcoin's)."""
+
+
 class FireAssayResult(Base, TimestampMixin):
     """One gravimetric fire assay result.
 
@@ -512,6 +547,12 @@ class FireAssayResult(Base, TimestampMixin):
         ForeignKey("crucible.id"), index=True, nullable=True
     )
 
+    #: Which instrument performed this assay.  Nullable until instrument
+    #: registration is fully integrated into the result-entry workflow.
+    instrument_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instrument.id"), index=True, nullable=True
+    )
+
     supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("fire_assay_result.id"))
     superseded_reason: Mapped[str | None] = mapped_column(Text)
 
@@ -607,9 +648,7 @@ class CertificateMultiElementResult(Base, TimestampMixin):
     id: Mapped[IdPk]
     certificate_id: Mapped[int] = mapped_column(ForeignKey("certificate.id"), index=True)
     sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
-    multi_element_result_id: Mapped[int] = mapped_column(
-        ForeignKey("multi_element_result.id")
-    )
+    multi_element_result_id: Mapped[int] = mapped_column(ForeignKey("multi_element_result.id"))
 
 
 class FluxRecipe(Base, TimestampMixin):
@@ -758,6 +797,12 @@ class Batch(Base, TimestampMixin):
     opened_by_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
+
+    #: Which furnace fired this batch.  Nullable until instrument registration
+    #: is fully integrated into the batch-creation workflow.
+    instrument_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instrument.id"), index=True, nullable=True
+    )
 
     #: The sealed QC dossier for this batch's run — the sha256 of the blob
     #: holding it (see ``StoredBlob``), and when it was generated. Null until
@@ -914,8 +959,11 @@ class MultiElementResult(Base, TimestampMixin):
 
     __tablename__ = "multi_element_result"
     __table_args__ = (
-        UniqueConstraint(
-            "sample_id", "element", "digest_method", name="uq_multi_element_sample_element_digest"
+        Index(
+            "uq_mer_one_successor_per_row",
+            "supersedes_id",
+            unique=True,
+            postgresql_where=text("supersedes_id IS NOT NULL"),
         ),
         CheckConstraint(
             "supersedes_id IS NULL OR "
@@ -931,18 +979,90 @@ class MultiElementResult(Base, TimestampMixin):
     grade_value: Mapped[Decimal] = mapped_column(Numeric)
     grade_unit: Mapped[str] = mapped_column(String(16), default="ppm")
     detection_limit: Mapped[Decimal | None] = mapped_column(Numeric)
+    grade_censored: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
-    digest_method: Mapped[DigestMethod] = mapped_column(
-        _enum(DigestMethod, "digest_method_type")
-    )
+    digest_method: Mapped[DigestMethod] = mapped_column(_enum(DigestMethod, "digest_method_type"))
     method_notes: Mapped[str | None] = mapped_column(Text)
 
     analyst_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
     analysed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    supersedes_id: Mapped[int | None] = mapped_column(
-        ForeignKey("multi_element_result.id")
-    )
+    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("multi_element_result.id"))
     superseded_reason: Mapped[str | None] = mapped_column(Text)
 
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class PrepRecord(Base, TimestampMixin):
+    """One preparation step on a sample.
+
+    Append-only: each record is a fact about what physically happened at
+    the bench.  Corrections are new rows with ``supersedes_id`` pointing at
+    the record they replace, not UPDATEs.  The ``PrepStage`` enum captures
+    the five canonical steps (crush, split, pulverise, sieve), and the
+    ``instrument_id`` FK traces which crusher or pulverizer touched the
+    material — the same contamination-tracing motivation as
+    ``fire_assay_result.instrument_id``.
+
+    A sample can receive multiple prep records in sequence (primary crush,
+    then secondary crush, then split, then pulverise), and each is a
+    separate row.  The lifecycle transitions (``RECEIVED → IN_PREP →
+    READY_FOR_ASSAY``) remain bare status flips; the prep records are the
+    detailed audit of what happened during those transitions.
+    """
+
+    __tablename__ = "prep_record"
+    __table_args__ = (
+        CheckConstraint(
+            "supersedes_id IS NULL OR "
+            "(superseded_reason IS NOT NULL AND length(trim(superseded_reason)) > 0)",
+            name="prep_supersession_states_reason",
+        ),
+        CheckConstraint(
+            "input_weight_g IS NULL OR input_weight_g > 0",
+            name="prep_input_weight_positive",
+        ),
+        CheckConstraint(
+            "output_weight_g IS NULL OR output_weight_g > 0",
+            name="prep_output_weight_positive",
+        ),
+    )
+
+    id: Mapped[IdPk]
+    sample_id: Mapped[int] = mapped_column(ForeignKey("sample.id"), index=True)
+    stage: Mapped[PrepStage] = mapped_column(_enum(PrepStage, "prep_stage"))
+    instrument_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instrument.id"), index=True, nullable=True
+    )
+    prep_tech_id: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    performed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    input_weight_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    output_weight_g: Mapped[Decimal | None] = mapped_column(Numeric)
+    supersedes_id: Mapped[int | None] = mapped_column(ForeignKey("prep_record.id"))
+    superseded_reason: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class SentinelSubmission(Base, TimestampMixin):
+    """A record of what was sent to QC Sentinel and what came back.
+
+    Append-only: every submission is a fact, including failed attempts.
+    The ``verdict`` column stores Sentinel's response as-is and is never
+    written back to any result or sample row — the boundary between the
+    two systems is the CSV file and this record of sending it.
+    """
+
+    __tablename__ = "sentinel_submission"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batch.id"))
+    format: Mapped[str] = mapped_column(Text)
+    payload_sha256: Mapped[str] = mapped_column(Text)
+    sentinel_import_id: Mapped[str | None] = mapped_column(Text)
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    submitted_by: Mapped[int] = mapped_column(ForeignKey("lab_user.id"))
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verdict: Mapped[dict[str, object] | None] = mapped_column(JSONB)

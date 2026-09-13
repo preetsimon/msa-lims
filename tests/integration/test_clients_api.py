@@ -207,3 +207,65 @@ class TestListingClients:
         headers = {"X-Actor": "ext@lab", "X-Actor-Role": "client"}
         response = client.get("/api/clients", headers=headers)
         assert response.status_code == 403
+
+
+class TestClientDeactivation:
+    def test_a_manager_can_deactivate_a_client(self, client: TestClient) -> None:
+        client_id = client.post(
+            "/api/clients", json=create_client_body(), headers=MANAGER
+        ).json()["id"]
+        response = client.patch(
+            f"/api/clients/{client_id}",
+            json={"is_active": False},
+            headers=MANAGER,
+        )
+        assert response.status_code == 200
+        assert response.json()["is_active"] is False
+
+    def test_reactivation_restores_the_client(self, client: TestClient) -> None:
+        client_id = client.post(
+            "/api/clients", json=create_client_body(), headers=MANAGER
+        ).json()["id"]
+        client.patch(
+            f"/api/clients/{client_id}",
+            json={"is_active": False},
+            headers=MANAGER,
+        )
+        response = client.patch(
+            f"/api/clients/{client_id}",
+            json={"is_active": True},
+            headers=MANAGER,
+        )
+        assert response.status_code == 200
+        assert response.json()["is_active"] is True
+
+    def test_an_analyst_is_refused_with_403(self, client: TestClient) -> None:
+        client_id = client.post(
+            "/api/clients", json=create_client_body(), headers=MANAGER
+        ).json()["id"]
+        response = client.patch(
+            f"/api/clients/{client_id}",
+            json={"is_active": False},
+            headers=ANALYST,
+        )
+        assert response.status_code == 403
+
+    def test_an_unknown_client_is_404(self, client: TestClient) -> None:
+        response = client.patch(
+            "/api/clients/999999",
+            json={"is_active": False},
+            headers=MANAGER,
+        )
+        assert response.status_code == 404
+
+    def test_idempotent_when_already_in_desired_state(self, client: TestClient) -> None:
+        client_id = client.post(
+            "/api/clients", json=create_client_body(), headers=MANAGER
+        ).json()["id"]
+        response = client.patch(
+            f"/api/clients/{client_id}",
+            json={"is_active": True},
+            headers=MANAGER,
+        )
+        assert response.status_code == 200
+        assert response.json()["is_active"] is True

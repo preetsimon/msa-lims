@@ -1,9 +1,9 @@
 /**
  * Typed fetch helpers over the API the Vite dev server proxies to :8002.
  *
- * No auth headers are sent — `MSA_AUTH_MODE=dev_headers` (this stack's local
- * default) resolves an unheadered request to the least-privileged role, the
- * same way every curl check in PROGRESS.md's live verifications does.
+ * Auth headers are provided by the auth module. In dev_headers mode, the
+ * ``X-Actor`` and ``X-Actor-Role`` headers identify the caller. In oidc
+ * mode, a ``Bearer`` token is sent instead.
  */
 
 import type {
@@ -26,6 +26,16 @@ class ApiError extends Error {
   }
 }
 
+// ── Auth headers ──────────────────────────────────────────────────────
+// Set by AuthProvider via setAuthHeaders(); read by getJSON/sendJSON.
+let _authHeaders: Record<string, string> = {};
+
+export function setAuthHeaders(headers: Record<string, string>) {
+  _authHeaders = headers;
+}
+
+// ── Fetch helpers ─────────────────────────────────────────────────────
+
 /** Domain refusals come back as `{"detail": "<message>"}` — surface that
  * message directly rather than the raw JSON text, falling back to it for
  * whatever isn't shaped that way (a 404 from a route with no handler, say). */
@@ -43,7 +53,7 @@ async function errorMessage(response: Response): Promise<string> {
 }
 
 async function getJSON<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+  const response = await fetch(path, { headers: _authHeaders });
   if (!response.ok) {
     throw new ApiError(response.status, await errorMessage(response));
   }
@@ -53,7 +63,7 @@ async function getJSON<T>(path: string): Promise<T> {
 async function sendJSON<T>(method: "POST" | "PATCH", path: string, body: unknown): Promise<T> {
   const response = await fetch(path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ..._authHeaders },
     body: JSON.stringify(body),
   });
   if (!response.ok) {
@@ -62,12 +72,20 @@ async function sendJSON<T>(method: "POST" | "PATCH", path: string, body: unknown
   return response.json() as Promise<T>;
 }
 
-export function listSamples(params?: { status?: string; client_id?: number }): Promise<SampleListItem[]> {
+export interface PaginatedResponse<T> {
+  items: T[];
+  next_cursor: number | null;
+}
+
+export function listSamples(
+  params?: { status?: string; client_id?: number; cursor?: number },
+): Promise<PaginatedResponse<SampleListItem>> {
   const queryParts: string[] = [];
   if (params?.status) queryParts.push(`status=${encodeURIComponent(params.status)}`);
   if (params?.client_id !== undefined) queryParts.push(`client_id=${params.client_id}`);
+  if (params?.cursor !== undefined) queryParts.push(`cursor=${params.cursor}`);
   const query = queryParts.length > 0 ? `?${queryParts.join("&")}` : "";
-  return getJSON<SampleListItem[]>(`/api/samples${query}`);
+  return getJSON<PaginatedResponse<SampleListItem>>(`/api/samples${query}`);
 }
 
 export function getSample(id: number): Promise<SampleDetail> {
@@ -220,6 +238,37 @@ export function importMultiElementResults(
 
 export function listMultiElementResults(sampleId: number): Promise<MultiElementResultOut[]> {
   return getJSON<MultiElementResultOut[]>(`/api/samples/${sampleId}/multi-element-results`);
+}
+
+// ---------------------------------------------------------------------------
+// QC Sentinel
+// ---------------------------------------------------------------------------
+
+export interface SentinelSubmitResponse {
+  submission_id: number;
+  http_status: number | null;
+  sentinel_import_id: string | null;
+  error: string | null;
+}
+
+export interface SentinelVerdictResponse {
+  status: "never_submitted" | "pending" | "verdicted";
+  verdict: Record<string, unknown> | null;
+  submitted_at: string | null;
+  last_polled_at: string | null;
+  http_status?: number | null;
+}
+
+export function submitToSentinel(batchId: number): Promise<SentinelSubmitResponse> {
+  return sendJSON<SentinelSubmitResponse>(
+    "POST",
+    `/api/batches/${batchId}/submit-to-sentinel`,
+    {},
+  );
+}
+
+export function getSentinelVerdict(batchId: number): Promise<SentinelVerdictResponse> {
+  return getJSON<SentinelVerdictResponse>(`/api/batches/${batchId}/sentinel-verdict`);
 }
 
 export { ApiError };

@@ -60,6 +60,18 @@ class SubmissionValidationError(ValueError):
         super().__init__(f"{len(problems)} problem(s): " + "; ".join(problems))
 
 
+class SubmissionNotFoundError(ValueError):
+    """No submission with this id exists."""
+
+
+def get_submission(session: Session, submission_id: int) -> Submission:
+    """A single submission by id, or raise."""
+    submission = session.get(Submission, submission_id)
+    if submission is None:
+        raise SubmissionNotFoundError(f"no submission with id {submission_id}")
+    return submission
+
+
 @dataclass(frozen=True, slots=True)
 class SampleInput:
     sample_id: str
@@ -131,6 +143,7 @@ class SubmissionService:
         hole_cache: dict[str, DrillHole] = {}
         problems.extend(self._resolve_drill_holes(parsed, project, hole_cache))
         problems.extend(self._check_overlaps(parsed, hole_cache))
+        problems.extend(self._check_depths(parsed, hole_cache))
 
         if problems:
             raise SubmissionValidationError(problems)
@@ -325,6 +338,35 @@ class SubmissionService:
             for label_a, label_b in conflicts:
                 if label_a in new_labels or label_b in new_labels:
                     problems.append(f"{label_a!r} and {label_b!r} overlap in {hole_id}")
+        return problems
+
+    def _check_depths(
+        self,
+        parsed: list[tuple[SampleInput, SampleIdentity]],
+        hole_cache: dict[str, DrillHole],
+    ) -> list[str]:
+        """Reject samples whose depth intervals exceed the drill hole's total depth."""
+        problems: list[str] = []
+        by_hole: dict[str, list[tuple[str, DepthInterval]]] = defaultdict(list)
+        for _item, identity in parsed:
+            if identity.interval is None:
+                continue
+            hole = hole_cache.get(identity.hole_id)
+            if hole is None:
+                continue  # already reported as a missing-hole problem
+            if hole.total_depth_m is None:
+                continue  # no depth registered, nothing to check
+            by_hole[identity.hole_id].append((identity.raw, identity.interval))
+
+        for hole_id, intervals in by_hole.items():
+            hole = hole_cache[hole_id]
+            assert hole.total_depth_m is not None
+            for label, interval in intervals:
+                if interval.to_depth_m > hole.total_depth_m:
+                    problems.append(
+                        f"{label!r} interval {interval.from_depth_m}–{interval.to_depth_m} m "
+                        f"exceeds {hole.hole_id}'s total depth of {hole.total_depth_m} m"
+                    )
         return problems
 
     # -- writes -----------------------------------------------------------

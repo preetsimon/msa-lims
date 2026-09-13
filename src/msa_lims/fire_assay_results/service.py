@@ -117,7 +117,10 @@ class FireAssayResultValidationError(ValueError):
 
     def __init__(self, problems: list[str]) -> None:
         self.problems = problems
-        super().__init__(f"{len(problems)} problem(s): " + "; ".join(problems))
+
+
+class FireAssayResultNotFoundError(ValueError):
+    """No fire assay result with this id exists."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +146,8 @@ class FireAssayResultInput:
     #: Name this to tie the result to the crucible the sample was charged
     #: into; ``sample_weight_g`` must then be left unset.
     crucible_id: int | None = None
+    #: The instrument that performed this assay.
+    instrument_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +184,7 @@ class SolutionFinishInput:
     supersedes_id: int | None = None
     superseded_reason: str | None = None
     crucible_id: int | None = None
+    instrument_id: int | None = None
 
 
 def current_result(session: Session, sample_id: int) -> FireAssayResult | None:
@@ -203,6 +209,14 @@ def current_result(session: Session, sample_id: int) -> FireAssayResult | None:
         .where(FireAssayResult.sample_id == sample_id, successor.id.is_(None))
         .order_by(FireAssayResult.id.desc())
     )
+
+
+def get_fire_assay_result(session: Session, result_id: int) -> FireAssayResult:
+    """A single fire assay result by id, or raise."""
+    result = session.get(FireAssayResult, result_id)
+    if result is None:
+        raise FireAssayResultNotFoundError(f"no fire assay result with id {result_id}")
+    return result
 
 
 def measured_value(result: FireAssayResult) -> MeasuredValue:
@@ -324,6 +338,11 @@ class FireAssayResultService:
             data, sample
         )
         problems = self._check_supersession(data, sample, current) + wiring_problems
+        if data.instrument_id is not None:
+            from msa_lims.db.models import Instrument
+
+            if self._session.get(Instrument, data.instrument_id) is None:
+                problems.append(f"no instrument with id {data.instrument_id}")
         if problems:
             raise FireAssayResultValidationError(problems)
         # Guaranteed by _resolve_weighing: a clean resolution always carries
@@ -371,6 +390,7 @@ class FireAssayResultService:
             analyst_id=analyst.id,
             analysed_at=data.analysed_at,
             crucible_id=crucible.id if crucible is not None else None,
+            instrument_id=data.instrument_id,
             supersedes_id=data.supersedes_id,
             superseded_reason=data.superseded_reason,
             notes=data.notes,
@@ -416,6 +436,11 @@ class FireAssayResultService:
 
         crucible, portion_weight, wiring_problems = self._resolve_portion(data, sample)
         problems = self._check_supersession(data, sample, current) + wiring_problems
+        if data.instrument_id is not None:
+            from msa_lims.db.models import Instrument
+
+            if self._session.get(Instrument, data.instrument_id) is None:
+                problems.append(f"no instrument with id {data.instrument_id}")
         if problems:
             raise FireAssayResultValidationError(problems)
         assert portion_weight is not None  # guaranteed by a clean _resolve_portion
@@ -447,6 +472,7 @@ class FireAssayResultService:
             analyst_id=analyst.id,
             analysed_at=data.analysed_at,
             crucible_id=crucible.id if crucible is not None else None,
+            instrument_id=data.instrument_id,
             supersedes_id=data.supersedes_id,
             superseded_reason=data.superseded_reason,
             notes=data.notes,

@@ -6,6 +6,7 @@ from fastapi import APIRouter, status
 
 from msa_lims.qc_materials.service import QcMaterialInput, QcMaterialService, list_qc_materials
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import FORBIDDEN_403, merge_responses
 from msa_lims.web.schemas import QcMaterialCreate, QcMaterialOut
 
 router = APIRouter(prefix="/api/qc-materials", tags=["qc-materials"])
@@ -16,7 +17,12 @@ def read_qc_materials(session: SessionDep, actor: InternalActorDep) -> list[QcMa
     return [QcMaterialOut.from_model(material) for material in list_qc_materials(session)]
 
 
-@router.post("", response_model=QcMaterialOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=QcMaterialOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403),
+)
 def create_qc_material(
     body: QcMaterialCreate, session: SessionDep, actor: ActorDep, registered_by: LabUserDep
 ) -> QcMaterialOut:

@@ -463,6 +463,74 @@ class TestValidation:
         )
 
 
+class TestDepthValidation:
+    def test_sample_exceeding_total_depth_is_refused(
+        self,
+        service: SubmissionService,
+        analyst: LabUser,
+        a_client: Client,
+        a_project: Project,
+        app_session: Session,
+    ) -> None:
+        from decimal import Decimal
+
+        from msa_lims.db.models import DrillHole
+
+        hole = DrillHole(
+            project_id=a_project.id,
+            hole_id="MSA-24-001",
+            total_depth_m=Decimal("100"),
+        )
+        app_session.add(hole)
+        app_session.flush()
+
+        with pytest.raises(SubmissionValidationError, match="exceeds"):
+            service.create(
+                submission_input(
+                    client_id=a_client.id,
+                    project_id=a_project.id,
+                    samples=(
+                        SampleInput("MSA-24-001-100_110", SampleType.CORE),
+                    ),
+                ),
+                received_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_sample_within_total_depth_is_accepted(
+        self,
+        service: SubmissionService,
+        analyst: LabUser,
+        a_client: Client,
+        a_project: Project,
+        app_session: Session,
+    ) -> None:
+        from decimal import Decimal
+
+        from msa_lims.db.models import DrillHole
+
+        hole = DrillHole(
+            project_id=a_project.id,
+            hole_id="MSA-24-001",
+            total_depth_m=Decimal("200"),
+        )
+        app_session.add(hole)
+        app_session.flush()
+
+        submission = service.create(
+            submission_input(
+                client_id=a_client.id,
+                project_id=a_project.id,
+                samples=(
+                    SampleInput("MSA-24-001-100_110", SampleType.CORE),
+                ),
+            ),
+            received_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        assert submission is not None
+
+
 class TestAuditTrail:
     def test_creating_a_submission_writes_an_audit_event_per_row(
         self,

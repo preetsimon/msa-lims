@@ -130,6 +130,47 @@ class ClientService:
         )
         return client
 
+    def deactivate(
+        self,
+        client_id: int,
+        *,
+        is_active: bool,
+        actor: LabUser,
+        actor_role: Role,
+    ) -> Client:
+        """Set or clear the ``is_active`` flag on a client.
+
+        Deactivating a client prevents new submissions for that client but
+        does not touch existing submissions or results.  Reactivation is
+        the same call with ``is_active=True``.
+        """
+        if actor_role not in MAY_MANAGE_ACCOUNTS:
+            raise InsufficientRoleError(
+                f"{actor_role.value} may not deactivate a client; this needs one of "
+                + ", ".join(sorted(role.value for role in MAY_MANAGE_ACCOUNTS))
+            )
+
+        client = self._session.get(Client, client_id)
+        if client is None:
+            raise ClientNotFoundError(f"no client with id {client_id}")
+
+        if client.is_active == is_active:
+            return client  # already in the desired state
+
+        client.is_active = is_active
+        self._session.flush()
+
+        record_audit_event(
+            self._session,
+            table_name="client",
+            record_id=client.id,
+            action="amend",
+            actor_id=actor.id,
+            after={"is_active": is_active},
+            reason="deactivated" if not is_active else "reactivated",
+        )
+        return client
+
 
 class ProjectService:
     def __init__(self, session: Session) -> None:

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { ApiError, advanceBatchStatus, getBatch } from "../api";
+import { ApiError, advanceBatchStatus, getBatch, getSentinelVerdict, submitToSentinel } from "../api";
+import type { SentinelVerdictResponse } from "../api";
 import { ChargeCrucibleModal } from "../components/ChargeCrucibleModal";
 import { FurnaceTray } from "../components/FurnaceTray";
 import { PartCrucibleModal } from "../components/PartCrucibleModal";
@@ -49,6 +50,9 @@ export function BatchDetail() {
   const [modal, setModal] = useState<ModalState>(null);
   const [advancing, setAdvancing] = useState(false);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<SentinelVerdictResponse | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const refetch = useCallback(() => {
     if (!id) return;
@@ -85,6 +89,22 @@ export function BatchDetail() {
     };
   }, [id]);
 
+  // Fetch Sentinel verdict when batch is loaded.
+  useEffect(() => {
+    if (!id || !batch) return;
+    let cancelled = false;
+    getSentinelVerdict(Number(id))
+      .then((data) => {
+        if (!cancelled) setVerdict(data);
+      })
+      .catch(() => {
+        // Sentinel verdict fetch is best-effort — don't block the page.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, batch]);
+
   async function handleAdvance() {
     if (!batch) return;
     const target = nextStatus(batch.status);
@@ -98,6 +118,22 @@ export function BatchDetail() {
       setAdvanceError(err instanceof ApiError ? err.message : "Advancing the batch failed.");
     } finally {
       setAdvancing(false);
+    }
+  }
+
+  async function handleSubmitToSentinel() {
+    if (!batch) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await submitToSentinel(batch.id);
+      // Re-fetch verdict after submission.
+      const v = await getSentinelVerdict(batch.id);
+      setVerdict(v);
+    } catch (err: unknown) {
+      setSubmitError(err instanceof ApiError ? err.message : "Submission to Sentinel failed.");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -153,6 +189,50 @@ export function BatchDetail() {
               <p>{batch.notes}</p>
             </section>
           )}
+
+          <section>
+            <h2>QC Sentinel</h2>
+            {!verdict && <p className="muted">Loading verdict…</p>}
+            {verdict && verdict.status === "never_submitted" && (
+              <p>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleSubmitToSentinel}
+                  disabled={submitting}
+                >
+                  {submitting ? "Submitting…" : "Submit to Sentinel"}
+                </button>
+              </p>
+            )}
+            {verdict && verdict.status === "pending" && (
+              <p className="muted">
+                Submitted — awaiting verdict.
+                {verdict.submitted_at && ` (${verdict.submitted_at})`}
+              </p>
+            )}
+            {verdict && verdict.status === "verdicted" && (
+              <div>
+                <p>
+                  <strong>Sentinel's verdict:</strong>{" "}
+                  {verdict.verdict?.verdict === "pass" ? (
+                    <span style={{ color: "green" }}>No problems reported</span>
+                  ) : (
+                    <span style={{ color: "red" }}>
+                      {String(verdict.verdict?.verdict ?? "unknown")}
+                    </span>
+                  )}
+                </p>
+                {verdict.submitted_at && (
+                  <p className="muted">Submitted: {verdict.submitted_at}</p>
+                )}
+                {verdict.last_polled_at && (
+                  <p className="muted">Last polled: {verdict.last_polled_at}</p>
+                )}
+              </div>
+            )}
+            {submitError && <p className="error">{submitError}</p>}
+          </section>
         </>
       )}
 

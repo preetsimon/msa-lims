@@ -8,12 +8,22 @@ from fastapi import APIRouter, status
 
 from msa_lims.drill_holes.service import DrillHoleInput, DrillHoleService
 from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import (
+    CLIENT_OR_PROJECT_NOT_FOUND,
+    FORBIDDEN_403,
+    merge_responses,
+)
 from msa_lims.web.schemas import DrillHoleCreate, DrillHoleOut
 
 router = APIRouter(prefix="/api", tags=["drill-holes"])
 
 
-@router.post("/drill-holes", response_model=DrillHoleOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/drill-holes",
+    response_model=DrillHoleOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403, CLIENT_OR_PROJECT_NOT_FOUND),
+)
 def create_drill_hole(
     body: DrillHoleCreate, session: SessionDep, actor: ActorDep, registered_by: LabUserDep
 ) -> DrillHoleOut:

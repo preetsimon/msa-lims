@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     # whole point of the two systems being separate.
     sentinel_enabled: bool = False
     sentinel_base_url: str = "http://localhost:8001"
+    sentinel_token: str = ""
     sentinel_timeout_seconds: float = 10.0
 
     # --- Laboratory defaults ------------------------------------------------

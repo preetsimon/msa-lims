@@ -6,6 +6,7 @@ from fastapi import APIRouter, status
 
 from msa_lims.flux_recipes.service import FluxRecipeInput, FluxRecipeService, list_flux_recipes
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import FORBIDDEN_403, merge_responses
 from msa_lims.web.schemas import FluxRecipeCreate, FluxRecipeOut
 
 router = APIRouter(prefix="/api", tags=["flux-recipes"])
@@ -16,7 +17,12 @@ def read_flux_recipes(session: SessionDep, actor: InternalActorDep) -> list[Flux
     return [FluxRecipeOut.from_model(recipe) for recipe in list_flux_recipes(session)]
 
 
-@router.post("/flux-recipes", response_model=FluxRecipeOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/flux-recipes",
+    response_model=FluxRecipeOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403),
+)
 def create_flux_recipe(
     body: FluxRecipeCreate, session: SessionDep, actor: ActorDep, registered_by: LabUserDep
 ) -> FluxRecipeOut:

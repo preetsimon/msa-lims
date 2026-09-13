@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -23,6 +23,7 @@ from msa_lims.db.models import (
     FireAssayResult,
     FluxRecipe,
     MultiElementResult,
+    PrepRecord,
     Project,
     QcMaterial,
     Sample,
@@ -32,6 +33,32 @@ from msa_lims.domain.enums import BatchStatus, Element, MatrixType, QcMaterialTy
 from msa_lims.domain.values import MeasuredValue
 
 
+class ErrorResponse(BaseModel):
+    """Standard error response shape returned by domain exception handlers.
+
+    Matches FastAPI's built-in HTTPException response format. The ``detail``
+    message is written for the human who hit the refusal, not a
+    machine-parseable field list — this is deliberate (see ``web/app.py``).
+    """
+
+    detail: str
+
+
+T = TypeVar("T")
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Cursor-based pagination wrapper.
+
+    ``next_cursor`` is the ``id`` of the last item in ``items``; pass it
+    as the ``cursor`` query parameter on the next request.  ``None`` means
+    there are no more pages.
+    """
+
+    items: list[T]
+    next_cursor: int | None
+
+
 class ClientCreate(BaseModel):
     code: str = Field(min_length=1, max_length=12, description="e.g. 'MSA'")
     name: str = Field(min_length=1, max_length=200)
@@ -39,6 +66,17 @@ class ClientCreate(BaseModel):
     email: str | None = None
     phone: str | None = None
     billing_address: str | None = None
+
+
+class ClientStatusUpdate(BaseModel):
+    """Toggle a client's active flag.
+
+    Setting ``is_active`` to ``False`` deactivates the client: existing
+    submissions and results are unaffected, but new submissions for this
+    client will be refused by :meth:`ClientService.deactivate`.
+    """
+
+    is_active: bool
 
 
 class ClientOut(BaseModel):
@@ -219,6 +257,19 @@ class CertificateReferenceOut(BaseModel):
     certificate_number: str
 
 
+class CrucibleReferenceOut(BaseModel):
+    """A crucible the current result was charged into — lean, not the full
+    ``CrucibleOut``.  Enough to show batch, position, and status on the
+    sample detail page."""
+
+    id: int
+    batch_id: int
+    position_row: int
+    position_col: int
+    status: str
+    charged_at: datetime
+
+
 class SampleListItemOut(BaseModel):
     """One row of ``GET /api/samples`` — deliberately lighter than
     `SampleDetailOut`: no current result, no certificate list, so listing a
@@ -354,6 +405,11 @@ class SolutionFinishCreate(BaseModel):
             "portion weight."
         ),
     )
+    instrument_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="The instrument that performed this assay.",
+    )
 
 
 class FireAssayResultCreate(BaseModel):
@@ -402,6 +458,11 @@ class FireAssayResultCreate(BaseModel):
             "portion weight."
         ),
     )
+    instrument_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="The instrument that performed this assay.",
+    )
 
 
 class FireAssayResultOut(BaseModel):
@@ -435,6 +496,7 @@ class FireAssayResultOut(BaseModel):
     superseded_reason: str | None
     notes: str | None
     crucible_id: int | None
+    instrument_id: int | None
 
     @classmethod
     def from_model(cls, result: FireAssayResult) -> FireAssayResultOut:
@@ -475,6 +537,7 @@ class FireAssayResultOut(BaseModel):
             superseded_reason=result.superseded_reason,
             notes=result.notes,
             crucible_id=result.crucible_id,
+            instrument_id=result.instrument_id,
         )
 
 
@@ -524,12 +587,17 @@ class CertificateOut(BaseModel):
     pdf_sha256: str
     supersedes_id: int | None
     superseded_reason: str | None
+    is_stale: bool
     notes: str | None
     samples: list[CertifiedSampleOut]
 
     @classmethod
     def from_model(
-        cls, certificate: Certificate, *, samples: list[CertifiedSampleOut]
+        cls,
+        certificate: Certificate,
+        *,
+        samples: list[CertifiedSampleOut],
+        is_stale: bool = False,
     ) -> CertificateOut:
         return cls(
             id=certificate.id,
@@ -540,6 +608,7 @@ class CertificateOut(BaseModel):
             pdf_sha256=certificate.pdf_sha256,
             supersedes_id=certificate.supersedes_id,
             superseded_reason=certificate.superseded_reason,
+            is_stale=is_stale,
             notes=certificate.notes,
             samples=samples,
         )
@@ -555,6 +624,8 @@ class SampleDetailOut(BaseModel):
     from_depth_m: Decimal | None
     to_depth_m: Decimal | None
     current_result: FireAssayResultOut | None
+    result_history: list[FireAssayResultOut]
+    crucible: CrucibleReferenceOut | None
     certificates: list[CertificateReferenceOut]
 
     @classmethod
@@ -563,6 +634,8 @@ class SampleDetailOut(BaseModel):
         sample: Sample,
         *,
         current_result: FireAssayResultOut | None,
+        result_history: list[FireAssayResultOut],
+        crucible: CrucibleReferenceOut | None,
         certificates: list[CertificateReferenceOut],
     ) -> SampleDetailOut:
         return cls(
@@ -575,6 +648,8 @@ class SampleDetailOut(BaseModel):
             from_depth_m=sample.from_depth_m,
             to_depth_m=sample.to_depth_m,
             current_result=current_result,
+            result_history=result_history,
+            crucible=crucible,
             certificates=certificates,
         )
 
@@ -684,6 +759,11 @@ class QcMaterialOut(BaseModel):
 class BatchCreate(BaseModel):
     opened_at: datetime
     notes: str | None = None
+    instrument_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="The furnace that fired this batch.",
+    )
 
 
 class BatchStatusUpdate(BaseModel):
@@ -793,6 +873,7 @@ class BatchOut(BaseModel):
     opened_by_id: int
     opened_at: datetime
     notes: str | None
+    instrument_id: int | None
 
     @classmethod
     def from_model(cls, batch: Batch) -> BatchOut:
@@ -803,6 +884,7 @@ class BatchOut(BaseModel):
             opened_by_id=batch.opened_by_id,
             opened_at=batch.opened_at,
             notes=batch.notes,
+            instrument_id=batch.instrument_id,
         )
 
 
@@ -1142,9 +1224,8 @@ class ElementResultCreate(BaseModel):
                 f"({', '.join(e.value for e in Element)})"
             ) from None
         return v
-    grade_value: Decimal = Field(
-        ge=0, description="Grade in the solid sample, in grade_unit."
-    )
+
+    grade_value: Decimal = Field(ge=0, description="Grade in the solid sample, in grade_unit.")
     grade_unit: Literal["ppm", "ppb", "g/t", "%"] = Field(
         default="ppm",
         description="Mass-fraction unit of the grade.",
@@ -1181,6 +1262,36 @@ class MultiElementImportCreate(BaseModel):
     )
 
 
+class MultiElementSupersedeCreate(BaseModel):
+    """Correct a single element reading with a new row in the chain."""
+
+    digest_method: Literal["aqua_regia", "four_acid", "peroxide_fusion"] = Field(
+        description=(
+            "How the sample was taken into solution. The certificate must name "
+            "the digest: aqua regia is partial, four-acid is total."
+        )
+    )
+    grade_value: Decimal = Field(ge=0, description="Corrected grade in grade_unit.")
+    grade_unit: Literal["ppm", "ppb", "g/t", "%"] = Field(
+        default="ppm",
+        description="Mass-fraction unit of the grade.",
+    )
+    detection_limit: Decimal | None = Field(
+        default=None, gt=0, description="Method detection limit, in grade_unit."
+    )
+    analysed_at: datetime = Field(
+        description="When the instrument read it, not when it was entered."
+    )
+    method_notes: str | None = Field(
+        default=None,
+        description="Free-text notes about the digest or instrument setup.",
+    )
+    reason: str = Field(
+        min_length=1,
+        description="Why this reading is being corrected.",
+    )
+
+
 class MultiElementResultOut(BaseModel):
     """One element's stored result, on the way out."""
 
@@ -1190,6 +1301,7 @@ class MultiElementResultOut(BaseModel):
     grade_value: str
     grade_unit: str
     detection_limit: str | None
+    grade_censored: bool
     digest_method: str
     method_notes: str | None
     analyst_id: int
@@ -1207,9 +1319,8 @@ class MultiElementResultOut(BaseModel):
             element=row.element.value,
             grade_value=str(row.grade_value),
             grade_unit=row.grade_unit,
-            detection_limit=(
-                None if row.detection_limit is None else str(row.detection_limit)
-            ),
+            detection_limit=(None if row.detection_limit is None else str(row.detection_limit)),
+            grade_censored=row.grade_censored,
             digest_method=row.digest_method.value,
             method_notes=row.method_notes,
             analyst_id=row.analyst_id,
@@ -1228,3 +1339,59 @@ class MultiElementImportOut(BaseModel):
     digest_method: str
     analysed_at: datetime
     imported: list[MultiElementResultOut]
+
+
+class PrepRecordCreate(BaseModel):
+    sample_id: int
+    stage: str = Field(description="primary_crush, secondary_crush, split, pulverize, or sieve")
+    instrument_id: int | None = None
+    performed_at: datetime | None = None
+    input_weight_g: Decimal | None = Field(default=None, gt=0)
+    output_weight_g: Decimal | None = Field(default=None, gt=0)
+    supersedes_id: int | None = None
+    superseded_reason: str | None = None
+    notes: str | None = None
+
+    @field_validator("stage")
+    @classmethod
+    def validate_stage(cls, v: str) -> str:
+        from msa_lims.domain.enums import PrepStage
+
+        try:
+            PrepStage(v)
+        except ValueError:
+            valid = ", ".join(s.value for s in PrepStage)
+            raise ValueError(f"invalid stage {v!r}; must be one of: {valid}") from None
+        return v
+
+
+class PrepRecordOut(BaseModel):
+    id: int
+    sample_id: int
+    stage: str
+    instrument_id: int | None
+    prep_tech_id: int
+    performed_at: datetime
+    input_weight_g: Decimal | None
+    output_weight_g: Decimal | None
+    supersedes_id: int | None
+    superseded_reason: str | None
+    notes: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_model(cls, record: PrepRecord) -> PrepRecordOut:
+        return cls(
+            id=record.id,
+            sample_id=record.sample_id,
+            stage=record.stage.value,
+            instrument_id=record.instrument_id,
+            prep_tech_id=record.prep_tech_id,
+            performed_at=record.performed_at,
+            input_weight_g=record.input_weight_g,
+            output_weight_g=record.output_weight_g,
+            supersedes_id=record.supersedes_id,
+            superseded_reason=record.superseded_reason,
+            notes=record.notes,
+            created_at=record.created_at,
+        )

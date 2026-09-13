@@ -23,6 +23,7 @@ dependencies = [
 # document, and a checkout that only runs the API should not need a PDF stack.
 pdf = ["reportlab>=4.2"]
 oidc = ["pyjwt[crypto]>=2.9"]
+ots = ["opentimestamps>=0.4"]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",

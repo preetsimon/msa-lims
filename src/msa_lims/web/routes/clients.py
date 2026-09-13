@@ -14,16 +14,24 @@ from fastapi import APIRouter, Query, status
 
 from msa_lims.clients.service import (
     ClientInput,
+    ClientNotFoundError,
     ClientService,
     ProjectInput,
     ProjectService,
     list_clients,
 )
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import (
+    CLIENT_CONFLICT,
+    FORBIDDEN_403,
+    NOT_FOUND_404,
+    merge_responses,
+)
 from msa_lims.web.schemas import (
     ClientCreate,
     ClientListItemOut,
     ClientOut,
+    ClientStatusUpdate,
     ProjectCreate,
     ProjectOut,
 )
@@ -49,7 +57,12 @@ def read_clients(
     ]
 
 
-@router.post("/clients", response_model=ClientOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/clients",
+    response_model=ClientOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403, CLIENT_CONFLICT),
+)
 def create_client(
     body: ClientCreate, session: SessionDep, actor: ActorDep, registered_by: LabUserDep
 ) -> ClientOut:
@@ -70,7 +83,12 @@ def create_client(
     return ClientOut.from_model(client)
 
 
-@router.post("/projects", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/projects",
+    response_model=ProjectOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403),
+)
 def create_project(
     body: ProjectCreate, session: SessionDep, actor: ActorDep, registered_by: LabUserDep
 ) -> ProjectOut:
@@ -89,3 +107,40 @@ def create_project(
     )
     session.commit()
     return ProjectOut.from_model(project)
+
+
+@router.patch(
+    "/clients/{client_id}",
+    response_model=ClientOut,
+    responses=merge_responses(FORBIDDEN_403, NOT_FOUND_404),
+)
+def update_client_status(
+    client_id: int,
+    body: ClientStatusUpdate,
+    session: SessionDep,
+    actor: ActorDep,
+    lab_user: LabUserDep,
+) -> ClientOut:
+    """Set or clear a client's active flag.
+
+    Deactivating a client prevents new submissions for that client but does
+    not touch existing submissions or results.  Reactivation is the same
+    call with ``is_active: true``.
+    """
+    service = ClientService(session)
+    try:
+        client = service.deactivate(
+            client_id,
+            is_active=body.is_active,
+            actor=lab_user,
+            actor_role=actor.role,
+        )
+    except ClientNotFoundError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    session.commit()
+    return ClientOut.from_model(client)

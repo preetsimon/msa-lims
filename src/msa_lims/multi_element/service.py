@@ -48,6 +48,8 @@ from msa_lims.domain.enums import (
     SampleStatus,
 )
 from msa_lims.domain.lifecycle import InsufficientRoleError, check_transition
+from msa_lims.domain.units import Dimension, Unit, dimension_of
+from msa_lims.fire_assay_results.service import SampleNotFoundError
 
 
 class MultiElementResultError(ValueError):
@@ -58,17 +60,13 @@ class MultiElementResultError(ValueError):
         super().__init__(f"{len(problems)} problem(s): " + "; ".join(problems))
 
 
-class SampleNotFoundError(ValueError):
-    """No sample with this id exists."""
-
-
 @dataclass(frozen=True, slots=True)
 class ElementResult:
     """One element's grade, as entered by the analyst."""
 
     element: Element
     grade_value: Decimal
-    grade_unit: str = "ppm"
+    grade_unit: Unit = Unit.PPM
     detection_limit: Decimal | None = None
 
 
@@ -135,24 +133,35 @@ class MultiElementService:
         if problems:
             raise MultiElementResultError(problems)
 
-        # Lifecycle gate: first result for this sample moves it to ASSAYED.
-        existing = current_results(self._session, sample.id)
-        if not existing:
+        # Lifecycle gate: move the sample to ASSAYED if not already there.
+        # A REPORTED sample is refused by check_transition itself, naming
+        # the amended-certificate remedy. An already-ASSAYED sample importing
+        # a second digest is a no-op on status.
+        if sample.status is not SampleStatus.ASSAYED:
             check_transition(
                 source=sample.status,
                 target=SampleStatus.ASSAYED,
                 sample_type=sample.sample_type,
                 role=actor_role,
             )
+            sample.status = SampleStatus.ASSAYED
 
         rows: list[MultiElementResult] = []
         for item in data.results:
+            # Censoring: when a detection limit is present and the value is
+            # at or below it, store the limit and flag the row as censored.
+            censored = (
+                item.detection_limit is not None and item.grade_value <= item.detection_limit
+            )
+            stored_value = item.detection_limit if censored else item.grade_value
+
             grade = MultiElementResult(
                 sample_id=sample.id,
                 element=item.element,
-                grade_value=item.grade_value,
-                grade_unit=item.grade_unit,
+                grade_value=stored_value,
+                grade_unit=item.grade_unit.value,
                 detection_limit=item.detection_limit,
+                grade_censored=censored,
                 digest_method=data.digest_method,
                 method_notes=data.method_notes,
                 analyst_id=analyst.id,
@@ -176,7 +185,6 @@ class MultiElementService:
             )
             rows.append(grade)
 
-        sample.status = SampleStatus.ASSAYED
         return rows
 
     def supersede(
@@ -186,8 +194,10 @@ class MultiElementService:
         element: Element,
         digest_method: DigestMethod,
         new_value: Decimal,
-        new_unit: str = "ppm",
+        new_unit: Unit = Unit.PPM,
         detection_limit: Decimal | None = None,
+        analysed_at: datetime,
+        method_notes: str | None = None,
         reason: str,
         analyst: LabUser,
         actor_role: Role,
@@ -229,16 +239,22 @@ class MultiElementService:
         if new_value < 0:
             raise MultiElementResultError([f"grade cannot be negative: {new_value}"])
 
+        # Censoring: when a detection limit is present and the value is
+        # at or below it, store the limit and flag the row as censored.
+        censored = detection_limit is not None and new_value <= detection_limit
+        stored_value = detection_limit if censored else new_value
+
         new_row = MultiElementResult(
             sample_id=sample.id,
             element=element,
-            grade_value=new_value,
-            grade_unit=new_unit,
+            grade_value=stored_value,
+            grade_unit=new_unit.value,
             detection_limit=detection_limit,
+            grade_censored=censored,
             digest_method=digest_method,
-            method_notes=None,
+            method_notes=method_notes,
             analyst_id=analyst.id,
-            analysed_at=analyst.created_at or datetime.now().astimezone(),
+            analysed_at=analysed_at,
             supersedes_id=current.id,
             superseded_reason=reason,
         )
@@ -262,9 +278,7 @@ class MultiElementService:
 
         return new_row
 
-    def _validate_import(
-        self, data: MultiElementImportInput, sample: Sample
-    ) -> list[str]:
+    def _validate_import(self, data: MultiElementImportInput, sample: Sample) -> list[str]:
         """Check the whole batch before writing anything."""
         problems: list[str] = []
 
@@ -274,20 +288,18 @@ class MultiElementService:
         seen: set[Element] = set()
         for i, item in enumerate(data.results):
             if item.element in seen:
-                problems.append(
-                    f"duplicate element {item.element.value} at position {i}"
-                )
+                problems.append(f"duplicate element {item.element.value} at position {i}")
             seen.add(item.element)
 
             if item.grade_value < 0:
                 problems.append(
-                    f"element {item.element.value}: grade cannot be negative "
-                    f"({item.grade_value})"
+                    f"element {item.element.value}: grade cannot be negative ({item.grade_value})"
                 )
 
-            if item.grade_unit not in ("ppm", "ppb", "g/t", "%"):
+            if dimension_of(item.grade_unit) is not Dimension.MASS_FRACTION:
                 problems.append(
-                    f"element {item.element.value}: unrecognised unit {item.grade_unit!r}"
+                    f"element {item.element.value}: {item.grade_unit.value} measures "
+                    f"{dimension_of(item.grade_unit).value}, but a grade is a mass fraction"
                 )
 
         return problems

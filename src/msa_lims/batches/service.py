@@ -112,6 +112,7 @@ class CrucibleValidationError(ValueError):
 class BatchInput:
     opened_at: datetime
     notes: str | None = None
+    instrument_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,12 +184,21 @@ class BatchService:
                 + ", ".join(sorted(role.value for role in BENCH_ROLES))
             )
 
+        if data.instrument_id is not None:
+            from msa_lims.db.models import Instrument
+
+            if self._session.get(Instrument, data.instrument_id) is None:
+                raise BatchValidationError(
+                    [f"no instrument with id {data.instrument_id}"]
+                )
+
         batch = Batch(
             batch_number=self._allocate_number(data.opened_at),
             status=BatchStatus.PENDING,
             opened_by_id=opened_by.id,
             opened_at=data.opened_at,
             notes=data.notes,
+            instrument_id=data.instrument_id,
         )
         self._session.add(batch)
         self._session.flush()

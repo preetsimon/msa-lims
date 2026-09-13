@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from msa_lims.db.models import AuditEvent
@@ -56,6 +56,13 @@ def record_audit_event(
     ``AuditEvent`` constructor it used to call, and can keep doing so; a few
     tests want it back to assert on the row it just wrote.
     """
+    # Advisory lock keyed to the audit chain: two concurrent transactions
+    # cannot both read the same tip and both write a successor, which would
+    # branch the chain.  ``pg_advisory_xact_lock`` requires no table
+    # privileges (the restricted role holds only SELECT + INSERT on
+    # ``audit_event``) and is released automatically at transaction end.
+    session.execute(text("SELECT pg_advisory_xact_lock(1)"))
+
     prev_entry_hash = session.scalar(
         select(AuditEvent.entry_hash).order_by(AuditEvent.id.desc()).limit(1)
     )

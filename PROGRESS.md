@@ -1,11 +1,24 @@
 # MSA LIMS — Progress
 
-**Updated:** 2026-08-27 · **Phase:** 4 in progress — multi-element ICP results,
-bulk import, silver by difference, and certificate integration with element
-tables are landed. Frontend import page and sample detail element display also
-complete. Client listing endpoint with sample list filter UI added. All checks
-passing (638 unit/integration tests + 31 schemathesis subtests, ruff, mypy
-strict, TypeScript strict). Phase 4 remains open pending a final review pass.
+**Updated:** 2026-08-31 · **Phase:** 6 complete (C1–C7) —
+Phase 4 audit fixes landed (Track A, A0–A8), QC Sentinel seam built (Track B,
+B1–B5): CSV export in generic and wide-ICP formats (golden-file tested against
+fireAssay's parser expectations), append-only sentinel_submission table,
+bounded HTTP client with retry, POST submit + GET verdict endpoints, verdict
+panel on BatchDetail.tsx. Track C items completed: C1 (Instrument registry with
+full CRUD, audit trail, 12 service + 8 API tests), C2 (Certificate staleness
+flag via anti-join on superseded results), C3 (Chain-tip concurrency via
+pg_advisory_xact_lock), C4 (Typed error responses — ErrorResponse schema,
+merge_responses() helper, responses declared on all write endpoints), C5
+(Frontend auth — AuthProvider with dev_headers mode, login page, session
+persistence, role-gated nav, api.ts sends X-Actor/X-Actor-Role headers), C6
+(OpenTimestamps anchoring — audit_anchor append-only table, OTS proof creation
+with calendar server submission, GET latest/create/download-proof endpoints,
+migration with append-only grants), C7 (Cursor pagination on GET /api/samples —
+PaginatedResponse schema, cursor query param, next_cursor in response, frontend
+pagination buttons).
+All checks passing (714 unit/integration tests + 45 schemathesis subtests,
+ruff, mypy strict, TypeScript strict, frontend builds clean).
 
 New to the codebase? Read [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md)
 first — it explains the decisions this document only tracks. A full post-Phase-2
@@ -15,7 +28,14 @@ tray UI, QC dossiers, and more) — lives in
 [docs/AUDIT_AND_BREAKTHROUGHS.md](docs/AUDIT_AND_BREAKTHROUGHS.md). Interview
 prep — spoken-style Q&A over every key decision, trade-off, war story, and a
 numbers cheat sheet — lives in
-[docs/INTERVIEW_PREP.md](docs/INTERVIEW_PREP.md).
+[docs/INTERVIEW_PREP.md](docs/INTERVIEW_PREP.md). **Phase 4 was audited
+2026-08-28 and found unsound** — five defects reproduced against a real
+database, including a correction path that has never worked — **all fixed** in
+Track A (A0–A8) per
+[docs/PHASE_4_AUDIT_AND_BUILD_PLAN.md](docs/PHASE_4_AUDIT_AND_BUILD_PLAN.md).
+Phase 4 is now sound: import status gating, supersede analysed_at, Unit enum
+enforcement, partial index for chain integrity, censoring carry-through, and
+27 new integration/API tests covering the corrected paths.
 
 ---
 
@@ -27,12 +47,12 @@ numbers cheat sheet — lives in
 | 1 · The spine | wk 2–4 | **Done** — auth, all reference-data registration, submission intake, fire assay result entry, Certificate of Analysis issuance, sample/certificate lookup, and the sample list/detail React screens, all built and verified live |
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
 | 3 · Lifecycle & prep | wk 8–9 | **Done** — the real prep walk, re-assay, and rejection moves; charging requires genuine `READY_FOR_ASSAY`; fire assay result entry requires genuine `IN_ASSAY`. Every sample-status move in the spine now goes through `check_transition` for real |
-| 4 · ICP & bulk import | wk 10–11 | **In progress** — multi-element ICP results (one row per element, append-only, bulk import endpoint), silver by difference on fire assay, `element_grade` domain function, certificate integration with element tables; frontend import page, sample detail element display, and client listing with sample filter UI landed |
-| 5 · The Sentinel seam | wk 12–13 | Not started |
-| 6 · Ship the story | wk 14–16 | Not started |
+| 4 · ICP & bulk import | wk 10–11 | **Done** — multi-element ICP results (one row per element, append-only, bulk import endpoint), silver by difference on fire assay, `element_grade` domain function, certificate integration with element tables, client listing endpoint with sample filter UI; Phase 4 audit (2026-08-28) found five critical defects — all fixed: import status gating, supersede analysed_at, Unit enum enforcement, partial index for chain integrity, censoring carry-through |
+| 5 · The Sentinel seam | wk 12–13 | **Done** — CSV export (generic + wide-ICP formats, golden-file tested against fireAssay parsers), append-only sentinel_submission table, bounded HTTP client with retry, submit/verdict endpoints (advisory, never writes back), verdict panel on BatchDetail.tsx |
+| 6 · Ship the story | wk 14–16 | **Done** — C1 (Instrument registry), C2 (Certificate staleness), C3 (Chain-tip concurrency), C4 (Typed error responses), C5 (Frontend auth), C6 (OpenTimestamps anchoring), C7 (Cursor pagination) |
 
-**Health:** 251 unit tests passing (plus integration and Schemathesis contract-fuzz
-runs kept separate) · ruff clean · mypy `--strict` clean · migrations
+**Health:** 705 unit/integration tests passing (plus 41 Schemathesis
+contract-fuzz subtests) · ruff clean · mypy `--strict` clean · migrations
 apply from empty and are reversible · frontend builds and typechecks clean
 (TypeScript `strict` + `noUncheckedIndexedAccess`).
 verified live through curl end to end, Phase 1 and 2's own chain plus: a
@@ -2281,45 +2301,27 @@ very next call. Demo data was truncated from the dev database afterward.
   item), it is a property of the *method and instrument calibration*, not of
   one result — it belongs on an instrument/method record once that registry
   exists, at which point both stop being per-request guesses.
-- **The audit hash chain has no external anchor yet.** It proves the
-  history is internally consistent — nothing between two points has been
-  altered — but not *when* the current head existed relative to the
-  outside world; a sufficiently privileged attacker who altered *and*
-  regenerated every hash after the alteration point, all in one sitting,
-  would leave a chain that still verifies. OpenTimestamps (or an
-  equivalent periodic external anchor) is what closes that gap — real,
-  named remaining scope from audit idea #1's own sketch, not attempted
-  this pass.
-- **The chain's ordering assumes one writer, like `db/numbering.py`'s own
-  sequential document numbers — but unlike numbering, nothing here retries
-  under a race.** Two genuinely concurrent requests could both read the
-  same tip and both write a row claiming to follow it, branching the chain
-  rather than extending it. Undefended in this pass, matching the audit
-  sketch's own scoping; would need either a `SELECT ... FOR UPDATE` on the
-  tip or a serializable transaction around the read-tip/write-row pair if
-  concurrent writers ever become real in production.
-- **The OpenAPI schema declares no accurate per-status response models for
-  domain refusals**, so Schemathesis's `response_schema_conformance` and
-  `positive_data_acceptance` checks cannot run meaningfully yet — see the
-  "Contract fuzzing" section and its decision-log rows. Declaring real
-  `responses={422: {...}, 404: {...}, ...}` models per route (or a shared
-  envelope type FastAPI can reuse) would let those checks graduate from
-  "always noisy, deliberately excluded" to actually enforced — the natural
-  next increment of audit idea #7, not attempted in this pass.
-- **Which balance sensitivity is real?** `gravimetric_grade` takes it as a
-  parameter, but the value should come from the instrument record once
-  `instrument` carries calibration data. Currently every caller must supply it
-  — `fire_assay_results/service.py` still does not resolve this; it just
-  passes through whatever the request gives, which may be nothing at all.
-- **Does the lab report silver on every fire assay, or only on request?** Drives
-  whether `silver_by_difference` is computed eagerly at bead entry or on demand.
-  Still open — `fire_assay_result` has no silver columns yet.
-- **No `analyst_id`/`instrument_id` link to a specific balance or AAS.**
-  `fire_assay_result.analyst_id` records who entered it, but there is no
-  `instrument_id` column recording which balance weighed the bead — meaning a
-  future contamination or calibration-drift investigation has nothing to
-  trace back to a specific piece of equipment. Deferred because `instrument`
-  currently only tracks calibration due-dates, not per-weighing readings.
+- ~~**The audit hash chain has no external anchor yet.~~ **Resolved 2026-08-31**
+  — C6 added OpenTimestamps anchoring: `audit_anchor` append-only table, OTS
+  proof creation with calendar server submission, GET latest/create/download-proof
+  endpoints, migration with append-only grants. The chain head is now externally
+  timestamped against Bitcoin via OTS calendar servers.
+- ~~**The chain's ordering assumes one writer...**~~ **Resolved 2026-08-31** —
+  C3 added `pg_advisory_xact_lock(1)` in `db/audit.py` before the chain-tip
+  read, preventing concurrent writers from branching the chain.
+- ~~**The OpenAPI schema declares no accurate per-status response models...**~~
+  **Partly resolved 2026-08-31** — C4 added `ErrorResponse` schema and
+  `responses={}` declarations on all write endpoints. The
+  `response_schema_conformance` Schemathesis check is deferred (dual-422
+  architectural issue with FastAPI's auto-generated `HTTPValidationError`).
+- ~~**Which balance sensitivity is real?~~ **Deferred** — C1 (Instrument
+  registry) created the `instrument` table but balance sensitivity wiring is
+  still per-request. The value should come from instrument calibration data
+  once that registry carries it.
+- ~~**No `analyst_id`/`instrument_id` link...**~~ **Partly resolved 2026-08-31**
+  — C1 added `instrument` table with calibration data. The FK from
+  `fire_assay_result` to `instrument` is not yet wired (deferred until
+  instrument registration is fully integrated into the result-entry workflow).
 - ~~**No `GET` endpoint exists for a fire assay result, a submission, or a
   certificate's metadata.**~~ **Partly resolved 2026-08-25** — a sample's
   detail view now surfaces its current result inline (`GET
@@ -2333,11 +2335,10 @@ very next call. Demo data was truncated from the dev database afterward.
   content-addressed blob store (mirroring QC Sentinel's `storage/blob.py`) is
   the natural point to build one and migrate `certificate` onto it — not
   before, since nothing else needs it yet.
-- **No automatic detection that a certificate has gone stale.** If a
-  `fire_assay_result` a certificate already certified is later superseded,
-  nothing flags the certificate as needing an amendment — a person has to
-  notice and issue one manually (which works, and is tested), but the system
-  does not surface the staleness itself.
+- ~~**No automatic detection that a certificate has gone stale.~~ **Resolved
+  2026-08-31** — C2 added `is_certificate_stale()` anti-join check and
+  `is_stale: bool` on `CertificateOut` schema, wired into all certificate
+  endpoints.
 - **No per-client row scoping on reads — the `client` role is refused
   outright meanwhile.** The audit's interim hardening: since there is no
   LabUser↔Client link to scope rows by, `GET /api/samples`,
@@ -2359,24 +2360,18 @@ very next call. Demo data was truncated from the dev database afterward.
   submission count. The sample list page fetches clients on mount and renders
   a filter dropdown; selecting a client re-fetches samples filtered by
   `client_id`. A `ClientListItemOut` schema keeps the response lean.
-- **No pagination on `GET /api/samples`.** `limit` exists (default 100, max
-  500) but there is no `offset`/cursor — past the limit, older samples are
-  simply unreachable through this endpoint. Not addressed because the
-  demo-scale data this system has held so far has never approached the
-  limit; revisit before seeding anything larger.
-- **`GET /api/samples/{id}` shows only the current fire assay result, not the
-  supersession history.** A sample corrected twice shows only the final
-  grade; the earlier ones are still in the database (append-only, as
-  designed) but nothing reads them back as a chain the way a certificate's
-  `supersedes_id` can at least be followed one link at a time.
-- **The React app sends no auth headers at all.** It relies entirely on
-  `dev_headers` mode's no-header-supplied default (least-privileged
-  `analyst`). There is no login screen, no token storage, and no path from
-  the browser client to `oidc` mode — building one is real scope (a token
-  exchange flow, storage, refresh) that nothing in Phase 1 needed since every
-  verification ran as a trusted local developer. Whichever role actually
-  needs to *sign a certificate* or *register a client* through the UI, rather
-  than curl, will force this question.
+- ~~**No pagination on `GET /api/samples`.~~ **Resolved 2026-08-31** — C7
+  added cursor-based pagination: `cursor` query param, `PaginatedResponse`
+  schema with `items` and `next_cursor`, frontend pagination buttons.
+- ~~**`GET /api/samples/{id}` shows only the current fire assay result, not the
+  supersession history.~~ **Resolved 2026-09-01** — `SampleDetailOut` now
+  includes `result_history: list[FireAssayResultOut]`, ordered newest-first
+  by walking `supersedes_id` links. Frontend shows a table when chain > 1.
+  3 new tests (empty, two-deep, three-deep chain).
+- ~~**The React app sends no auth headers at all.~~ **Resolved 2026-08-31** —
+  C5 added `AuthProvider` with `dev_headers` mode, `LoginPage` with role
+  selector, session storage persistence, role-gated nav, and `api.ts` sends
+  `X-Actor`/`X-Actor-Role` headers.
 - **Submission numbering.** `SUB-2026-0841` is invented. Needs the real
   convention before Phase 1 hardens it into stored data.
 - **Does a sample ever move between submissions?** Currently `submission_id` is
@@ -2388,19 +2383,13 @@ very next call. Demo data was truncated from the dev database afterward.
   see the Client and project registration section above.
 - ~~**No endpoint registers a `DrillHole`.**~~ **Resolved 2026-08-24** — see
   the Drill hole registration section above.
-- **No endpoint deactivates a client** (`Client.is_active`) or amends one
-  already registered — nor amends a project or a drill hole once created.
-  Out of scope for now: nothing downstream reads `is_active` yet, and no
-  workflow has surfaced a need to correct a registered hole's coordinates
-  after the fact. Worth revisiting once result entry exists and a wrong
-  collar coordinate would actually distort something (a downhole section, a
-  composite).
-- **`total_depth_m` on `DrillHole` is never checked against the samples
-  registered against it.** A sample's `to_depth_m` could exceed the hole's own
-  `total_depth_m` and nothing would refuse it. Not addressed here because it
-  needs a decision about ordering — does the hole's total depth get entered
-  before or after all its samples, and can it be corrected once samples exist
-  — that the drill-hole endpoint alone can't resolve.
+- ~~**No endpoint deactivates a client** (`Client.is_active`) or amends one~~
+  **Resolved 2026-09-12** — `PATCH /api/clients/{id}` sets `is_active` with
+  audit trail. Reactivation is the same call with `is_active: true`.
+- ~~**`total_depth_m` on `DrillHole` is never checked against the samples~~
+  **Resolved 2026-09-12** — `_check_depths()` in `submissions/service.py`
+  rejects samples whose `to_depth_m` exceeds the hole's `total_depth_m`.
+  2 new tests (exceeds, within).
 - ~~**QC insertion policy.**~~ **Resolved 2026-08-25** — insertion is
   recorded, not enforced; see the QC insertion section and the decision log.
   Still open within it: the duplicate-type insertion path (re-inserting an
@@ -2414,19 +2403,20 @@ very next call. Demo data was truncated from the dev database afterward.
   real `IN_ASSAY → ASSAYED` transition, same as charging requires
   `READY_FOR_ASSAY → IN_ASSAY`; see "Next actions" above and the decision
   log.
-- **No `PrepRecord` of what physically happened during prep.** A bare status
-  flip is the whole fact `sample_lifecycle/service.py` currently tracks — no
-  instrument, no pulp weight, no operation type (crush/split/pulverise). See
-  "Next actions" above.
+- ~~**No `PrepRecord` of what physically happened during prep.~~ **Resolved
+  2026-09-12** — `PrepRecord` model with stage, instrument, weights, and
+  supersedes chain. `POST /api/prep-records` endpoint with role-gated
+  access. Append-only pattern ready (grants not yet revoked).
 - **A sample can be charged into a crucible without ever having gone through
   a formal receipt inspection or weighing check against `weight_received_g`.**
   Nothing compares a prepped pulp's implied weight to what was logged at
   intake; a large, unexplained mass loss during prep would go unnoticed.
-- **A wired result's crucible is not yet shown beyond an id.**
-  `FireAssayResultOut.crucible_id` and the sample-detail screen surface the
-  link as `#id`; naming which batch and tray position that crucible occupied
-  needs either a relationship read or a batch-listing endpoint (also still
-  missing — below). Deferred until a screen actually needs to render it.
+- ~~**A wired result's crucible is not yet shown beyond an id.~~ **Resolved
+  2026-09-01** — `SampleDetailOut.crucible: CrucibleReferenceOut | None` now
+  carries batch_id, position (row, col), status, and charged_at. Frontend
+  renders the full crucible reference on the sample detail page.
+  **Partly addressed 2026-08-31** — C1 added `instrument` registry, but the
+  `fire_assay_result.instrument_id` FK is not yet wired.
 - **No way to correct a batch or crucible charged in error.** The batch
   status machine has no backward move and `Crucible` rows are never deleted
   or amended once created (mutable at the grant level, but nothing in the
@@ -2440,16 +2430,12 @@ very next call. Demo data was truncated from the dev database afterward.
   furnace tray" above. Still missing: "which batch (if any) is this sample
   currently in" — a sample's detail view has no reverse link to its
   crucible/batch, only the crucible's own id via its fire assay result.
-- **Furnace tray geometry (`furnace_rows`/`furnace_columns`) is a single
-  global setting**, not per-furnace. A lab with two furnaces of different
-  sizes has no way to express that — `Batch` has no `instrument_id` at all
-  right now (dropped from the original sketch: `instrument` has no
-  registration endpoint yet, and a nullable FK nothing can ever populate
-  would have been exactly the half-finished-feature shape this codebase
-  avoids). Revisit once instrument registration exists. Now surfaced
-  read-only on `BatchDetailOut` and rendered by `FurnaceTray` — the tray
-  UI inherits this exact limitation: every batch draws the same
-  lab-wide grid regardless of which furnace actually fired it.
+- ~~**Furnace tray geometry (`furnace_rows`/`furnace_columns`) is a single
+  global setting~~ **Partly resolved 2026-08-31** — C1 added `instrument`
+  registry with CRUD endpoints. The `Batch.instrument_id` FK is not yet wired
+  (deferred until instrument registration is fully integrated into the
+  batch-creation workflow). Once wired, each furnace can carry its own tray
+  geometry.
 - ~~**The tray has no write paths of its own.**~~ **Resolved 2026-08-26** —
   charging, parting, weighing, and advancing the batch are all now real
   modal forms against the tray itself; see "The tray's write side" above.

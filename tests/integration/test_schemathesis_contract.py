@@ -84,6 +84,41 @@ pytestmark = [pytest.mark.integration, pytest.mark.fuzz]
 MANAGER_HEADERS = {"X-Actor": "fuzz@lab", "X-Actor-Role": "lab_manager"}
 
 
+@pytest.fixture(autouse=True)
+def _no_ots_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent POST /api/audit/anchors from hitting real OTS calendar servers."""
+    from datetime import UTC, datetime
+
+    from msa_lims.db.audit import record_audit_event
+    from msa_lims.db.models import AuditAnchor
+    from msa_lims.web.routes import anchors as _anchor_routes
+
+    def _fake_create_anchor(session: object, *, actor_id: int | None = None) -> AuditAnchor:
+        import hashlib
+
+        proof_bytes = b"\x00" * 16
+        anchor = AuditAnchor(
+            anchored_hash="a" * 64,
+            chain_event_id=0,
+            ots_proof=proof_bytes,
+            ots_proof_sha256=hashlib.sha256(proof_bytes).hexdigest(),
+            anchored_at=datetime.now(UTC),
+        )
+        session.add(anchor)  # type: ignore[union-attr]
+        session.flush()  # type: ignore[union-attr]
+        record_audit_event(
+            session,  # type: ignore[arg-type]
+            table_name="audit_anchor",
+            record_id=anchor.id,
+            action="INSERT",
+            actor_id=actor_id,
+            after={"anchored_hash": "a" * 64, "chain_event_id": 0},
+        )
+        return anchor
+
+    monkeypatch.setattr(_anchor_routes, "create_anchor", _fake_create_anchor)
+
+
 @pytest.fixture
 def api_schema(app_engine: Engine) -> Iterator[schemathesis.BaseSchema]:
     connection = app_engine.connect()

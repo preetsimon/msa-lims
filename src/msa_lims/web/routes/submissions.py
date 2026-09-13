@@ -9,14 +9,52 @@ from __future__ import annotations
 
 from fastapi import APIRouter, status
 
-from msa_lims.submissions.service import SampleInput, SubmissionInput, SubmissionService
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.submissions.service import (
+    SampleInput,
+    SubmissionInput,
+    SubmissionNotFoundError,
+    SubmissionService,
+    get_submission,
+)
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import (
+    CLIENT_OR_PROJECT_NOT_FOUND,
+    FORBIDDEN_403,
+    NOT_FOUND_404,
+    merge_responses,
+)
 from msa_lims.web.schemas import SubmissionCreate, SubmissionOut
 
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
 
 
-@router.post("", response_model=SubmissionOut, status_code=status.HTTP_201_CREATED)
+@router.get(
+    "/{submission_id}",
+    response_model=SubmissionOut,
+    responses=merge_responses(FORBIDDEN_403, NOT_FOUND_404),
+)
+def read_submission(
+    submission_id: int, session: SessionDep, actor: InternalActorDep
+) -> SubmissionOut:
+    """A single submission by id, with its samples."""
+    try:
+        submission = get_submission(session, submission_id)
+    except SubmissionNotFoundError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return SubmissionOut.from_model(submission)
+
+
+@router.post(
+    "",
+    response_model=SubmissionOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(FORBIDDEN_403, CLIENT_OR_PROJECT_NOT_FOUND),
+)
 def create_submission(
     body: SubmissionCreate,
     session: SessionDep,

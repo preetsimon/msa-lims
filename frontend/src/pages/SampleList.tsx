@@ -9,6 +9,8 @@ export function SampleList() {
   const [samples, setSamples] = useState<SampleListItem[] | null>(null);
   const [clients, setClients] = useState<ClientListItem[]>([]);
   const [clientId, setClientId] = useState<number | "">("");
+  const [cursor, setCursor] = useState<number | undefined>(undefined);
+  const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -21,10 +23,16 @@ export function SampleList() {
     let cancelled = false;
     setSamples(null);
     setError(null);
-    const params = clientId !== "" ? { client_id: clientId } : undefined;
+    const params = {
+      ...(clientId !== "" ? { client_id: clientId } : {}),
+      ...(cursor !== undefined ? { cursor } : {}),
+    };
     listSamples(params)
       .then((data) => {
-        if (!cancelled) setSamples(data);
+        if (!cancelled) {
+          setSamples(data.items);
+          setNextCursor(data.next_cursor);
+        }
       })
       .catch(() => {
         if (!cancelled) setError("Could not load samples.");
@@ -32,7 +40,16 @@ export function SampleList() {
     return () => {
       cancelled = true;
     };
-  }, [clientId]);
+  }, [clientId, cursor]);
+
+  const handleNext = () => {
+    if (nextCursor !== null) setCursor(nextCursor);
+  };
+
+  const handlePrev = () => {
+    setCursor(undefined);
+    setSamples(null);
+  };
 
   return (
     <main>
@@ -94,6 +111,17 @@ export function SampleList() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {samples && samples.length > 0 && (
+        <div className="pagination">
+          <button onClick={handlePrev} disabled={cursor === undefined}>
+            Previous
+          </button>
+          <button onClick={handleNext} disabled={nextCursor === null}>
+            Next
+          </button>
         </div>
       )}
     </main>

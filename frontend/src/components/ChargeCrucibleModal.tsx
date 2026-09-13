@@ -50,7 +50,7 @@ export function ChargeCrucibleModal({
     ])
       .then(([sampleList, materialList, recipeList]) => {
         if (cancelled) return;
-        setSamples(sampleList);
+        setSamples(sampleList.items);
         setMaterials(materialList);
         setRecipes(recipeList);
       })

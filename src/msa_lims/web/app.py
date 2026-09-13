@@ -43,15 +43,21 @@ from msa_lims.fire_assay_results.service import (
     SampleNotFoundError as FireAssaySampleNotFoundError,
 )
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError, FluxRecipeValidationError
+from msa_lims.instruments import (
+    InstrumentNameConflictError,
+    InstrumentNotFoundError,
+)
 from msa_lims.multi_element.service import (
     MultiElementResultError,
 )
-from msa_lims.multi_element.service import (
+from msa_lims.fire_assay_results.service import (
     SampleNotFoundError as MultiElementSampleNotFoundError,
 )
+from msa_lims.prep_records.service import PrepRecordValidationError
 from msa_lims.qc_materials.service import QcMaterialNotFoundError, QcMaterialValidationError
 from msa_lims.submissions.service import SubmissionValidationError
 from msa_lims.web.routes import (
+    anchors,
     audit,
     batches,
     certificates,
@@ -60,10 +66,13 @@ from msa_lims.web.routes import (
     fire_assay_results,
     flux_recipes,
     health,
+    instruments,
     multi_element,
+    prep_records,
     qc_materials,
     sample_lifecycle,
     samples,
+    sentinel,
     submissions,
     whoami,
 )
@@ -100,10 +109,14 @@ def create_app() -> FastAPI:
     app.include_router(sample_lifecycle.router)
     app.include_router(submissions.router)
     app.include_router(flux_recipes.router)
+    app.include_router(instruments.router)
     app.include_router(batches.router)
     app.include_router(qc_materials.router)
     app.include_router(audit.router)
+    app.include_router(anchors.router)
     app.include_router(multi_element.router)
+    app.include_router(prep_records.router)
+    app.include_router(sentinel.router)
     _register_error_handlers(app)
     return app
 
@@ -146,6 +159,9 @@ _ERROR_STATUS: dict[type[Exception], int] = {
     QcMaterialValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     MultiElementSampleNotFoundError: status.HTTP_404_NOT_FOUND,
     MultiElementResultError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    PrepRecordValidationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InstrumentNotFoundError: status.HTTP_404_NOT_FOUND,
+    InstrumentNameConflictError: status.HTTP_409_CONFLICT,
 }
 
 

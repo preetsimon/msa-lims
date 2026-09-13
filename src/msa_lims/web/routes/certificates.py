@@ -19,9 +19,17 @@ from msa_lims.certificates.service import (
     get_certificate,
     get_certified_samples,
     get_pdf,
+    is_certificate_stale,
 )
 from msa_lims.db.models import Certificate
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
+from msa_lims.web.routes.error_responses import (
+    CERTIFICATE_CORRUPTED,
+    CERTIFICATE_NOT_FOUND,
+    CLIENT_OR_PROJECT_NOT_FOUND,
+    FORBIDDEN_403,
+    merge_responses,
+)
 from msa_lims.web.schemas import (
     CertificateCreate,
     CertificateOut,
@@ -55,10 +63,24 @@ def _certificate_out(session: Session, certificate: Certificate) -> CertificateO
         )
         for info in get_certified_samples(session, certificate.id)
     ]
-    return CertificateOut.from_model(certificate, samples=samples)
+    return CertificateOut.from_model(
+        certificate,
+        samples=samples,
+        is_stale=is_certificate_stale(session, certificate.id),
+    )
 
 
-@router.post("", response_model=CertificateOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=CertificateOut,
+    status_code=status.HTTP_201_CREATED,
+    responses=merge_responses(
+        FORBIDDEN_403,
+        CLIENT_OR_PROJECT_NOT_FOUND,
+        CERTIFICATE_NOT_FOUND,
+        CERTIFICATE_CORRUPTED,
+    ),
+)
 def create_certificate(
     body: CertificateCreate, session: SessionDep, actor: ActorDep, issued_by: LabUserDep
 ) -> CertificateOut:
@@ -79,7 +101,11 @@ def create_certificate(
     return _certificate_out(session, certificate)
 
 
-@router.get("/{certificate_id}", response_model=CertificateOut)
+@router.get(
+    "/{certificate_id}",
+    response_model=CertificateOut,
+    responses=merge_responses(CERTIFICATE_NOT_FOUND, CERTIFICATE_CORRUPTED),
+)
 def read_certificate(
     certificate_id: int, session: SessionDep, actor: InternalActorDep
 ) -> CertificateOut:
@@ -91,6 +117,7 @@ def read_certificate(
     "/{certificate_id}/pdf",
     response_class=Response,
     summary="Download the signed Certificate of Analysis",
+    responses=merge_responses(CERTIFICATE_NOT_FOUND, CERTIFICATE_CORRUPTED),
 )
 def download_certificate_pdf(
     certificate_id: int, session: SessionDep, actor: InternalActorDep

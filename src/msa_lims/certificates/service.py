@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_HALF_EVEN, Decimal
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from msa_lims.certificates.pdf import (
@@ -52,6 +52,7 @@ from msa_lims.db.models import (
 from msa_lims.db.numbering import count_with_prefix, insert_with_unique_number
 from msa_lims.domain.enums import MAY_SIGN_CERTIFICATE, Role, SampleStatus
 from msa_lims.domain.lifecycle import InsufficientRoleError, check_transition
+from msa_lims.domain.units import Unit
 from msa_lims.domain.values import MeasuredValue
 from msa_lims.fire_assay_results.service import current_result, measured_value
 from msa_lims.multi_element.service import current_results
@@ -78,17 +79,6 @@ def _display_grade(measured: MeasuredValue) -> str:
     assert measured.value is not None  # guaranteed by MeasuredValue.__post_init__
     rounded = measured.value.quantize(_CERTIFICATE_GRADE_PRECISION, rounding=ROUND_HALF_EVEN)
     return f"{rounded} {measured.unit.value}"
-
-
-def _display_element_grade(mer: MultiElementResult) -> str:
-    """Render a multi-element grade for the certificate.
-
-    Same rounding discipline as ``_display_grade`` but reads directly from
-    the model row rather than reconstructing a MeasuredValue.
-    """
-    assert mer.grade_value is not None
-    rounded = mer.grade_value.quantize(_CERTIFICATE_GRADE_PRECISION, rounding=ROUND_HALF_EVEN)
-    return f"{rounded} {mer.grade_unit}"
 
 
 class CertificateNotFoundError(ValueError):
@@ -123,6 +113,42 @@ def get_pdf(session: Session, certificate_id: int) -> tuple[Certificate, bytes]:
             f"certificate {certificate_id} has drifted from its recorded hash"
         )
     return certificate, certificate.pdf_bytes
+
+
+def is_certificate_stale(session: Session, certificate_id: int) -> bool:
+    """Check whether any result certified by this certificate has been superseded.
+
+    A certificate is stale when the fire assay result or multi-element result
+    it freezes has since been replaced by a newer row (supersedes chain).  The
+    certificate itself is still a valid historical document — it reported what
+    it reported — but an operator should know the certified values are no
+    longer the lab's current best estimate.
+
+    Returns ``True`` if at least one certified result has a successor.
+    """
+    # Check fire assay results: does any CertificateResult reference a
+    # fire_assay_result that is the supersedes_id of another row?
+    far_stale: bool = session.query(
+        exists().where(
+            CertificateResult.certificate_id == certificate_id,
+            FireAssayResult.supersedes_id == CertificateResult.fire_assay_result_id,
+        )
+    ).scalar()
+
+    if far_stale:
+        return True
+
+    # Check multi-element results: does any CertificateMultiElementResult
+    # reference a multi_element_result that is the supersedes_id of another row?
+    mer_stale: bool = session.query(
+        exists().where(
+            CertificateMultiElementResult.certificate_id == certificate_id,
+            MultiElementResult.supersedes_id
+            == CertificateMultiElementResult.multi_element_result_id,
+        )
+    ).scalar()
+
+    return mer_stale
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,8 +191,6 @@ def get_certified_samples(session: Session, certificate_id: int) -> list[Certifi
     shape, so the two can never show a certificate's contents differently.
     Multi-element results are fetched separately and attached by sample id.
     """
-    from msa_lims.db.models import MultiElementResult
-
     rows = session.execute(
         select(CertificateResult, Sample, FireAssayResult)
         .join(Sample, CertificateResult.sample_id == Sample.id)
@@ -194,9 +218,7 @@ def get_certified_samples(session: Session, certificate_id: int) -> list[Certifi
             element=mer.element.value,
             grade_value=str(mer.grade_value),
             grade_unit=mer.grade_unit,
-            detection_limit=(
-                None if mer.detection_limit is None else str(mer.detection_limit)
-            ),
+            detection_limit=(None if mer.detection_limit is None else str(mer.detection_limit)),
             digest_method=mer.digest_method.value,
         )
         elements_by_sample.setdefault(mer.sample_id, []).append(info)
@@ -294,7 +316,13 @@ class CertificateService:
                 certified_elements = tuple(
                     CertifiedElement(
                         element=el.element.value,
-                        grade_display=_display_element_grade(el),
+                        grade_display=_display_grade(
+                            MeasuredValue.non_detect(el.grade_value, Unit(el.grade_unit))
+                            if el.grade_censored
+                            else MeasuredValue.detected(
+                                el.grade_value, Unit(el.grade_unit), el.detection_limit
+                            )
+                        ),
                     )
                     for el in elements
                 )

@@ -146,3 +146,65 @@ def list_qc_materials(session: Session, *, active_only: bool = True) -> list[QcM
     if active_only:
         stmt = stmt.where(QcMaterial.is_active.is_(True))
     return list(session.scalars(stmt))
+
+
+def get_qc_material(session: Session, material_id: int) -> QcMaterial:
+    material = session.get(QcMaterial, material_id)
+    if material is None:
+        raise QcMaterialNotFoundError(f"no QC material with id {material_id}")
+    return material
+
+
+def update_qc_material(
+    session: Session,
+    material_id: int,
+    *,
+    name: str | None = None,
+    lot_number: str | None = None,
+    certified_au_value_g_t: Decimal | None = None,
+    certified_au_uncertainty_g_t: Decimal | None = None,
+    notes: str | None = None,
+    actor_id: int | None = None,
+) -> QcMaterial:
+    material = get_qc_material(session, material_id)
+    before: dict[str, object] = {"name": material.name, "lot_number": material.lot_number}
+    if name is not None:
+        material.name = name.strip()
+    if lot_number is not None:
+        material.lot_number = lot_number
+    if certified_au_value_g_t is not None:
+        material.certified_au_value_g_t = certified_au_value_g_t
+    if certified_au_uncertainty_g_t is not None:
+        material.certified_au_uncertainty_g_t = certified_au_uncertainty_g_t
+    if notes is not None:
+        material.notes = notes
+    record_audit_event(
+        session,
+        table_name="qc_material",
+        record_id=material.id,
+        action="update",
+        actor_id=actor_id,
+        before=before,
+        after={"name": material.name, "lot_number": material.lot_number},
+    )
+    return material
+
+
+def deactivate_qc_material(
+    session: Session,
+    material_id: int,
+    *,
+    actor_id: int | None = None,
+) -> QcMaterial:
+    material = get_qc_material(session, material_id)
+    material.is_active = False
+    record_audit_event(
+        session,
+        table_name="qc_material",
+        record_id=material.id,
+        action="deactivate",
+        actor_id=actor_id,
+        before={"is_active": True},
+        after={"is_active": False},
+    )
+    return material

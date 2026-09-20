@@ -114,6 +114,89 @@ export function listQcMaterials(): Promise<QcMaterial[]> {
   return getJSON<QcMaterial[]>("/api/qc-materials");
 }
 
+// ---------------------------------------------------------------------------
+// Drill Holes
+// ---------------------------------------------------------------------------
+
+export interface DrillHole {
+  id: number;
+  project_id: number;
+  hole_id: string;
+  easting: string | null;
+  northing: string | null;
+  elevation_m: string | null;
+  utm_zone: string | null;
+  total_depth_m: string | null;
+  dip_degrees: string | null;
+  azimuth_degrees: string | null;
+  drilling_method: string | null;
+}
+
+export function listDrillHoles(params?: {
+  project_id?: number;
+  limit?: number;
+}): Promise<DrillHole[]> {
+  const q: string[] = [];
+  if (params?.project_id !== undefined) q.push(`project_id=${params.project_id}`);
+  if (params?.limit !== undefined) q.push(`limit=${params.limit}`);
+  const query = q.length > 0 ? `?${q.join("&")}` : "";
+  return getJSON<DrillHole[]>(`/api/drill-holes${query}`);
+}
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+export interface Project {
+  id: number;
+  client_id: number;
+  name: string;
+  description: string | null;
+  location: string | null;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+export function listProjects(params?: {
+  client_id?: number;
+  limit?: number;
+}): Promise<Project[]> {
+  const q: string[] = [];
+  if (params?.client_id !== undefined) q.push(`client_id=${params.client_id}`);
+  if (params?.limit !== undefined) q.push(`limit=${params.limit}`);
+  const query = q.length > 0 ? `?${q.join("&")}` : "";
+  return getJSON<Project[]>(`/api/projects${query}`);
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+export interface AuditEvent {
+  id: number;
+  table_name: string;
+  record_id: number;
+  action: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  reason: string | null;
+  actor_id: number | null;
+  created_at: string | null;
+}
+
+export function getAuditEvents(params?: {
+  table_name?: string;
+  record_id?: number;
+  limit?: number;
+}): Promise<AuditEvent[]> {
+  const q: string[] = [];
+  if (params?.table_name) q.push(`table_name=${encodeURIComponent(params.table_name)}`);
+  if (params?.record_id !== undefined) q.push(`record_id=${params.record_id}`);
+  if (params?.limit !== undefined) q.push(`limit=${params.limit}`);
+  const query = q.length > 0 ? `?${q.join("&")}` : "";
+  return getJSON<AuditEvent[]>(`/api/audit/events${query}`);
+}
+
 export interface ClientListItem {
   id: number;
   code: string;

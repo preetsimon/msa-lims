@@ -2,15 +2,20 @@ import { Link, Route, Routes } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./auth";
 import { setAuthHeaders } from "./api";
+import { AuditLogPage } from "./pages/AuditLogPage";
 import { BatchDetail } from "./pages/BatchDetail";
 import { BatchList } from "./pages/BatchList";
 import { CertificatesPage } from "./pages/CertificatesPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DrillHolesPage } from "./pages/DrillHolesPage";
+import { FluxRecipesPage } from "./pages/FluxRecipesPage";
 import { InstrumentsPage } from "./pages/InstrumentsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MultiElementImport } from "./pages/MultiElementImport";
 import { PrepRecordsPage } from "./pages/PrepRecordsPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
+import { QcMaterialsPage } from "./pages/QcMaterialsPage";
 import { ResultEntryPage } from "./pages/ResultEntryPage";
 import { SampleDetail } from "./pages/SampleDetail";
 import { SampleList } from "./pages/SampleList";
@@ -37,6 +42,11 @@ function AppInner() {
         <Link to="/certificates">Certificates</Link>
         <Link to="/instruments">Instruments</Link>
         <Link to="/clients">Clients</Link>
+        <Link to="/qc-materials">QC Materials</Link>
+        <Link to="/flux-recipes">Flux Recipes</Link>
+        <Link to="/drill-holes">Drill Holes</Link>
+        <Link to="/projects">Projects</Link>
+        <Link to="/audit-log">Audit Log</Link>
         <Link to="/result-entry">Enter Result</Link>
         <Link to="/status">Status</Link>
         <span className="nav-spacer" />
@@ -102,6 +112,26 @@ function AppInner() {
         <Route
           path="/clients"
           element={user ? <ClientsPage /> : <LoginPage />}
+        />
+        <Route
+          path="/qc-materials"
+          element={user ? <QcMaterialsPage /> : <LoginPage />}
+        />
+        <Route
+          path="/flux-recipes"
+          element={user ? <FluxRecipesPage /> : <LoginPage />}
+        />
+        <Route
+          path="/drill-holes"
+          element={user ? <DrillHolesPage /> : <LoginPage />}
+        />
+        <Route
+          path="/projects"
+          element={user ? <ProjectsPage /> : <LoginPage />}
+        />
+        <Route
+          path="/audit-log"
+          element={user ? <AuditLogPage /> : <LoginPage />}
         />
         <Route
           path="/samples/:id/prep-records"

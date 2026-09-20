@@ -4,10 +4,10 @@ intake can run entirely through HTTP.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
-from msa_lims.drill_holes.service import DrillHoleInput, DrillHoleService
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.drill_holes.service import DrillHoleInput, DrillHoleService, list_drill_holes
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.routes.error_responses import (
     CLIENT_OR_PROJECT_NOT_FOUND,
     FORBIDDEN_403,
@@ -16,6 +16,19 @@ from msa_lims.web.routes.error_responses import (
 from msa_lims.web.schemas import DrillHoleCreate, DrillHoleOut
 
 router = APIRouter(prefix="/api", tags=["drill-holes"])
+
+
+@router.get("/drill-holes", response_model=list[DrillHoleOut])
+def read_drill_holes(
+    session: SessionDep,
+    actor: InternalActorDep,
+    project_id: int | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[DrillHoleOut]:
+    return [
+        DrillHoleOut.from_model(hole)
+        for hole in list_drill_holes(session, project_id=project_id, limit=limit)
+    ]
 
 
 @router.post(

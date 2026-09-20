@@ -118,3 +118,20 @@ class DrillHoleService:
             after={"project_id": project.id, "hole_id": hole.hole_id},
         )
         return hole
+
+
+def list_drill_holes(
+    session: Session, *, project_id: int | None = None, limit: int = 200
+) -> list[DrillHole]:
+    stmt = select(DrillHole).order_by(DrillHole.id.desc())
+    if project_id is not None:
+        stmt = stmt.where(DrillHole.project_id == project_id)
+    stmt = stmt.limit(limit)
+    return list(session.scalars(stmt))
+
+
+def get_drill_hole(session: Session, drill_hole_id: int) -> DrillHole:
+    hole = session.get(DrillHole, drill_hole_id)
+    if hole is None:
+        raise DrillHoleValidationError([f"no drill hole with id {drill_hole_id}"])
+    return hole

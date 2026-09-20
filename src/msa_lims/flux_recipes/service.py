@@ -108,3 +108,74 @@ def list_flux_recipes(session: Session, *, active_only: bool = True) -> list[Flu
     if active_only:
         stmt = stmt.where(FluxRecipe.is_active.is_(True))
     return list(session.scalars(stmt))
+
+
+def get_flux_recipe(session: Session, recipe_id: int) -> FluxRecipe:
+    recipe = session.get(FluxRecipe, recipe_id)
+    if recipe is None:
+        raise FluxRecipeNotFoundError(f"no flux recipe with id {recipe_id}")
+    return recipe
+
+
+def update_flux_recipe(
+    session: Session,
+    recipe_id: int,
+    *,
+    name: str | None = None,
+    nominal_portion_g: Decimal | None = None,
+    litharge_g: Decimal | None = None,
+    soda_ash_g: Decimal | None = None,
+    borax_g: Decimal | None = None,
+    silica_g: Decimal | None = None,
+    flour_g: Decimal | None = None,
+    nitre_g: Decimal | None = None,
+    actor_id: int | None = None,
+) -> FluxRecipe:
+    recipe = get_flux_recipe(session, recipe_id)
+    before: dict[str, object] = {"name": recipe.name}
+    if name is not None:
+        recipe.name = name.strip()
+    if nominal_portion_g is not None:
+        recipe.nominal_portion_g = nominal_portion_g
+    if litharge_g is not None:
+        recipe.litharge_g = litharge_g
+    if soda_ash_g is not None:
+        recipe.soda_ash_g = soda_ash_g
+    if borax_g is not None:
+        recipe.borax_g = borax_g
+    if silica_g is not None:
+        recipe.silica_g = silica_g
+    if flour_g is not None:
+        recipe.flour_g = flour_g
+    if nitre_g is not None:
+        recipe.nitre_g = nitre_g
+    record_audit_event(
+        session,
+        table_name="flux_recipe",
+        record_id=recipe.id,
+        action="update",
+        actor_id=actor_id,
+        before=before,
+        after={"name": recipe.name},
+    )
+    return recipe
+
+
+def deactivate_flux_recipe(
+    session: Session,
+    recipe_id: int,
+    *,
+    actor_id: int | None = None,
+) -> FluxRecipe:
+    recipe = get_flux_recipe(session, recipe_id)
+    recipe.is_active = False
+    record_audit_event(
+        session,
+        table_name="flux_recipe",
+        record_id=recipe.id,
+        action="deactivate",
+        actor_id=actor_id,
+        before={"is_active": True},
+        after={"is_active": False},
+    )
+    return recipe

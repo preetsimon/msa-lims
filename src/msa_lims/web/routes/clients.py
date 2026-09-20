@@ -20,6 +20,7 @@ from msa_lims.clients.service import (
     ProjectService,
     get_client,
     list_clients,
+    list_projects,
 )
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.routes.error_responses import (
@@ -104,6 +105,19 @@ def create_client(
     )
     session.commit()
     return ClientOut.from_model(client)
+
+
+@router.get("/projects", response_model=list[ProjectOut])
+def read_projects(
+    session: SessionDep,
+    actor: InternalActorDep,
+    client_id: int | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[ProjectOut]:
+    return [
+        ProjectOut.from_model(p)
+        for p in list_projects(session, client_id=client_id, limit=limit)
+    ]
 
 
 @router.post(

@@ -270,3 +270,13 @@ def list_clients(session: Session, *, limit: int = 100) -> list[ClientListItem]:
         ClientListItem(client=client, submission_count=submission_count)
         for client, submission_count in rows
     ]
+
+
+def list_projects(
+    session: Session, *, client_id: int | None = None, limit: int = 200
+) -> list[Project]:
+    stmt = select(Project).order_by(Project.id.desc())
+    if client_id is not None:
+        stmt = stmt.where(Project.client_id == client_id)
+    stmt = stmt.limit(limit)
+    return list(session.scalars(stmt))

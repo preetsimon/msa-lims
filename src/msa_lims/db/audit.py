@@ -171,3 +171,20 @@ def verify_chain(session: Session, *, upto: int | None = None) -> ChainVerificat
     return ChainVerification(
         verified_count=verified, valid=True, head_hash=prev_hash, first_break=None
     )
+
+
+def list_audit_events(
+    session: Session,
+    *,
+    table_name: str | None = None,
+    record_id: int | None = None,
+    limit: int = 100,
+) -> list[AuditEvent]:
+    """Recent audit events, newest first, optionally filtered by target."""
+    stmt = select(AuditEvent).order_by(AuditEvent.id.desc())
+    if table_name is not None:
+        stmt = stmt.where(AuditEvent.table_name == table_name)
+    if record_id is not None:
+        stmt = stmt.where(AuditEvent.record_id == record_id)
+    stmt = stmt.limit(limit)
+    return list(session.scalars(stmt))

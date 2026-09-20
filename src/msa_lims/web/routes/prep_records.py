@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, status
+from sqlalchemy import select
 
+from msa_lims.db.models import PrepRecord
 from msa_lims.domain.enums import PrepStage
 from msa_lims.prep_records.service import (
     PrepRecordInput,
     PrepRecordService,
 )
-from msa_lims.web.deps import ActorDep, LabUserDep, SessionDep
+from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.routes.error_responses import (
     FORBIDDEN_403,
     SAMPLE_NOT_FOUND,
@@ -20,6 +22,26 @@ from msa_lims.web.schemas import PrepRecordCreate, PrepRecordOut
 router = APIRouter(prefix="/api", tags=["prep-records"])
 
 SAMPLE_NOT_FOUND_404 = {**SAMPLE_NOT_FOUND}
+
+
+@router.get(
+    "/samples/{sample_id}/prep-records",
+    response_model=list[PrepRecordOut],
+    responses=merge_responses(SAMPLE_NOT_FOUND_404),
+)
+def read_sample_prep_records(
+    sample_id: int,
+    session: SessionDep,
+    actor: InternalActorDep,
+) -> list[PrepRecordOut]:
+    """All prep records for a sample, newest first."""
+    stmt = (
+        select(PrepRecord)
+        .where(PrepRecord.sample_id == sample_id)
+        .order_by(PrepRecord.id.desc())
+    )
+    records = list(session.scalars(stmt))
+    return [PrepRecordOut.from_model(r) for r in records]
 
 
 @router.post(

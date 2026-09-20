@@ -20,7 +20,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from msa_lims.clients.service import ClientNotFoundError
 from msa_lims.db.audit import record_audit_event
@@ -70,6 +70,41 @@ def get_submission(session: Session, submission_id: int) -> Submission:
     if submission is None:
         raise SubmissionNotFoundError(f"no submission with id {submission_id}")
     return submission
+
+
+@dataclass(frozen=True, slots=True)
+class PaginatedSubmissions:
+    items: list[Submission]
+    next_cursor: int | None
+
+
+def list_submissions(
+    session: Session,
+    *,
+    client_id: int | None = None,
+    limit: int = 100,
+    cursor: int | None = None,
+) -> PaginatedSubmissions:
+    """All submissions, newest first, optionally filtered by client.
+
+    Cursor-based pagination: pass the ``id`` of the last item from the
+    previous page as ``cursor``.
+    """
+    stmt = (
+        select(Submission)
+        .options(joinedload(Submission.samples))
+        .order_by(Submission.id.desc())
+    )
+    if client_id is not None:
+        stmt = stmt.where(Submission.client_id == client_id)
+    if cursor is not None:
+        stmt = stmt.where(Submission.id < cursor)
+
+    rows = list(session.execute(stmt.limit(limit + 1)).unique().scalars().all())
+    has_next = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = items[-1].id if has_next and items else None
+    return PaginatedSubmissions(items=items, next_cursor=next_cursor)
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,99 +4,31 @@
  */
 
 export interface paths {
-    "/health": {
+    "/api/audit/anchors": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Health */
-        get: operations["health_health_get"];
+        get?: never;
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Whoami */
-        get: operations["whoami_api_me_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/clients": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         /**
-         * Read Clients
-         * @description List all clients, newest first, with submission count.
+         * Create Audit Anchor
+         * @description Anchor the current audit chain head via OpenTimestamps.
          *
-         *     Lean rows like ``GET /api/samples``: just enough to populate a filter
-         *     dropdown or a client-management table, no per-row deep lookup.
+         *     Creates a detached timestamp proof and submits it to OTS calendar
+         *     servers. The proof is stored in the database (append-only) and can
+         *     be downloaded for independent verification.
          */
-        get: operations["read_clients_api_clients_get"];
-        put?: never;
-        /** Create Client */
-        post: operations["create_client_api_clients_post"];
+        post: operations["create_audit_anchor_api_audit_anchors_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/projects": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Project */
-        post: operations["create_project_api_projects_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/drill-holes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Drill Hole */
-        post: operations["create_drill_hole_api_drill_holes_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/fire-assay-results/{result_id}": {
+    "/api/audit/anchors/latest": {
         parameters: {
             query?: never;
             header?: never;
@@ -104,10 +36,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read Fire Assay Result
-         * @description A single fire assay result by id — gravimetric or solution finish.
+         * Read Latest Anchor
+         * @description The most recent audit chain anchor, or null if none exists.
          */
-        get: operations["read_fire_assay_result_api_fire_assay_results__result_id__get"];
+        get: operations["read_latest_anchor_api_audit_anchors_latest_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -116,24 +48,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/fire-assay-results": {
+    "/api/audit/anchors/{anchor_id}/proof": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Download Anchor Proof
+         * @description Download the raw OTS proof bytes for an anchor.
+         *
+         *     The proof is sufficient to re-verify the timestamp against a Bitcoin
+         *     node without any other context.
+         */
+        get: operations["download_anchor_proof_api_audit_anchors__anchor_id__proof_get"];
         put?: never;
-        /** Create Fire Assay Result */
-        post: operations["create_fire_assay_result_api_fire_assay_results_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/fire-assay-results/solution-finish": {
+    "/api/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Audit Chain Verification */
+        get: operations["read_audit_chain_verification_api_audit_verify_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Batches */
+        get: operations["read_batches_api_batches_get"];
+        put?: never;
+        /** Create Batch */
+        post: operations["create_batch_api_batches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Batch */
+        get: operations["read_batch_api_batches__batch_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/crucibles": {
         parameters: {
             query?: never;
             header?: never;
@@ -142,8 +132,158 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Solution Finish */
-        post: operations["create_solution_finish_api_fire_assay_results_solution_finish_post"];
+        /** Charge Crucible */
+        post: operations["charge_crucible_api_batches__batch_id__crucibles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/crucibles/{crucible_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Uncharge Crucible
+         * @description Remove a crucible from a batch still in CHARGING status.
+         *
+         *     This is the error-correction path: a crucible was charged into the
+         *     wrong slot, or a sample was charged that should not have been.  The
+         *     batch must still be in CHARGING (not yet advanced to IN_FUSION), and
+         *     the crucible must be in CHARGED status (not yet parted or weighed).
+         */
+        delete: operations["uncharge_crucible_api_batches__batch_id__crucibles__crucible_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/crucibles/{crucible_id}/parting": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Crucible Parting */
+        post: operations["record_crucible_parting_api_batches__batch_id__crucibles__crucible_id__parting_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/crucibles/{crucible_id}/weighing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record Crucible Weighing */
+        post: operations["record_crucible_weighing_api_batches__batch_id__crucibles__crucible_id__weighing_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/qc-dossier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Batch Qc Dossier
+         * @description This completed batch's sealed QC dossier — audit idea #5's contract.
+         *
+         *     Nested under the batch like parting and weighing: a dossier is one view
+         *     of one batch, not an entity of its own. Generation is idempotent and
+         *     content-addressed; fetching twice without new measurements returns the
+         *     same seal and writes nothing new (see `qc_dossiers/service.py`). The
+         *     threshold flags are advisory — recording that a blank came back above the
+         *     lab's line; judging what that means is QC Sentinel's job.
+         */
+        get: operations["read_batch_qc_dossier_api_batches__batch_id__qc_dossier_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/sentinel-verdict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sentinel Verdict
+         * @description Get the latest Sentinel verdict for a batch.
+         *
+         *     Returns the verdict from the most recent submission that has one,
+         *     or an empty verdict if none has been returned yet.
+         */
+        get: operations["get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Advance Batch Status */
+        patch: operations["advance_batch_status_api_batches__batch_id__status_patch"];
+        trace?: never;
+    };
+    "/api/batches/{batch_id}/submit-to-sentinel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit To Sentinel
+         * @description Submit a batch's QC dossier to Sentinel.
+         *
+         *     The batch must have a sealed dossier (``batch.qc_dossier_sha256 IS NOT
+         *     NULL``).  If Sentinel is disabled or unreachable, the attempt is still
+         *     recorded.
+         */
+        post: operations["submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -157,7 +297,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Read Certificates */
+        get: operations["read_certificates_api_certificates_get"];
         put?: never;
         /** Create Certificate */
         post: operations["create_certificate_api_certificates_post"];
@@ -201,41 +342,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/samples": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Samples */
-        get: operations["read_samples_api_samples_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/samples/{sample_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Sample */
-        get: operations["read_sample_api_samples__sample_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/samples/{sample_id}/provenance": {
+    "/api/clients": {
         parameters: {
             query?: never;
             header?: never;
@@ -243,25 +350,23 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Read Sample Provenance
-         * @description This sample's whole evidence dossier — audit idea #3.
+         * Read Clients
+         * @description List all clients, newest first, with submission count.
          *
-         *     Assembled read-only from rows that already existed and sealed with a
-         *     `sha256` a recipient can recompute offline. Nested under the sample
-         *     rather than given its own top-level path because a dossier is not an
-         *     entity in its own right: it is one view of one sample, the same way
-         *     `/api/certificates/{id}/pdf` is one rendering of one certificate.
+         *     Lean rows like ``GET /api/samples``: just enough to populate a filter
+         *     dropdown or a client-management table, no per-row deep lookup.
          */
-        get: operations["read_sample_provenance_api_samples__sample_id__provenance_get"];
+        get: operations["read_clients_api_clients_get"];
         put?: never;
-        post?: never;
+        /** Create Client */
+        post: operations["create_client_api_clients_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/samples/{sample_id}/status": {
+    "/api/clients/{client_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -274,31 +379,18 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Advance Sample Status */
-        patch: operations["advance_sample_status_api_samples__sample_id__status_patch"];
-        trace?: never;
-    };
-    "/api/submissions/{submission_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         /**
-         * Read Submission
-         * @description A single submission by id, with its samples.
+         * Update Client Status
+         * @description Set or clear a client's active flag.
+         *
+         *     Deactivating a client prevents new submissions for that client but does
+         *     not touch existing submissions or results.  Reactivation is the same
+         *     call with ``is_active: true``.
          */
-        get: operations["read_submission_api_submissions__submission_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
+        patch: operations["update_client_status_api_clients__client_id__patch"];
         trace?: never;
     };
-    "/api/submissions": {
+    "/api/drill-holes": {
         parameters: {
             query?: never;
             header?: never;
@@ -307,17 +399,62 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Create Drill Hole */
+        post: operations["create_drill_hole_api_drill_holes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fire-assay-results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Fire Assay Result */
+        post: operations["create_fire_assay_result_api_fire_assay_results_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fire-assay-results/solution-finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Solution Finish */
+        post: operations["create_solution_finish_api_fire_assay_results_solution_finish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fire-assay-results/{result_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         /**
-         * Create Submission
-         * @description Register a work order and the sample rows that arrived with it.
-         *
-         *     ``actor`` and ``received_by`` are resolved from the same request and
-         *     normally agree, but the role check reads ``actor.role`` — never
-         *     ``received_by.role`` — so authorisation always reflects what the current
-         *     caller holds right now, not whatever :class:`~msa_lims.db.models.LabUser`
-         *     row last recorded.
+         * Read Fire Assay Result
+         * @description A single fire assay result by id — gravimetric or solution finish.
          */
-        post: operations["create_submission_api_submissions_post"];
+        get: operations["read_fire_assay_result_api_fire_assay_results__result_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -378,101 +515,15 @@ export interface paths {
         patch: operations["update_instrument_endpoint_api_instruments__instrument_id__patch"];
         trace?: never;
     };
-    "/api/batches": {
+    "/api/me": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Read Batches */
-        get: operations["read_batches_api_batches_get"];
-        put?: never;
-        /** Create Batch */
-        post: operations["create_batch_api_batches_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/{batch_id}/crucibles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Charge Crucible */
-        post: operations["charge_crucible_api_batches__batch_id__crucibles_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/{batch_id}/crucibles/{crucible_id}/parting": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Record Crucible Parting */
-        post: operations["record_crucible_parting_api_batches__batch_id__crucibles__crucible_id__parting_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/{batch_id}/crucibles/{crucible_id}/weighing": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Record Crucible Weighing */
-        post: operations["record_crucible_weighing_api_batches__batch_id__crucibles__crucible_id__weighing_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/batches/{batch_id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Advance Batch Status */
-        patch: operations["advance_batch_status_api_batches__batch_id__status_patch"];
-        trace?: never;
-    };
-    "/api/batches/{batch_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read Batch */
-        get: operations["read_batch_api_batches__batch_id__get"];
+        /** Whoami */
+        get: operations["whoami_api_me_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -481,27 +532,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/batches/{batch_id}/qc-dossier": {
+    "/api/prep-records": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Read Batch Qc Dossier
-         * @description This completed batch's sealed QC dossier — audit idea #5's contract.
-         *
-         *     Nested under the batch like parting and weighing: a dossier is one view
-         *     of one batch, not an entity of its own. Generation is idempotent and
-         *     content-addressed; fetching twice without new measurements returns the
-         *     same seal and writes nothing new (see `qc_dossiers/service.py`). The
-         *     threshold flags are advisory — recording that a blank came back above the
-         *     lab's line; judging what that means is QC Sentinel's job.
-         */
-        get: operations["read_batch_qc_dossier_api_batches__batch_id__qc_dossier_get"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Create Prep Record */
+        post: operations["create_prep_record_api_prep_records_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Project */
+        post: operations["create_project_api_projects_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -526,15 +584,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/audit/verify": {
+    "/api/samples": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Read Audit Chain Verification */
-        get: operations["read_audit_chain_verification_api_audit_verify_get"];
+        /** Read Samples */
+        get: operations["read_samples_api_samples_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -543,65 +601,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/audit/anchors/latest": {
+    "/api/samples/{sample_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /**
-         * Read Latest Anchor
-         * @description The most recent audit chain anchor, or null if none exists.
-         */
-        get: operations["read_latest_anchor_api_audit_anchors_latest_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/audit/anchors": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Audit Anchor
-         * @description Anchor the current audit chain head via OpenTimestamps.
-         *
-         *     Creates a detached timestamp proof and submits it to OTS calendar
-         *     servers. The proof is stored in the database (append-only) and can
-         *     be downloaded for independent verification.
-         */
-        post: operations["create_audit_anchor_api_audit_anchors_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/audit/anchors/{anchor_id}/proof": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Download Anchor Proof
-         * @description Download the raw OTS proof bytes for an anchor.
-         *
-         *     The proof is sufficient to re-verify the timestamp against a Bitcoin
-         *     node without any other context.
-         */
-        get: operations["download_anchor_proof_api_audit_anchors__anchor_id__proof_get"];
+        /** Read Sample */
+        get: operations["read_sample_api_samples__sample_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -658,7 +666,33 @@ export interface paths {
         patch: operations["supersede_multi_element_result_api_samples__sample_id__multi_element_results__element__patch"];
         trace?: never;
     };
-    "/api/batches/{batch_id}/submit-to-sentinel": {
+    "/api/samples/{sample_id}/provenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Sample Provenance
+         * @description This sample's whole evidence dossier — audit idea #3.
+         *
+         *     Assembled read-only from rows that already existed and sealed with a
+         *     `sha256` a recipient can recompute offline. Nested under the sample
+         *     rather than given its own top-level path because a dossier is not an
+         *     entity in its own right: it is one view of one sample, the same way
+         *     `/api/certificates/{id}/pdf` is one rendering of one certificate.
+         */
+        get: operations["read_sample_provenance_api_samples__sample_id__provenance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/samples/{sample_id}/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -667,22 +701,42 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Advance Sample Status */
+        patch: operations["advance_sample_status_api_samples__sample_id__status_patch"];
+        trace?: never;
+    };
+    "/api/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Submissions */
+        get: operations["read_submissions_api_submissions_get"];
+        put?: never;
         /**
-         * Submit To Sentinel
-         * @description Submit a batch's QC dossier to Sentinel.
+         * Create Submission
+         * @description Register a work order and the sample rows that arrived with it.
          *
-         *     The batch must have a sealed dossier (``batch.qc_dossier_sha256 IS NOT
-         *     NULL``).  If Sentinel is disabled or unreachable, the attempt is still
-         *     recorded.
+         *     ``actor`` and ``received_by`` are resolved from the same request and
+         *     normally agree, but the role check reads ``actor.role`` — never
+         *     ``received_by.role`` — so authorisation always reflects what the current
+         *     caller holds right now, not whatever :class:`~msa_lims.db.models.LabUser`
+         *     row last recorded.
          */
-        post: operations["submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post"];
+        post: operations["create_submission_api_submissions_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/batches/{batch_id}/sentinel-verdict": {
+    "/api/submissions/{submission_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -690,13 +744,27 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Sentinel Verdict
-         * @description Get the latest Sentinel verdict for a batch.
-         *
-         *     Returns the verdict from the most recent submission that has one,
-         *     or an empty verdict if none has been returned yet.
+         * Read Submission
+         * @description A single submission by id, with its samples.
          */
-        get: operations["get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get"];
+        get: operations["read_submission_api_submissions__submission_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Health */
+        get: operations["health_health_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -711,91 +779,91 @@ export interface components {
     schemas: {
         /** AuditAnchorOut */
         AuditAnchorOut: {
-            /** Id */
-            id: number;
-            /** Anchored Hash */
-            anchored_hash: string;
-            /** Chain Event Id */
-            chain_event_id: number;
-            /** Ots Proof Sha256 */
-            ots_proof_sha256: string;
             /**
              * Anchored At
              * Format: date-time
              */
             anchored_at: string;
+            /** Anchored Hash */
+            anchored_hash: string;
+            /** Chain Event Id */
+            chain_event_id: number;
+            /** Id */
+            id: number;
+            /** Ots Proof Sha256 */
+            ots_proof_sha256: string;
         };
         /** AuditChainVerificationOut */
         AuditChainVerificationOut: {
-            /** Valid */
-            valid: boolean;
-            /** Verified Count */
-            verified_count: number;
-            /** Head Hash */
-            head_hash: string | null;
             /** Broke At Id */
             broke_at_id: number | null;
             /** Broke Reason */
             broke_reason: string | null;
+            /** Head Hash */
+            head_hash: string | null;
+            /** Valid */
+            valid: boolean;
+            /** Verified Count */
+            verified_count: number;
         };
         /** BatchCreate */
         BatchCreate: {
-            /**
-             * Opened At
-             * Format: date-time
-             */
-            opened_at: string;
-            /** Notes */
-            notes?: string | null;
             /**
              * Instrument Id
              * @description The furnace that fired this batch.
              */
             instrument_id?: number | null;
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
         };
         /** BatchDetailOut */
         BatchDetailOut: {
-            /** Id */
-            id: number;
             /** Batch Number */
             batch_number: string;
-            /** Status */
-            status: string;
-            /** Opened By Id */
-            opened_by_id: number;
+            /** Crucibles */
+            crucibles: components["schemas"]["CrucibleSlotOut"][];
+            /** Furnace Columns */
+            furnace_columns: number;
+            /** Furnace Rows */
+            furnace_rows: number;
+            /** Id */
+            id: number;
+            /** Notes */
+            notes: string | null;
             /**
              * Opened At
              * Format: date-time
              */
             opened_at: string;
-            /** Notes */
-            notes: string | null;
-            /** Furnace Rows */
-            furnace_rows: number;
-            /** Furnace Columns */
-            furnace_columns: number;
-            /** Crucibles */
-            crucibles: components["schemas"]["CrucibleSlotOut"][];
+            /** Opened By Id */
+            opened_by_id: number;
+            /** Status */
+            status: string;
         };
         /** BatchOut */
         BatchOut: {
-            /** Id */
-            id: number;
             /** Batch Number */
             batch_number: string;
-            /** Status */
-            status: string;
-            /** Opened By Id */
-            opened_by_id: number;
+            /** Id */
+            id: number;
+            /** Instrument Id */
+            instrument_id: number | null;
+            /** Notes */
+            notes: string | null;
             /**
              * Opened At
              * Format: date-time
              */
             opened_at: string;
-            /** Notes */
-            notes: string | null;
-            /** Instrument Id */
-            instrument_id: number | null;
+            /** Opened By Id */
+            opened_by_id: number;
+            /** Status */
+            status: string;
         };
         /**
          * BatchStatus
@@ -815,8 +883,6 @@ export interface components {
         CertificateCreate: {
             /** Client Id */
             client_id: number;
-            /** Sample Ids */
-            sample_ids: number[];
             /**
              * Issued At
              * Format: date-time
@@ -824,44 +890,69 @@ export interface components {
             issued_at: string;
             /** Notes */
             notes?: string | null;
-            /**
-             * Supersedes Id
-             * @description Set to amend an existing certificate.
-             */
-            supersedes_id?: number | null;
+            /** Sample Ids */
+            sample_ids: number[];
             /**
              * Superseded Reason
              * @description Required when supersedes_id is set.
              */
             superseded_reason?: string | null;
+            /**
+             * Supersedes Id
+             * @description Set to amend an existing certificate.
+             */
+            supersedes_id?: number | null;
         };
-        /** CertificateOut */
-        CertificateOut: {
-            /** Id */
-            id: number;
+        /**
+         * CertificateListItemOut
+         * @description Lightweight certificate for list views — no embedded samples or PDF.
+         */
+        CertificateListItemOut: {
             /** Certificate Number */
             certificate_number: string;
             /** Client Id */
             client_id: number;
-            /** Issued By Id */
-            issued_by_id: number;
+            /** Id */
+            id: number;
+            /** Is Stale */
+            is_stale: boolean;
             /**
              * Issued At
              * Format: date-time
              */
             issued_at: string;
-            /** Pdf Sha256 */
-            pdf_sha256: string;
+            /** Issued By Id */
+            issued_by_id: number;
             /** Supersedes Id */
             supersedes_id: number | null;
-            /** Superseded Reason */
-            superseded_reason: string | null;
+        };
+        /** CertificateOut */
+        CertificateOut: {
+            /** Certificate Number */
+            certificate_number: string;
+            /** Client Id */
+            client_id: number;
+            /** Id */
+            id: number;
             /** Is Stale */
             is_stale: boolean;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            /** Issued By Id */
+            issued_by_id: number;
             /** Notes */
             notes: string | null;
+            /** Pdf Sha256 */
+            pdf_sha256: string;
             /** Samples */
             samples: components["schemas"]["CertifiedSampleOut"][];
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
         };
         /**
          * CertificateReferenceOut
@@ -869,26 +960,26 @@ export interface components {
          *     enough to link to it via ``GET /api/certificates/{id}``.
          */
         CertificateReferenceOut: {
-            /** Id */
-            id: number;
             /** Certificate Number */
             certificate_number: string;
+            /** Id */
+            id: number;
         };
         /**
          * CertifiedElementOut
          * @description One element reading frozen into a certificate.
          */
         CertifiedElementOut: {
-            /** Element */
-            element: string;
-            /** Grade Value */
-            grade_value: string;
-            /** Grade Unit */
-            grade_unit: string;
             /** Detection Limit */
             detection_limit: string | null;
             /** Digest Method */
             digest_method: string;
+            /** Element */
+            element: string;
+            /** Grade Unit */
+            grade_unit: string;
+            /** Grade Value */
+            grade_value: string;
         };
         /**
          * CertifiedSampleOut
@@ -897,163 +988,175 @@ export interface components {
          *     the frozen-at-issuance result, not necessarily the sample's current one.
          */
         CertifiedSampleOut: {
-            /** Sample Id */
-            sample_id: number;
-            /** Sample Label */
-            sample_label: string;
-            /** Fire Assay Result Id */
-            fire_assay_result_id: number;
-            /** Method */
-            method: string;
             au: components["schemas"]["MeasuredValueOut"];
+            /** Digest Method */
+            digest_method?: string | null;
             /**
              * Elements
              * @default []
              */
             elements: components["schemas"]["CertifiedElementOut"][];
-            /** Digest Method */
-            digest_method?: string | null;
+            /** Fire Assay Result Id */
+            fire_assay_result_id: number;
+            /** Method */
+            method: string;
+            /** Sample Id */
+            sample_id: number;
+            /** Sample Label */
+            sample_label: string;
         };
         /** ClientCreate */
         ClientCreate: {
+            /** Billing Address */
+            billing_address?: string | null;
             /**
              * Code
              * @description e.g. 'MSA'
              */
             code: string;
-            /** Name */
-            name: string;
             /** Contact Person */
             contact_person?: string | null;
             /** Email */
             email?: string | null;
+            /** Name */
+            name: string;
             /** Phone */
             phone?: string | null;
-            /** Billing Address */
-            billing_address?: string | null;
         };
         /**
          * ClientListItemOut
          * @description Lean client row for listing — code, name, and submission count.
          */
         ClientListItemOut: {
-            /** Id */
-            id: number;
             /** Code */
             code: string;
-            /** Name */
-            name: string;
+            /** Id */
+            id: number;
             /** Is Active */
             is_active: boolean;
+            /** Name */
+            name: string;
             /** Submission Count */
             submission_count: number;
         };
         /** ClientOut */
         ClientOut: {
-            /** Id */
-            id: number;
+            /** Billing Address */
+            billing_address: string | null;
             /** Code */
             code: string;
-            /** Name */
-            name: string;
             /** Contact Person */
             contact_person: string | null;
             /** Email */
             email: string | null;
+            /** Id */
+            id: number;
+            /** Is Active */
+            is_active: boolean;
+            /** Name */
+            name: string;
             /** Phone */
             phone: string | null;
-            /** Billing Address */
-            billing_address: string | null;
+        };
+        /**
+         * ClientStatusUpdate
+         * @description Toggle a client's active flag.
+         *
+         *     Setting ``is_active`` to ``False`` deactivates the client: existing
+         *     submissions and results are unaffected, but new submissions for this
+         *     client will be refused by :meth:`ClientService.deactivate`.
+         */
+        ClientStatusUpdate: {
             /** Is Active */
             is_active: boolean;
         };
         /** ComponentHealth */
         ComponentHealth: {
+            /** Detail */
+            detail?: string | null;
             /**
              * Status
              * @enum {string}
              */
             status: "ok" | "unavailable" | "not_configured";
-            /** Detail */
-            detail?: string | null;
         };
         /** CrucibleChargeCreate */
         CrucibleChargeCreate: {
-            /** Sample Id */
-            sample_id?: number | null;
-            /** Qc Material Id */
-            qc_material_id?: number | null;
-            /** Insertion Type */
-            insertion_type?: ("field_duplicate" | "prep_duplicate" | "pulp_duplicate") | null;
-            /** Flux Recipe Id */
-            flux_recipe_id: number;
-            /** Position Row */
-            position_row: number;
-            /** Position Col */
-            position_col: number;
-            /** Sample Weight G */
-            sample_weight_g: number | string;
             /**
              * Charged At
              * Format: date-time
              */
             charged_at: string;
+            /** Flux Recipe Id */
+            flux_recipe_id: number;
+            /** Insertion Type */
+            insertion_type?: ("field_duplicate" | "prep_duplicate" | "pulp_duplicate") | null;
             /** Notes */
             notes?: string | null;
+            /** Position Col */
+            position_col: number;
+            /** Position Row */
+            position_row: number;
+            /** Qc Material Id */
+            qc_material_id?: number | null;
+            /** Sample Id */
+            sample_id?: number | null;
+            /** Sample Weight G */
+            sample_weight_g: number | string;
         };
         /** CrucibleOut */
         CrucibleOut: {
-            /** Id */
-            id: number;
             /** Batch Id */
             batch_id: number;
-            /** Sample Id */
-            sample_id: number | null;
-            /** Qc Material Id */
-            qc_material_id: number | null;
-            /** Insertion Type */
-            insertion_type: string | null;
-            /** Flux Recipe Id */
-            flux_recipe_id: number;
-            /** Position Row */
-            position_row: number;
-            /** Position Col */
-            position_col: number;
-            /** Status */
-            status: string;
-            /** Sample Weight G */
-            sample_weight_g: string;
-            /** Litharge G */
-            litharge_g: string;
-            /** Soda Ash G */
-            soda_ash_g: string;
             /** Borax G */
             borax_g: string;
-            /** Silica G */
-            silica_g: string;
-            /** Flour G */
-            flour_g: string;
-            /** Nitre G */
-            nitre_g: string;
-            /** Lead Button Weight Mg */
-            lead_button_weight_mg: string | null;
-            /** Prill Weight Mg */
-            prill_weight_mg: string | null;
-            /** Parting Acid Volume Ml */
-            parting_acid_volume_ml: string | null;
-            /** Parted At */
-            parted_at: string | null;
-            /** Gold Bead Mg */
-            gold_bead_mg: string | null;
-            /** Weighed At */
-            weighed_at: string | null;
             /**
              * Charged At
              * Format: date-time
              */
             charged_at: string;
+            /** Flour G */
+            flour_g: string;
+            /** Flux Recipe Id */
+            flux_recipe_id: number;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Id */
+            id: number;
+            /** Insertion Type */
+            insertion_type: string | null;
+            /** Lead Button Weight Mg */
+            lead_button_weight_mg: string | null;
+            /** Litharge G */
+            litharge_g: string;
+            /** Nitre G */
+            nitre_g: string;
             /** Notes */
             notes: string | null;
+            /** Parted At */
+            parted_at: string | null;
+            /** Parting Acid Volume Ml */
+            parting_acid_volume_ml: string | null;
+            /** Position Col */
+            position_col: number;
+            /** Position Row */
+            position_row: number;
+            /** Prill Weight Mg */
+            prill_weight_mg: string | null;
+            /** Qc Material Id */
+            qc_material_id: number | null;
+            /** Sample Id */
+            sample_id: number | null;
+            /** Sample Weight G */
+            sample_weight_g: string;
+            /** Silica G */
+            silica_g: string;
+            /** Soda Ash G */
+            soda_ash_g: string;
+            /** Status */
+            status: string;
+            /** Weighed At */
+            weighed_at: string | null;
         };
         /**
          * CruciblePartingCreate
@@ -1066,21 +1169,21 @@ export interface components {
              */
             lead_button_weight_mg: number | string;
             /**
-             * Prill Weight Mg
-             * @description Doré bead left by cupellation.
+             * Parted At
+             * Format: date-time
+             * @description When the parting happened, not when it was entered.
              */
-            prill_weight_mg: number | string;
+            parted_at: string;
             /**
              * Parting Acid Volume Ml
              * @description Acid used to part the prill.
              */
             parting_acid_volume_ml: number | string;
             /**
-             * Parted At
-             * Format: date-time
-             * @description When the parting happened, not when it was entered.
+             * Prill Weight Mg
+             * @description Doré bead left by cupellation.
              */
-            parted_at: string;
+            prill_weight_mg: number | string;
         };
         /**
          * CrucibleReferenceOut
@@ -1089,21 +1192,21 @@ export interface components {
          *     sample detail page.
          */
         CrucibleReferenceOut: {
-            /** Id */
-            id: number;
             /** Batch Id */
             batch_id: number;
-            /** Position Row */
-            position_row: number;
-            /** Position Col */
-            position_col: number;
-            /** Status */
-            status: string;
             /**
              * Charged At
              * Format: date-time
              */
             charged_at: string;
+            /** Id */
+            id: number;
+            /** Position Col */
+            position_col: number;
+            /** Position Row */
+            position_row: number;
+            /** Status */
+            status: string;
         };
         /**
          * CrucibleSlotOut
@@ -1116,24 +1219,24 @@ export interface components {
         CrucibleSlotOut: {
             /** Id */
             id: number;
-            /** Position Row */
-            position_row: number;
+            /** Insertion Type */
+            insertion_type: string | null;
             /** Position Col */
             position_col: number;
-            /** Status */
-            status: string;
-            /** Sample Id */
-            sample_id: number | null;
-            /** Sample Label */
-            sample_label: string | null;
+            /** Position Row */
+            position_row: number;
             /** Qc Material Id */
             qc_material_id: number | null;
             /** Qc Material Name */
             qc_material_name: string | null;
             /** Qc Material Type */
             qc_material_type: string | null;
-            /** Insertion Type */
-            insertion_type: string | null;
+            /** Sample Id */
+            sample_id: number | null;
+            /** Sample Label */
+            sample_label: string | null;
+            /** Status */
+            status: string;
         };
         /**
          * CrucibleWeighingCreate
@@ -1154,54 +1257,54 @@ export interface components {
         };
         /** DrillHoleCreate */
         DrillHoleCreate: {
-            /** Project Id */
-            project_id: number;
+            /** Azimuth Degrees */
+            azimuth_degrees?: number | string | null;
+            /** Dip Degrees */
+            dip_degrees?: number | string | null;
+            /** Drilling Method */
+            drilling_method?: string | null;
+            /** Easting */
+            easting?: number | string | null;
+            /** Elevation M */
+            elevation_m?: number | string | null;
             /**
              * Hole Id
              * @description e.g. 'MSA-24-001'
              */
             hole_id: string;
-            /** Easting */
-            easting?: number | string | null;
             /** Northing */
             northing?: number | string | null;
-            /** Elevation M */
-            elevation_m?: number | string | null;
-            /** Utm Zone */
-            utm_zone?: string | null;
+            /** Project Id */
+            project_id: number;
             /** Total Depth M */
             total_depth_m?: number | string | null;
-            /** Dip Degrees */
-            dip_degrees?: number | string | null;
-            /** Azimuth Degrees */
-            azimuth_degrees?: number | string | null;
-            /** Drilling Method */
-            drilling_method?: string | null;
+            /** Utm Zone */
+            utm_zone?: string | null;
         };
         /** DrillHoleOut */
         DrillHoleOut: {
-            /** Id */
-            id: number;
-            /** Project Id */
-            project_id: number;
-            /** Hole Id */
-            hole_id: string;
-            /** Easting */
-            easting: string | null;
-            /** Northing */
-            northing: string | null;
-            /** Elevation M */
-            elevation_m: string | null;
-            /** Utm Zone */
-            utm_zone: string | null;
-            /** Total Depth M */
-            total_depth_m: string | null;
-            /** Dip Degrees */
-            dip_degrees: string | null;
             /** Azimuth Degrees */
             azimuth_degrees: string | null;
+            /** Dip Degrees */
+            dip_degrees: string | null;
             /** Drilling Method */
             drilling_method: string | null;
+            /** Easting */
+            easting: string | null;
+            /** Elevation M */
+            elevation_m: string | null;
+            /** Hole Id */
+            hole_id: string;
+            /** Id */
+            id: number;
+            /** Northing */
+            northing: string | null;
+            /** Project Id */
+            project_id: number;
+            /** Total Depth M */
+            total_depth_m: string | null;
+            /** Utm Zone */
+            utm_zone: string | null;
         };
         /**
          * ElementResultCreate
@@ -1209,15 +1312,15 @@ export interface components {
          */
         ElementResultCreate: {
             /**
+             * Detection Limit
+             * @description Method detection limit, in grade_unit.
+             */
+            detection_limit?: number | string | null;
+            /**
              * Element
              * @description IUPAC symbol — the same label the instrument export uses (e.g. 'Au', 'Cu').
              */
             element: string;
-            /**
-             * Grade Value
-             * @description Grade in the solid sample, in grade_unit.
-             */
-            grade_value: number | string;
             /**
              * Grade Unit
              * @description Mass-fraction unit of the grade.
@@ -1226,10 +1329,10 @@ export interface components {
              */
             grade_unit: "ppm" | "ppb" | "g/t" | "%";
             /**
-             * Detection Limit
-             * @description Method detection limit, in grade_unit.
+             * Grade Value
+             * @description Grade in the solid sample, in grade_unit.
              */
-            detection_limit?: number | string | null;
+            grade_value: number | string;
         };
         /**
          * ErrorResponse
@@ -1245,53 +1348,53 @@ export interface components {
         };
         /** FireAssayResultCreate */
         FireAssayResultCreate: {
-            /** Sample Id */
-            sample_id: number;
-            /**
-             * Gold Bead Mg
-             * @description Bead weight after parting — gold alone. Required unless crucible_id names a crucible that has been weighed; then its recorded bead is used and this must be left unset.
-             */
-            gold_bead_mg?: number | string | null;
-            /**
-             * Sample Weight G
-             * @description The portion assayed. Required unless crucible_id names the crucible the sample was charged into — then its recorded charge is used and this must be left unset.
-             */
-            sample_weight_g?: number | string | null;
-            /** Balance Sensitivity Mg */
-            balance_sensitivity_mg?: number | string | null;
-            /**
-             * Dore Bead Mg
-             * @description Doré bead weight (Au + Ag) before parting. When supplied alongside gold_bead_mg, silver by difference is computed and stored.
-             */
-            dore_bead_mg?: number | string | null;
             /**
              * Analysed At
              * Format: date-time
              * @description When the weighing happened, not when it was entered.
              */
             analysed_at: string;
-            /** Notes */
-            notes?: string | null;
-            /**
-             * Supersedes Id
-             * @description Set to correct an existing result.
-             */
-            supersedes_id?: number | null;
-            /**
-             * Superseded Reason
-             * @description Required when supersedes_id is set.
-             */
-            superseded_reason?: string | null;
+            /** Balance Sensitivity Mg */
+            balance_sensitivity_mg?: number | string | null;
             /**
              * Crucible Id
              * @description The crucible this assay came from; its recorded charge is derived as the portion weight.
              */
             crucible_id?: number | null;
             /**
+             * Dore Bead Mg
+             * @description Doré bead weight (Au + Ag) before parting. When supplied alongside gold_bead_mg, silver by difference is computed and stored.
+             */
+            dore_bead_mg?: number | string | null;
+            /**
+             * Gold Bead Mg
+             * @description Bead weight after parting — gold alone. Required unless crucible_id names a crucible that has been weighed; then its recorded bead is used and this must be left unset.
+             */
+            gold_bead_mg?: number | string | null;
+            /**
              * Instrument Id
              * @description The instrument that performed this assay.
              */
             instrument_id?: number | null;
+            /** Notes */
+            notes?: string | null;
+            /** Sample Id */
+            sample_id: number;
+            /**
+             * Sample Weight G
+             * @description The portion assayed. Required unless crucible_id names the crucible the sample was charged into — then its recorded charge is used and this must be left unset.
+             */
+            sample_weight_g?: number | string | null;
+            /**
+             * Superseded Reason
+             * @description Required when supersedes_id is set.
+             */
+            superseded_reason?: string | null;
+            /**
+             * Supersedes Id
+             * @description Set to correct an existing result.
+             */
+            supersedes_id?: number | null;
         };
         /**
          * FireAssayResultOut
@@ -1308,94 +1411,94 @@ export interface components {
          *     finish or when the lab did not supply a doré weight.
          */
         FireAssayResultOut: {
-            /** Id */
-            id: number;
-            /** Sample Id */
-            sample_id: number;
-            /** Method */
-            method: string;
-            /** Gold Bead Mg */
-            gold_bead_mg: string | null;
-            /** Sample Weight G */
-            sample_weight_g: string;
-            /** Balance Sensitivity Mg */
-            balance_sensitivity_mg: string | null;
-            /** Solution Concentration */
-            solution_concentration: string | null;
-            /** Solution Concentration Unit */
-            solution_concentration_unit: string | null;
-            /** Solution Volume Ml */
-            solution_volume_ml: string | null;
-            /** Solution Detection Limit */
-            solution_detection_limit: string | null;
-            au: components["schemas"]["MeasuredValueOut"];
-            silver: components["schemas"]["MeasuredValueOut"] | null;
             /**
              * Analysed At
              * Format: date-time
              */
             analysed_at: string;
-            /** Supersedes Id */
-            supersedes_id: number | null;
-            /** Superseded Reason */
-            superseded_reason: string | null;
-            /** Notes */
-            notes: string | null;
+            au: components["schemas"]["MeasuredValueOut"];
+            /** Balance Sensitivity Mg */
+            balance_sensitivity_mg: string | null;
             /** Crucible Id */
             crucible_id: number | null;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Id */
+            id: number;
             /** Instrument Id */
             instrument_id: number | null;
+            /** Method */
+            method: string;
+            /** Notes */
+            notes: string | null;
+            /** Sample Id */
+            sample_id: number;
+            /** Sample Weight G */
+            sample_weight_g: string;
+            silver: components["schemas"]["MeasuredValueOut"] | null;
+            /** Solution Concentration */
+            solution_concentration: string | null;
+            /** Solution Concentration Unit */
+            solution_concentration_unit: string | null;
+            /** Solution Detection Limit */
+            solution_detection_limit: string | null;
+            /** Solution Volume Ml */
+            solution_volume_ml: string | null;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
         };
         /** FluxRecipeCreate */
         FluxRecipeCreate: {
+            /** Borax G */
+            borax_g: number | string;
+            /** Flour G */
+            flour_g: number | string;
+            /** Litharge G */
+            litharge_g: number | string;
+            matrix_type: components["schemas"]["MatrixType"];
             /**
              * Name
              * @description e.g. 'Standard Silicate'
              */
             name: string;
-            matrix_type: components["schemas"]["MatrixType"];
+            /** Nitre G */
+            nitre_g: number | string;
             /**
              * Nominal Portion G
              * @description Sample weight this recipe's amounts are calibrated for.
              */
             nominal_portion_g: number | string;
-            /** Litharge G */
-            litharge_g: number | string;
-            /** Soda Ash G */
-            soda_ash_g: number | string;
-            /** Borax G */
-            borax_g: number | string;
             /** Silica G */
             silica_g: number | string;
-            /** Flour G */
-            flour_g: number | string;
-            /** Nitre G */
-            nitre_g: number | string;
+            /** Soda Ash G */
+            soda_ash_g: number | string;
         };
         /** FluxRecipeOut */
         FluxRecipeOut: {
-            /** Id */
-            id: number;
-            /** Name */
-            name: string;
-            /** Matrix Type */
-            matrix_type: string;
-            /** Nominal Portion G */
-            nominal_portion_g: string;
-            /** Litharge G */
-            litharge_g: string;
-            /** Soda Ash G */
-            soda_ash_g: string;
             /** Borax G */
             borax_g: string;
-            /** Silica G */
-            silica_g: string;
             /** Flour G */
             flour_g: string;
-            /** Nitre G */
-            nitre_g: string;
+            /** Id */
+            id: number;
             /** Is Active */
             is_active: boolean;
+            /** Litharge G */
+            litharge_g: string;
+            /** Matrix Type */
+            matrix_type: string;
+            /** Name */
+            name: string;
+            /** Nitre G */
+            nitre_g: string;
+            /** Nominal Portion G */
+            nominal_portion_g: string;
+            /** Silica G */
+            silica_g: string;
+            /** Soda Ash G */
+            soda_ash_g: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1404,6 +1507,8 @@ export interface components {
         };
         /** HealthResponse */
         HealthResponse: {
+            database: components["schemas"]["ComponentHealth"];
+            qc_sentinel: components["schemas"]["ComponentHealth"];
             /**
              * Status
              * @enum {string}
@@ -1411,45 +1516,57 @@ export interface components {
             status: "healthy" | "degraded" | "unhealthy";
             /** Version */
             version: string;
-            database: components["schemas"]["ComponentHealth"];
-            qc_sentinel: components["schemas"]["ComponentHealth"];
         };
         /** InstrumentCreate */
         InstrumentCreate: {
-            /** Name */
-            name: string;
+            /**
+             * Balance Sensitivity Mg
+             * @description Microbalances: smallest resolvable weight in mg
+             */
+            balance_sensitivity_mg?: number | string | null;
+            /** Calibration Due On */
+            calibration_due_on?: string | null;
             instrument_type: components["schemas"]["InstrumentType"];
+            /** Location */
+            location?: string | null;
             /** Manufacturer */
             manufacturer?: string | null;
             /** Model */
             model?: string | null;
+            /** Name */
+            name: string;
             /** Serial Number */
             serial_number?: string | null;
-            /** Location */
-            location?: string | null;
-            /** Calibration Due On */
-            calibration_due_on?: string | null;
+            /**
+             * Solution Detection Limit
+             * @description ICP/AAS: method detection limit
+             */
+            solution_detection_limit?: number | string | null;
         };
         /** InstrumentOut */
         InstrumentOut: {
+            /** Balance Sensitivity Mg */
+            balance_sensitivity_mg: string | null;
+            /** Calibration Due On */
+            calibration_due_on: string | null;
             /** Id */
             id: number;
-            /** Name */
-            name: string;
             /** Instrument Type */
             instrument_type: string;
+            /** Location */
+            location: string | null;
             /** Manufacturer */
             manufacturer: string | null;
             /** Model */
             model: string | null;
+            /** Name */
+            name: string;
             /** Serial Number */
             serial_number: string | null;
-            /** Location */
-            location: string | null;
+            /** Solution Detection Limit */
+            solution_detection_limit: string | null;
             /** Status */
             status: string;
-            /** Calibration Due On */
-            calibration_due_on: string | null;
         };
         /**
          * InstrumentStatus
@@ -1463,18 +1580,33 @@ export interface components {
         InstrumentType: "aas" | "icp_ms" | "icp_oes" | "xrf" | "microbalance" | "crusher" | "pulverizer" | "furnace";
         /** InstrumentUpdate */
         InstrumentUpdate: {
-            /** Name */
-            name?: string | null;
+            /**
+             * Balance Sensitivity Mg
+             * @description Microbalances: smallest resolvable weight in mg
+             */
+            balance_sensitivity_mg?: number | string | null;
+            /** Calibration Due On */
+            calibration_due_on?: string | null;
+            /** Location */
+            location?: string | null;
             /** Manufacturer */
             manufacturer?: string | null;
             /** Model */
             model?: string | null;
+            /** Name */
+            name?: string | null;
+            /**
+             * Reason
+             * @default updated
+             */
+            reason: string;
             /** Serial Number */
             serial_number?: string | null;
-            /** Location */
-            location?: string | null;
-            /** Calibration Due On */
-            calibration_due_on?: string | null;
+            /**
+             * Solution Detection Limit
+             * @description ICP/AAS: method detection limit
+             */
+            solution_detection_limit?: number | string | null;
             status?: components["schemas"]["InstrumentStatus"] | null;
         };
         /**
@@ -1500,14 +1632,14 @@ export interface components {
          *     quietly standing in for zero.
          */
         MeasuredValueOut: {
-            /** Value */
-            value: string | null;
-            /** Detection Limit */
-            detection_limit: string | null;
             /** Censored */
             censored: boolean;
+            /** Detection Limit */
+            detection_limit: string | null;
             /** Unit */
             unit: string;
+            /** Value */
+            value: string | null;
         };
         /**
          * MultiElementImportCreate
@@ -1518,8 +1650,12 @@ export interface components {
          *     write would leave the sample with half its elements assayed.
          */
         MultiElementImportCreate: {
-            /** Sample Id */
-            sample_id: number;
+            /**
+             * Analysed At
+             * Format: date-time
+             * @description When the instrument read it, not when it was entered.
+             */
+            analysed_at: string;
             /**
              * Digest Method
              * @description How the sample was taken into solution. The certificate must name the digest: aqua regia is partial, four-acid is total.
@@ -1532,75 +1668,71 @@ export interface components {
              */
             method_notes?: string | null;
             /**
-             * Analysed At
-             * Format: date-time
-             * @description When the instrument read it, not when it was entered.
-             */
-            analysed_at: string;
-            /**
              * Results
              * @description 30-50 elements typical; at least one required.
              */
             results: components["schemas"]["ElementResultCreate"][];
+            /** Sample Id */
+            sample_id: number;
         };
         /**
          * MultiElementImportOut
          * @description The result of a bulk import: the rows created and audit events.
          */
         MultiElementImportOut: {
-            /** Sample Id */
-            sample_id: number;
-            /** Digest Method */
-            digest_method: string;
             /**
              * Analysed At
              * Format: date-time
              */
             analysed_at: string;
+            /** Digest Method */
+            digest_method: string;
             /** Imported */
             imported: components["schemas"]["MultiElementResultOut"][];
+            /** Sample Id */
+            sample_id: number;
         };
         /**
          * MultiElementResultOut
          * @description One element's stored result, on the way out.
          */
         MultiElementResultOut: {
-            /** Id */
-            id: number;
-            /** Sample Id */
-            sample_id: number;
-            /** Element */
-            element: string;
-            /** Grade Value */
-            grade_value: string;
-            /** Grade Unit */
-            grade_unit: string;
-            /** Detection Limit */
-            detection_limit: string | null;
-            /** Grade Censored */
-            grade_censored: boolean;
-            /** Digest Method */
-            digest_method: string;
-            /** Method Notes */
-            method_notes: string | null;
-            /** Analyst Id */
-            analyst_id: number;
             /**
              * Analysed At
              * Format: date-time
              */
             analysed_at: string;
-            /** Supersedes Id */
-            supersedes_id: number | null;
-            /** Superseded Reason */
-            superseded_reason: string | null;
-            /** Notes */
-            notes: string | null;
+            /** Analyst Id */
+            analyst_id: number;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** Detection Limit */
+            detection_limit: string | null;
+            /** Digest Method */
+            digest_method: string;
+            /** Element */
+            element: string;
+            /** Grade Censored */
+            grade_censored: boolean;
+            /** Grade Unit */
+            grade_unit: string;
+            /** Grade Value */
+            grade_value: string;
+            /** Id */
+            id: number;
+            /** Method Notes */
+            method_notes: string | null;
+            /** Notes */
+            notes: string | null;
+            /** Sample Id */
+            sample_id: number;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
         };
         /**
          * MultiElementSupersedeCreate
@@ -1608,16 +1740,22 @@ export interface components {
          */
         MultiElementSupersedeCreate: {
             /**
+             * Analysed At
+             * Format: date-time
+             * @description When the instrument read it, not when it was entered.
+             */
+            analysed_at: string;
+            /**
+             * Detection Limit
+             * @description Method detection limit, in grade_unit.
+             */
+            detection_limit?: number | string | null;
+            /**
              * Digest Method
              * @description How the sample was taken into solution. The certificate must name the digest: aqua regia is partial, four-acid is total.
              * @enum {string}
              */
             digest_method: "aqua_regia" | "four_acid" | "peroxide_fusion";
-            /**
-             * Grade Value
-             * @description Corrected grade in grade_unit.
-             */
-            grade_value: number | string;
             /**
              * Grade Unit
              * @description Mass-fraction unit of the grade.
@@ -1626,16 +1764,10 @@ export interface components {
              */
             grade_unit: "ppm" | "ppb" | "g/t" | "%";
             /**
-             * Detection Limit
-             * @description Method detection limit, in grade_unit.
+             * Grade Value
+             * @description Corrected grade in grade_unit.
              */
-            detection_limit?: number | string | null;
-            /**
-             * Analysed At
-             * Format: date-time
-             * @description When the instrument read it, not when it was entered.
-             */
-            analysed_at: string;
+            grade_value: number | string;
             /**
              * Method Notes
              * @description Free-text notes about the digest or instrument setup.
@@ -1647,6 +1779,13 @@ export interface components {
              */
             reason: string;
         };
+        /** PaginatedResponse[CertificateListItemOut] */
+        PaginatedResponse_CertificateListItemOut_: {
+            /** Items */
+            items: components["schemas"]["CertificateListItemOut"][];
+            /** Next Cursor */
+            next_cursor: number | null;
+        };
         /** PaginatedResponse[SampleListItemOut] */
         PaginatedResponse_SampleListItemOut_: {
             /** Items */
@@ -1654,117 +1793,181 @@ export interface components {
             /** Next Cursor */
             next_cursor: number | null;
         };
+        /** PaginatedResponse[SubmissionListItemOut] */
+        PaginatedResponse_SubmissionListItemOut_: {
+            /** Items */
+            items: components["schemas"]["SubmissionListItemOut"][];
+            /** Next Cursor */
+            next_cursor: number | null;
+        };
+        /** PrepRecordCreate */
+        PrepRecordCreate: {
+            /** Input Weight G */
+            input_weight_g?: number | string | null;
+            /** Instrument Id */
+            instrument_id?: number | null;
+            /** Notes */
+            notes?: string | null;
+            /** Output Weight G */
+            output_weight_g?: number | string | null;
+            /** Performed At */
+            performed_at?: string | null;
+            /** Sample Id */
+            sample_id: number;
+            /**
+             * Stage
+             * @description primary_crush, secondary_crush, split, pulverize, or sieve
+             */
+            stage: string;
+            /** Superseded Reason */
+            superseded_reason?: string | null;
+            /** Supersedes Id */
+            supersedes_id?: number | null;
+        };
+        /** PrepRecordOut */
+        PrepRecordOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Input Weight G */
+            input_weight_g: string | null;
+            /** Instrument Id */
+            instrument_id: number | null;
+            /** Notes */
+            notes: string | null;
+            /** Output Weight G */
+            output_weight_g: string | null;
+            /**
+             * Performed At
+             * Format: date-time
+             */
+            performed_at: string;
+            /** Prep Tech Id */
+            prep_tech_id: number;
+            /** Sample Id */
+            sample_id: number;
+            /** Stage */
+            stage: string;
+            /** Superseded Reason */
+            superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Client Id */
             client_id: number;
-            /** Name */
-            name: string;
             /** Description */
             description?: string | null;
-            /** Location */
-            location?: string | null;
-            /** Start Date */
-            start_date?: string | null;
             /** End Date */
             end_date?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Name */
+            name: string;
+            /** Start Date */
+            start_date?: string | null;
         };
         /** ProjectOut */
         ProjectOut: {
-            /** Id */
-            id: number;
             /** Client Id */
             client_id: number;
-            /** Name */
-            name: string;
             /** Description */
             description: string | null;
-            /** Location */
-            location: string | null;
-            /** Start Date */
-            start_date: string | null;
             /** End Date */
             end_date: string | null;
+            /** Id */
+            id: number;
+            /** Location */
+            location: string | null;
+            /** Name */
+            name: string;
+            /** Start Date */
+            start_date: string | null;
         };
         /** ProvenanceAuditEntryOut */
         ProvenanceAuditEntryOut: {
-            /** Id */
-            id: number;
-            /** Table Name */
-            table_name: string;
-            /** Record Id */
-            record_id: number;
             /** Action */
             action: string;
-            /** Before */
-            before: {
-                [key: string]: unknown;
-            } | null;
+            /** Actor */
+            actor: string | null;
             /** After */
             after: {
                 [key: string]: unknown;
             } | null;
-            /** Reason */
-            reason: string | null;
-            /** Actor */
-            actor: string | null;
-            /** Recorded At */
-            recorded_at: string | null;
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            } | null;
             /** Entry Hash */
             entry_hash: string;
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string | null;
+            /** Record Id */
+            record_id: number;
+            /** Recorded At */
+            recorded_at: string | null;
+            /** Table Name */
+            table_name: string;
         };
         /** ProvenanceCertificateOut */
         ProvenanceCertificateOut: {
-            /** Id */
-            id: number;
             /** Certificate Number */
             certificate_number: string;
+            /** Certified Result Id */
+            certified_result_id: number;
+            /** Id */
+            id: number;
             /** Issued At */
             issued_at: string | null;
             /** Issued By */
             issued_by: string | null;
             /** Pdf Sha256 */
             pdf_sha256: string;
-            /** Certified Result Id */
-            certified_result_id: number;
-            /** Supersedes Id */
-            supersedes_id: number | null;
             /** Superseded Reason */
             superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
         };
         /** ProvenanceClientOut */
         ProvenanceClientOut: {
-            /** Id */
-            id: number;
             /** Code */
             code: string;
+            /** Id */
+            id: number;
         };
         /** ProvenanceCrucibleOut */
         ProvenanceCrucibleOut: {
-            /** Id */
-            id: number;
             /** Batch Number */
             batch_number: string;
-            /** Position */
-            position: string;
-            /** Status */
-            status: string;
-            /** Flux Recipe */
-            flux_recipe: string;
-            /** Sample Weight G */
-            sample_weight_g: string | null;
             /** Charged At */
             charged_at: string | null;
-            /** Lead Button Weight Mg */
-            lead_button_weight_mg: string | null;
-            /** Prill Weight Mg */
-            prill_weight_mg: string | null;
-            /** Parting Acid Volume Ml */
-            parting_acid_volume_ml: string | null;
-            /** Parted At */
-            parted_at: string | null;
+            /** Flux Recipe */
+            flux_recipe: string;
             /** Gold Bead Mg */
             gold_bead_mg: string | null;
+            /** Id */
+            id: number;
+            /** Lead Button Weight Mg */
+            lead_button_weight_mg: string | null;
+            /** Parted At */
+            parted_at: string | null;
+            /** Parting Acid Volume Ml */
+            parting_acid_volume_ml: string | null;
+            /** Position */
+            position: string;
+            /** Prill Weight Mg */
+            prill_weight_mg: string | null;
+            /** Sample Weight G */
+            sample_weight_g: string | null;
+            /** Status */
+            status: string;
             /** Weighed At */
             weighed_at: string | null;
         };
@@ -1784,21 +1987,21 @@ export interface components {
          *     see. See `provenance/service.py`.
          */
         ProvenanceOut: {
-            sample: components["schemas"]["ProvenanceSampleOut"];
-            submission: components["schemas"]["ProvenanceSubmissionOut"];
-            client: components["schemas"]["ProvenanceClientOut"];
-            project: components["schemas"]["ProvenanceProjectOut"] | null;
-            drill_hole: components["schemas"]["ProvenanceDrillHoleOut"] | null;
-            /** Crucibles */
-            crucibles: components["schemas"]["ProvenanceCrucibleOut"][];
-            /** Results */
-            results: components["schemas"]["ProvenanceResultOut"][];
-            /** Certificates */
-            certificates: components["schemas"]["ProvenanceCertificateOut"][];
             /** Audit Entries */
             audit_entries: components["schemas"]["ProvenanceAuditEntryOut"][];
+            /** Certificates */
+            certificates: components["schemas"]["ProvenanceCertificateOut"][];
+            client: components["schemas"]["ProvenanceClientOut"];
+            /** Crucibles */
+            crucibles: components["schemas"]["ProvenanceCrucibleOut"][];
+            drill_hole: components["schemas"]["ProvenanceDrillHoleOut"] | null;
+            project: components["schemas"]["ProvenanceProjectOut"] | null;
+            /** Results */
+            results: components["schemas"]["ProvenanceResultOut"][];
+            sample: components["schemas"]["ProvenanceSampleOut"];
             /** Seal */
             seal: string;
+            submission: components["schemas"]["ProvenanceSubmissionOut"];
         };
         /** ProvenanceProjectOut */
         ProvenanceProjectOut: {
@@ -1807,35 +2010,37 @@ export interface components {
         };
         /** ProvenanceResultOut */
         ProvenanceResultOut: {
-            /** Id */
-            id: number;
-            /** Method */
-            method: string;
-            /** Gold Bead Mg */
-            gold_bead_mg: string | null;
-            /** Sample Weight G */
-            sample_weight_g: string | null;
-            /** Au Value */
-            au_value: string | null;
-            /** Au Detection Limit */
-            au_detection_limit: string | null;
-            /** Au Censored */
-            au_censored: boolean;
-            /** Au Unit */
-            au_unit: string;
             /** Analysed At */
             analysed_at: string | null;
             /** Analyst */
             analyst: string | null;
+            /** Au Censored */
+            au_censored: boolean;
+            /** Au Detection Limit */
+            au_detection_limit: string | null;
+            /** Au Unit */
+            au_unit: string;
+            /** Au Value */
+            au_value: string | null;
             /** Crucible Id */
             crucible_id: number | null;
-            /** Supersedes Id */
-            supersedes_id: number | null;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Id */
+            id: number;
+            /** Method */
+            method: string;
+            /** Sample Weight G */
+            sample_weight_g: string | null;
             /** Superseded Reason */
             superseded_reason: string | null;
+            /** Supersedes Id */
+            supersedes_id: number | null;
         };
         /** ProvenanceSampleOut */
         ProvenanceSampleOut: {
+            /** From Depth M */
+            from_depth_m: string | null;
             /** Id */
             id: number;
             /** Sample Id */
@@ -1844,8 +2049,6 @@ export interface components {
             sample_type: string;
             /** Status */
             status: string;
-            /** From Depth M */
-            from_depth_m: string | null;
             /** To Depth M */
             to_depth_m: string | null;
             /** Weight Received G */
@@ -1853,16 +2056,16 @@ export interface components {
         };
         /** ProvenanceSubmissionOut */
         ProvenanceSubmissionOut: {
+            /** Client Reference */
+            client_reference: string | null;
             /** Id */
             id: number;
-            /** Submission Number */
-            submission_number: string;
             /** Received At */
             received_at: string | null;
             /** Received By */
             received_by: string | null;
-            /** Client Reference */
-            client_reference: string | null;
+            /** Submission Number */
+            submission_number: string;
         };
         /**
          * QcAdvisoryOut
@@ -1881,32 +2084,32 @@ export interface components {
          *     a `MeasuredValue` on the wire.
          */
         QcAuOut: {
-            /** Value */
-            value: string;
-            /** Detection Limit */
-            detection_limit: string | null;
             /** Censored */
             censored: boolean;
+            /** Detection Limit */
+            detection_limit: string | null;
             /** Unit */
             unit: string;
+            /** Value */
+            value: string;
         };
         /** QcAuPair */
         QcAuPair: {
-            /** Value */
-            value: string;
-            /** Detection Limit */
-            detection_limit: string | null;
             /** Censored */
             censored: boolean;
+            /** Detection Limit */
+            detection_limit: string | null;
             /** Unit */
             unit: string;
+            /** Value */
+            value: string;
         };
         /** QcBatchRef */
         QcBatchRef: {
-            /** Id */
-            id: number;
             /** Batch Number */
             batch_number: string;
+            /** Id */
+            id: number;
         };
         /**
          * QcDossierOut
@@ -1919,33 +2122,33 @@ export interface components {
          */
         QcDossierOut: {
             batch: components["schemas"]["QcBatchRef"];
-            /** Entries */
-            entries: components["schemas"]["QcEntryOut"][];
-            /** Duplicates */
-            duplicates: components["schemas"]["QcDuplicateOut"][];
             /** Batch Flags */
             batch_flags: components["schemas"]["QcAdvisoryOut"][];
+            /** Duplicates */
+            duplicates: components["schemas"]["QcDuplicateOut"][];
+            /** Entries */
+            entries: components["schemas"]["QcEntryOut"][];
             /** Seal */
             seal: string;
         };
         /** QcDuplicateOut */
         QcDuplicateOut: {
-            sample: components["schemas"]["QcSampleRef"];
-            /** Insertion Type */
-            insertion_type: string;
-            /** Position */
-            position: string;
-            /** Crucible Status */
-            crucible_status: string;
-            /** Portion G */
-            portion_g: string;
-            /** Gold Bead Mg */
-            gold_bead_mg: string | null;
-            au: components["schemas"]["QcAuPair"] | null;
-            original_au: components["schemas"]["QcAuPair"] | null;
-            stats: components["schemas"]["QcDuplicateStatsOut"] | null;
             /** Advisories */
             advisories: components["schemas"]["QcAdvisoryOut"][];
+            au: components["schemas"]["QcAuPair"] | null;
+            /** Crucible Status */
+            crucible_status: string;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            /** Insertion Type */
+            insertion_type: string;
+            original_au: components["schemas"]["QcAuPair"] | null;
+            /** Portion G */
+            portion_g: string;
+            /** Position */
+            position: string;
+            sample: components["schemas"]["QcSampleRef"];
+            stats: components["schemas"]["QcDuplicateStatsOut"] | null;
         };
         /**
          * QcDuplicateStatsOut
@@ -1953,78 +2156,78 @@ export interface components {
          *     point — mean against absolute difference.
          */
         QcDuplicateStatsOut: {
-            /** Mean G T */
-            mean_g_t: string;
             /** Abs Diff G T */
             abs_diff_g_t: string;
+            /** Mean G T */
+            mean_g_t: string;
             /** Rpd Percent */
             rpd_percent: string;
         };
         /** QcEntryOut */
         QcEntryOut: {
-            material: components["schemas"]["QcMaterialRef"];
-            /** Position */
-            position: string;
-            /** Crucible Status */
-            crucible_status: string;
-            /** Portion G */
-            portion_g: string;
-            /** Gold Bead Mg */
-            gold_bead_mg: string | null;
-            au: components["schemas"]["QcAuOut"] | null;
-            /** Certified Au Value G T */
-            certified_au_value_g_t: string | null;
-            /** Certified Au Uncertainty G T */
-            certified_au_uncertainty_g_t: string | null;
-            /** Z Score */
-            z_score: string | null;
             /** Advisories */
             advisories: components["schemas"]["QcAdvisoryOut"][];
+            au: components["schemas"]["QcAuOut"] | null;
+            /** Certified Au Uncertainty G T */
+            certified_au_uncertainty_g_t: string | null;
+            /** Certified Au Value G T */
+            certified_au_value_g_t: string | null;
+            /** Crucible Status */
+            crucible_status: string;
+            /** Gold Bead Mg */
+            gold_bead_mg: string | null;
+            material: components["schemas"]["QcMaterialRef"];
+            /** Portion G */
+            portion_g: string;
+            /** Position */
+            position: string;
+            /** Z Score */
+            z_score: string | null;
         };
         /** QcMaterialCreate */
         QcMaterialCreate: {
+            /** Certified Au Uncertainty G T */
+            certified_au_uncertainty_g_t?: number | string | null;
+            /** Certified Au Value G T */
+            certified_au_value_g_t?: number | string | null;
+            /** Lot Number */
+            lot_number?: string | null;
             /**
              * Name
              * @description e.g. 'OREAS 501d'
              */
             name: string;
-            qc_type: components["schemas"]["QcMaterialType"];
-            /** Lot Number */
-            lot_number?: string | null;
-            /** Certified Au Value G T */
-            certified_au_value_g_t?: number | string | null;
-            /** Certified Au Uncertainty G T */
-            certified_au_uncertainty_g_t?: number | string | null;
             /** Notes */
             notes?: string | null;
+            qc_type: components["schemas"]["QcMaterialType"];
         };
         /** QcMaterialOut */
         QcMaterialOut: {
+            /** Certified Au Uncertainty G T */
+            certified_au_uncertainty_g_t: string | null;
+            /** Certified Au Value G T */
+            certified_au_value_g_t: string | null;
             /** Id */
             id: number;
+            /** Is Active */
+            is_active: boolean;
+            /** Lot Number */
+            lot_number: string | null;
             /** Name */
             name: string;
             /** Qc Type */
             qc_type: string;
-            /** Lot Number */
-            lot_number: string | null;
-            /** Certified Au Value G T */
-            certified_au_value_g_t: string | null;
-            /** Certified Au Uncertainty G T */
-            certified_au_uncertainty_g_t: string | null;
-            /** Is Active */
-            is_active: boolean;
         };
         /** QcMaterialRef */
         QcMaterialRef: {
             /** Id */
             id: number;
+            /** Lot Number */
+            lot_number: string | null;
             /** Name */
             name: string;
             /** Qc Type */
             qc_type: string;
-            /** Lot Number */
-            lot_number: string | null;
         };
         /**
          * QcMaterialType
@@ -2045,31 +2248,41 @@ export interface components {
         };
         /** SampleCreate */
         SampleCreate: {
+            /** Alteration Code */
+            alteration_code?: string | null;
+            /** Comments */
+            comments?: string | null;
+            /** Easting */
+            easting?: number | string | null;
+            /** Elevation M */
+            elevation_m?: number | string | null;
+            /** Lithology Code */
+            lithology_code?: string | null;
+            /** Northing */
+            northing?: number | string | null;
             /**
              * Sample Id
              * @description e.g. 'MSA-24-001-142.50_144.00' (drill) or 'MSA-24-SO-00417' (surface)
              */
             sample_id: string;
             sample_type: components["schemas"]["SampleType"];
-            /** Lithology Code */
-            lithology_code?: string | null;
-            /** Alteration Code */
-            alteration_code?: string | null;
             /** Weight Received G */
             weight_received_g?: number | string | null;
-            /** Easting */
-            easting?: number | string | null;
-            /** Northing */
-            northing?: number | string | null;
-            /** Elevation M */
-            elevation_m?: number | string | null;
-            /** Comments */
-            comments?: string | null;
         };
         /** SampleDetailOut */
         SampleDetailOut: {
+            /** Certificates */
+            certificates: components["schemas"]["CertificateReferenceOut"][];
+            crucible: components["schemas"]["CrucibleReferenceOut"] | null;
+            current_result: components["schemas"]["FireAssayResultOut"] | null;
+            /** Drill Hole Id */
+            drill_hole_id: number | null;
+            /** From Depth M */
+            from_depth_m: string | null;
             /** Id */
             id: number;
+            /** Result History */
+            result_history: components["schemas"]["FireAssayResultOut"][];
             /** Sample Id */
             sample_id: string;
             /** Sample Type */
@@ -2078,18 +2291,8 @@ export interface components {
             status: string;
             /** Submission Id */
             submission_id: number;
-            /** Drill Hole Id */
-            drill_hole_id: number | null;
-            /** From Depth M */
-            from_depth_m: string | null;
             /** To Depth M */
             to_depth_m: string | null;
-            current_result: components["schemas"]["FireAssayResultOut"] | null;
-            /** Result History */
-            result_history: components["schemas"]["FireAssayResultOut"][];
-            crucible: components["schemas"]["CrucibleReferenceOut"] | null;
-            /** Certificates */
-            certificates: components["schemas"]["CertificateReferenceOut"][];
         };
         /**
          * SampleListItemOut
@@ -2098,6 +2301,8 @@ export interface components {
          *     hundred samples costs one query, not a hundred and one.
          */
         SampleListItemOut: {
+            /** Client Name */
+            client_name: string;
             /** Id */
             id: number;
             /** Sample Id */
@@ -2106,13 +2311,15 @@ export interface components {
             sample_type: string;
             /** Status */
             status: string;
-            /** Client Name */
-            client_name: string;
             /** Submission Number */
             submission_number: string;
         };
         /** SampleOut */
         SampleOut: {
+            /** Drill Hole Id */
+            drill_hole_id: number | null;
+            /** From Depth M */
+            from_depth_m: string | null;
             /** Id */
             id: number;
             /** Sample Id */
@@ -2121,10 +2328,6 @@ export interface components {
             sample_type: string;
             /** Status */
             status: string;
-            /** Drill Hole Id */
-            drill_hole_id: number | null;
-            /** From Depth M */
-            from_depth_m: string | null;
             /** To Depth M */
             to_depth_m: string | null;
         };
@@ -2153,15 +2356,15 @@ export interface components {
          */
         SampleStatusUpdate: {
             /**
-             * Target
-             * @enum {string}
-             */
-            target: "in_prep" | "ready_for_assay" | "rejected";
-            /**
              * Reason
              * @description Required for rejecting a sample or returning one for re-assay.
              */
             reason?: string | null;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "in_prep" | "ready_for_assay" | "rejected";
         };
         /**
          * SampleType
@@ -2181,14 +2384,12 @@ export interface components {
          *     common beyond the sample, the portion, and the supersession pair.
          */
         SolutionFinishCreate: {
-            /** Sample Id */
-            sample_id: number;
             /**
-             * Method
-             * @description Which instrument read the dissolved bead. The gravimetric finish is excluded here at the schema layer: it weighs a bead rather than reading a solution, and has its own endpoint.
-             * @enum {string}
+             * Analysed At
+             * Format: date-time
+             * @description When the instrument read it, not when it was entered.
              */
-            method: "fire_assay_aas" | "fire_assay_icp_ms";
+            analysed_at: string;
             /**
              * Concentration
              * @description What the instrument read, in concentration_unit.
@@ -2201,62 +2402,68 @@ export interface components {
              */
             concentration_unit: "mg/L" | "ug/L";
             /**
-             * Solution Volume Ml
-             * @description The volume the dissolved bead was made up to.
+             * Crucible Id
+             * @description The crucible this assay came from; its recorded charge is derived as the portion weight.
              */
-            solution_volume_ml: number | string;
-            /**
-             * Sample Weight G
-             * @description The portion assayed. Required unless crucible_id names the crucible the sample was charged into — then its recorded charge is used and this must be left unset.
-             */
-            sample_weight_g?: number | string | null;
-            /**
-             * Analysed At
-             * Format: date-time
-             * @description When the instrument read it, not when it was entered.
-             */
-            analysed_at: string;
+            crucible_id?: number | null;
             /**
              * Detection Limit
              * @description The method's detection limit, in concentration_unit.
              */
             detection_limit?: number | string | null;
             /**
-             * Upper Calibration Limit
-             * @description The method's top standard, in concentration_unit. A reading above it is refused rather than stored: past the top standard the instrument is extrapolating, so the number is not a measurement. Not stored on the row.
+             * Instrument Id
+             * @description The instrument that performed this assay.
              */
-            upper_calibration_limit?: number | string | null;
+            instrument_id?: number | null;
+            /**
+             * Method
+             * @description Which instrument read the dissolved bead. The gravimetric finish is excluded here at the schema layer: it weighs a bead rather than reading a solution, and has its own endpoint.
+             * @enum {string}
+             */
+            method: "fire_assay_aas" | "fire_assay_icp_ms";
             /** Notes */
             notes?: string | null;
+            /** Sample Id */
+            sample_id: number;
             /**
-             * Supersedes Id
-             * @description Set to correct an existing result.
+             * Sample Weight G
+             * @description The portion assayed. Required unless crucible_id names the crucible the sample was charged into — then its recorded charge is used and this must be left unset.
              */
-            supersedes_id?: number | null;
+            sample_weight_g?: number | string | null;
+            /**
+             * Solution Volume Ml
+             * @description The volume the dissolved bead was made up to.
+             */
+            solution_volume_ml: number | string;
             /**
              * Superseded Reason
              * @description Required when supersedes_id is set.
              */
             superseded_reason?: string | null;
             /**
-             * Crucible Id
-             * @description The crucible this assay came from; its recorded charge is derived as the portion weight.
+             * Supersedes Id
+             * @description Set to correct an existing result.
              */
-            crucible_id?: number | null;
+            supersedes_id?: number | null;
             /**
-             * Instrument Id
-             * @description The instrument that performed this assay.
+             * Upper Calibration Limit
+             * @description The method's top standard, in concentration_unit. A reading above it is refused rather than stored: past the top standard the instrument is extrapolating, so the number is not a measurement. Not stored on the row.
              */
-            instrument_id?: number | null;
+            upper_calibration_limit?: number | string | null;
         };
         /** SubmissionCreate */
         SubmissionCreate: {
             /** Client Id */
             client_id: number;
-            /** Project Id */
-            project_id?: number | null;
             /** Client Reference */
             client_reference?: string | null;
+            /** Comments */
+            comments?: string | null;
+            /** Declared Sample Count */
+            declared_sample_count?: number | null;
+            /** Project Id */
+            project_id?: number | null;
             /** Purchase Order */
             purchase_order?: string | null;
             /**
@@ -2264,28 +2471,29 @@ export interface components {
              * Format: date-time
              */
             received_at: string;
-            /** Declared Sample Count */
-            declared_sample_count?: number | null;
+            /** Requested Tat Days */
+            requested_tat_days?: number | null;
             /**
              * Rush
              * @default false
              */
             rush: boolean;
-            /** Requested Tat Days */
-            requested_tat_days?: number | null;
-            /** Comments */
-            comments?: string | null;
             /** Samples */
             samples: components["schemas"]["SampleCreate"][];
         };
-        /** SubmissionOut */
-        SubmissionOut: {
-            /** Id */
-            id: number;
-            /** Submission Number */
-            submission_number: string;
+        /**
+         * SubmissionListItemOut
+         * @description Lightweight submission for list views — no embedded samples.
+         */
+        SubmissionListItemOut: {
             /** Client Id */
             client_id: number;
+            /** Client Name */
+            client_name: string | null;
+            /** Declared Sample Count */
+            declared_sample_count: number | null;
+            /** Id */
+            id: number;
             /** Project Id */
             project_id: number | null;
             /**
@@ -2293,23 +2501,43 @@ export interface components {
              * Format: date-time
              */
             received_at: string;
+            /** Sample Count */
+            sample_count: number;
+            /** Submission Number */
+            submission_number: string;
+        };
+        /** SubmissionOut */
+        SubmissionOut: {
+            /** Client Id */
+            client_id: number;
             /** Declared Sample Count */
             declared_sample_count: number | null;
+            /** Id */
+            id: number;
+            /** Project Id */
+            project_id: number | null;
+            /**
+             * Received At
+             * Format: date-time
+             */
+            received_at: string;
             /** Samples */
             samples: components["schemas"]["SampleOut"][];
+            /** Submission Number */
+            submission_number: string;
         };
         /** ValidationError */
         ValidationError: {
+            /** Context */
+            ctx?: Record<string, never>;
+            /** Input */
+            input?: unknown;
             /** Location */
             loc: (string | number)[];
             /** Message */
             msg: string;
             /** Error Type */
             type: string;
-            /** Input */
-            input?: unknown;
-            /** Context */
-            ctx?: Record<string, never>;
         };
         /** WhoAmIResponse */
         WhoAmIResponse: {
@@ -2327,27 +2555,49 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    health_health_get: {
+    create_audit_anchor_api_audit_anchors_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResponse"];
+                    "application/json": components["schemas"]["AuditAnchorOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
     };
-    whoami_api_me_get: {
+    read_latest_anchor_api_audit_anchors_latest_get: {
         parameters: {
             query?: never;
             header?: {
@@ -2366,7 +2616,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WhoAmIResponse"];
+                    "application/json": components["schemas"]["AuditAnchorOut"] | null;
                 };
             };
             /** @description Validation Error */
@@ -2380,7 +2630,88 @@ export interface operations {
             };
         };
     };
-    read_clients_api_clients_get: {
+    download_anchor_proof_api_audit_anchors__anchor_id__proof_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                anchor_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_audit_chain_verification_api_audit_verify_get: {
+        parameters: {
+            query?: {
+                upto?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditChainVerificationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_batches_api_batches_get: {
         parameters: {
             query?: {
                 limit?: number;
@@ -2401,7 +2732,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClientListItemOut"][];
+                    "application/json": components["schemas"]["BatchOut"][];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Validation Error */
@@ -2415,7 +2755,7 @@ export interface operations {
             };
         };
     };
-    create_client_api_clients_post: {
+    create_batch_api_batches_post: {
         parameters: {
             query?: never;
             header?: {
@@ -2428,7 +2768,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ClientCreate"];
+                "application/json": components["schemas"]["BatchCreate"];
             };
         };
         responses: {
@@ -2438,7 +2778,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClientOut"];
+                    "application/json": components["schemas"]["BatchOut"];
                 };
             };
             /** @description Insufficient role */
@@ -2470,108 +2810,7 @@ export interface operations {
             };
         };
     };
-    create_project_api_projects_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProjectCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProjectOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_drill_hole_api_drill_holes_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DrillHoleCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DrillHoleOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_fire_assay_result_api_fire_assay_results__result_id__get: {
+    read_batch_api_batches__batch_id__get: {
         parameters: {
             query?: never;
             header?: {
@@ -2580,7 +2819,7 @@ export interface operations {
                 "x-actor-role"?: string | null;
             };
             path: {
-                result_id: number;
+                batch_id: number;
             };
             cookie?: never;
         };
@@ -2592,16 +2831,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FireAssayResultOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["BatchDetailOut"];
                 };
             };
             /** @description Resource not found */
@@ -2624,7 +2854,7 @@ export interface operations {
             };
         };
     };
-    create_fire_assay_result_api_fire_assay_results_post: {
+    charge_crucible_api_batches__batch_id__crucibles_post: {
         parameters: {
             query?: never;
             header?: {
@@ -2632,12 +2862,14 @@ export interface operations {
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path?: never;
+            path: {
+                batch_id: number;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FireAssayResultCreate"];
+                "application/json": components["schemas"]["CrucibleChargeCreate"];
             };
         };
         responses: {
@@ -2647,7 +2879,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FireAssayResultOut"];
+                    "application/json": components["schemas"]["CrucibleOut"];
                 };
             };
             /** @description Insufficient role */
@@ -2688,7 +2920,7 @@ export interface operations {
             };
         };
     };
-    create_solution_finish_api_fire_assay_results_solution_finish_post: {
+    uncharge_crucible_api_batches__batch_id__crucibles__crucible_id__delete: {
         parameters: {
             query?: never;
             header?: {
@@ -2696,22 +2928,86 @@ export interface operations {
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path?: never;
+            path: {
+                batch_id: number;
+                crucible_id: number;
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SolutionFinishCreate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            201: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Insufficient role */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FireAssayResultOut"];
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_crucible_parting_api_batches__batch_id__crucibles__crucible_id__parting_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+                crucible_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CruciblePartingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrucibleOut"];
                 };
             };
             /** @description Insufficient role */
@@ -2739,6 +3035,348 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    record_crucible_weighing_api_batches__batch_id__crucibles__crucible_id__weighing_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+                crucible_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CrucibleWeighingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CrucibleOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_batch_qc_dossier_api_batches__batch_id__qc_dossier_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QcDossierOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    advance_batch_status_api_batches__batch_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                batch_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_certificates_api_certificates_get: {
+        parameters: {
+            query?: {
+                client_id?: number | null;
+                limit?: number;
+                cursor?: number | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedResponse_CertificateListItemOut_"];
                 };
             };
             /** @description Validation Error */
@@ -2920,13 +3558,10 @@ export interface operations {
             };
         };
     };
-    read_samples_api_samples_get: {
+    read_clients_api_clients_get: {
         parameters: {
             query?: {
-                client_id?: number | null;
-                status?: components["schemas"]["SampleStatus"] | null;
                 limit?: number;
-                cursor?: number | null;
             };
             header?: {
                 authorization?: string | null;
@@ -2944,16 +3579,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PaginatedResponse_SampleListItemOut_"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["ClientListItemOut"][];
                 };
             };
             /** @description Validation Error */
@@ -2967,7 +3593,7 @@ export interface operations {
             };
         };
     };
-    read_sample_api_samples__sample_id__get: {
+    create_client_api_clients_post: {
         parameters: {
             query?: never;
             header?: {
@@ -2975,24 +3601,35 @@ export interface operations {
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path: {
-                sample_id: number;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientCreate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SampleDetailOut"];
+                    "application/json": components["schemas"]["ClientOut"];
                 };
             };
-            /** @description Resource not found */
-            404: {
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3011,7 +3648,7 @@ export interface operations {
             };
         };
     };
-    read_sample_provenance_api_samples__sample_id__provenance_get: {
+    update_client_status_api_clients__client_id__patch: {
         parameters: {
             query?: never;
             header?: {
@@ -3020,57 +3657,13 @@ export interface operations {
                 "x-actor-role"?: string | null;
             };
             path: {
-                sample_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProvenanceOut"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    advance_sample_status_api_samples__sample_id__status_patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path: {
-                sample_id: number;
+                client_id: number;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SampleStatusUpdate"];
+                "application/json": components["schemas"]["ClientStatusUpdate"];
             };
         };
         responses: {
@@ -3080,7 +3673,117 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SampleOut"];
+                    "application/json": components["schemas"]["ClientOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_drill_hole_api_drill_holes_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrillHoleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrillHoleOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_fire_assay_result_api_fire_assay_results_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FireAssayResultCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FireAssayResultOut"];
                 };
             };
             /** @description Insufficient role */
@@ -3121,7 +3824,7 @@ export interface operations {
             };
         };
     };
-    read_submission_api_submissions__submission_id__get: {
+    create_solution_finish_api_fire_assay_results_solution_finish_post: {
         parameters: {
             query?: never;
             header?: {
@@ -3129,20 +3832,22 @@ export interface operations {
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path: {
-                submission_id: number;
-            };
+            path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionFinishCreate"];
+            };
+        };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubmissionOut"];
+                    "application/json": components["schemas"]["FireAssayResultOut"];
                 };
             };
             /** @description Insufficient role */
@@ -3163,6 +3868,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Conflict (duplicate name, wrong state, etc.) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3174,7 +3888,7 @@ export interface operations {
             };
         };
     };
-    create_submission_api_submissions_post: {
+    read_fire_assay_result_api_fire_assay_results__result_id__get: {
         parameters: {
             query?: never;
             header?: {
@@ -3182,22 +3896,20 @@ export interface operations {
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path?: never;
+            path: {
+                result_id: number;
+            };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmissionCreate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            201: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubmissionOut"];
+                    "application/json": components["schemas"]["FireAssayResultOut"];
                 };
             };
             /** @description Insufficient role */
@@ -3473,11 +4185,9 @@ export interface operations {
             };
         };
     };
-    read_batches_api_batches_get: {
+    whoami_api_me_get: {
         parameters: {
-            query?: {
-                limit?: number;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
                 "x-actor"?: string | null;
@@ -3494,16 +4204,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchOut"][];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["WhoAmIResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3517,7 +4218,7 @@ export interface operations {
             };
         };
     };
-    create_batch_api_batches_post: {
+    create_prep_record_api_prep_records_post: {
         parameters: {
             query?: never;
             header?: {
@@ -3530,7 +4231,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["BatchCreate"];
+                "application/json": components["schemas"]["PrepRecordCreate"];
             };
         };
         responses: {
@@ -3540,7 +4241,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BatchOut"];
+                    "application/json": components["schemas"]["PrepRecordOut"];
                 };
             };
             /** @description Insufficient role */
@@ -3552,8 +4253,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Conflict (duplicate name, wrong state, etc.) */
-            409: {
+            /** @description Resource not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3572,7 +4273,7 @@ export interface operations {
             };
         };
     };
-    charge_crucible_api_batches__batch_id__crucibles_post: {
+    create_project_api_projects_post: {
         parameters: {
             query?: never;
             header?: {
@@ -3580,14 +4281,12 @@ export interface operations {
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path: {
-                batch_id: number;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CrucibleChargeCreate"];
+                "application/json": components["schemas"]["ProjectCreate"];
             };
         };
         responses: {
@@ -3597,29 +4296,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CrucibleOut"];
+                    "application/json": components["schemas"]["ProjectOut"];
                 };
             };
             /** @description Insufficient role */
             403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict (duplicate name, wrong state, etc.) */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3634,312 +4315,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    record_crucible_parting_api_batches__batch_id__crucibles__crucible_id__parting_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path: {
-                batch_id: number;
-                crucible_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CruciblePartingCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CrucibleOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict (duplicate name, wrong state, etc.) */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    record_crucible_weighing_api_batches__batch_id__crucibles__crucible_id__weighing_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path: {
-                batch_id: number;
-                crucible_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CrucibleWeighingCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CrucibleOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict (duplicate name, wrong state, etc.) */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    advance_batch_status_api_batches__batch_id__status_patch: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path: {
-                batch_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BatchStatusUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict (duplicate name, wrong state, etc.) */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_batch_api_batches__batch_id__get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path: {
-                batch_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BatchDetailOut"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_batch_qc_dossier_api_batches__batch_id__qc_dossier_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path: {
-                batch_id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QcDossierOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Resource not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Conflict (duplicate name, wrong state, etc.) */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Validation error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -4023,10 +4398,13 @@ export interface operations {
             };
         };
     };
-    read_audit_chain_verification_api_audit_verify_get: {
+    read_samples_api_samples_get: {
         parameters: {
             query?: {
-                upto?: number | null;
+                client_id?: number | null;
+                status?: components["schemas"]["SampleStatus"] | null;
+                limit?: number;
+                cursor?: number | null;
             };
             header?: {
                 authorization?: string | null;
@@ -4044,77 +4422,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AuditChainVerificationOut"];
+                    "application/json": components["schemas"]["PaginatedResponse_SampleListItemOut_"];
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_latest_anchor_api_audit_anchors_latest_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuditAnchorOut"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_audit_anchor_api_audit_anchors_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-                "x-actor"?: string | null;
-                "x-actor-role"?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AuditAnchorOut"];
-                };
-            };
-            /** @description Insufficient role */
-            403: {
+            /** @description Resource not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4133,7 +4445,7 @@ export interface operations {
             };
         };
     };
-    download_anchor_proof_api_audit_anchors__anchor_id__proof_get: {
+    read_sample_api_samples__sample_id__get: {
         parameters: {
             query?: never;
             header?: {
@@ -4142,7 +4454,7 @@ export interface operations {
                 "x-actor-role"?: string | null;
             };
             path: {
-                anchor_id: number;
+                sample_id: number;
             };
             cookie?: never;
         };
@@ -4154,13 +4466,11 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["SampleDetailOut"];
                 };
             };
-            /** @description Insufficient role */
-            403: {
+            /** @description Resource not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4338,7 +4648,7 @@ export interface operations {
             };
         };
     };
-    submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post: {
+    read_sample_provenance_api_samples__sample_id__provenance_get: {
         parameters: {
             query?: never;
             header?: {
@@ -4347,21 +4657,67 @@ export interface operations {
                 "x-actor-role"?: string | null;
             };
             path: {
-                batch_id: number;
+                sample_id: number;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            202: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProvenanceOut"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    advance_sample_status_api_samples__sample_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                sample_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SampleStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SampleOut"];
                 };
             };
             /** @description Insufficient role */
@@ -4402,17 +4758,19 @@ export interface operations {
             };
         };
     };
-    get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get: {
+    read_submissions_api_submissions_get: {
         parameters: {
-            query?: never;
+            query?: {
+                client_id?: number | null;
+                limit?: number;
+                cursor?: number | null;
+            };
             header?: {
                 authorization?: string | null;
                 "x-actor"?: string | null;
                 "x-actor-role"?: string | null;
             };
-            path: {
-                batch_id: number;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -4423,9 +4781,53 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PaginatedResponse_SubmissionListItemOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_submission_api_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmissionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Resource not found */
@@ -4444,6 +4846,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_submission_api_submissions__submission_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                submission_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    health_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from msa_lims.db.models import Instrument
 from msa_lims.domain.enums import InstrumentStatus, InstrumentType
@@ -33,6 +34,8 @@ class InstrumentOut(BaseModel):
     location: str | None
     status: str
     calibration_due_on: date | None
+    balance_sensitivity_mg: Decimal | None
+    solution_detection_limit: Decimal | None
 
     @classmethod
     def from_model(cls, instrument: Instrument) -> InstrumentOut:
@@ -46,6 +49,8 @@ class InstrumentOut(BaseModel):
             location=instrument.location,
             status=instrument.status.value,
             calibration_due_on=instrument.calibration_due_on,
+            balance_sensitivity_mg=instrument.balance_sensitivity_mg,
+            solution_detection_limit=instrument.solution_detection_limit,
         )
 
 
@@ -57,6 +62,12 @@ class InstrumentCreate(BaseModel):
     serial_number: str | None = None
     location: str | None = None
     calibration_due_on: date | None = None
+    balance_sensitivity_mg: Decimal | None = Field(
+        default=None, gt=0, description="Microbalances: smallest resolvable weight in mg"
+    )
+    solution_detection_limit: Decimal | None = Field(
+        default=None, ge=0, description="ICP/AAS: method detection limit"
+    )
 
 
 class InstrumentUpdate(BaseModel):
@@ -67,6 +78,12 @@ class InstrumentUpdate(BaseModel):
     location: str | None = None
     calibration_due_on: date | None = None
     status: InstrumentStatus | None = None
+    balance_sensitivity_mg: Decimal | None = Field(
+        default=None, gt=0, description="Microbalances: smallest resolvable weight in mg"
+    )
+    solution_detection_limit: Decimal | None = Field(
+        default=None, ge=0, description="ICP/AAS: method detection limit"
+    )
     reason: str = "updated"
 
 
@@ -93,6 +110,8 @@ def create_instrument_endpoint(
                 serial_number=body.serial_number,
                 location=body.location,
                 calibration_due_on=body.calibration_due_on,
+                balance_sensitivity_mg=body.balance_sensitivity_mg,
+                solution_detection_limit=body.solution_detection_limit,
             ),
             actor_id=lab_user.id,
             actor_role=actor.role,
@@ -156,6 +175,8 @@ def update_instrument_endpoint(
             location=body.location,
             calibration_due_on=body.calibration_due_on,
             status=body.status,
+            balance_sensitivity_mg=body.balance_sensitivity_mg,
+            solution_detection_limit=body.solution_detection_limit,
             reason=body.reason,
             actor_id=lab_user.id,
             actor_role=actor.role,

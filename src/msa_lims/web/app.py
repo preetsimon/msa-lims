@@ -42,6 +42,9 @@ from msa_lims.fire_assay_results.service import (
 from msa_lims.fire_assay_results.service import (
     SampleNotFoundError as FireAssaySampleNotFoundError,
 )
+from msa_lims.fire_assay_results.service import (
+    SampleNotFoundError as MultiElementSampleNotFoundError,
+)
 from msa_lims.flux_recipes.service import FluxRecipeNotFoundError, FluxRecipeValidationError
 from msa_lims.instruments import (
     InstrumentNameConflictError,
@@ -49,9 +52,6 @@ from msa_lims.instruments import (
 )
 from msa_lims.multi_element.service import (
     MultiElementResultError,
-)
-from msa_lims.fire_assay_results.service import (
-    SampleNotFoundError as MultiElementSampleNotFoundError,
 )
 from msa_lims.prep_records.service import PrepRecordValidationError
 from msa_lims.qc_materials.service import QcMaterialNotFoundError, QcMaterialValidationError
@@ -62,6 +62,7 @@ from msa_lims.web.routes import (
     batches,
     certificates,
     clients,
+    dashboard,
     drill_holes,
     fire_assay_results,
     flux_recipes,
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.include_router(health.router)
     app.include_router(whoami.router)
+    app.include_router(dashboard.router)
     app.include_router(clients.router)
     app.include_router(drill_holes.router)
     app.include_router(fire_assay_results.router)

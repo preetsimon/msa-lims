@@ -268,6 +268,21 @@ class BatchService:
                     f"{data.insertion_type.value} rides along with a sample already "
                     "in assay — charge its original crucible first"
                 )
+            # Receipt inspection: the portion charged must not exceed the
+            # weight received at the lab.  This catches a weight-entry
+            # mistake before the sample is consumed in the furnace.
+            if (
+                sample.weight_received_g is not None
+                and data.sample_weight_g is not None
+                and data.sample_weight_g > sample.weight_received_g
+            ):
+                raise CrucibleValidationError(
+                    [
+                        f"portion weight {data.sample_weight_g} g exceeds "
+                        f"weight received {sample.weight_received_g} g for "
+                        f"sample {sample.sample_id!r}"
+                    ]
+                )
         else:
             assert data.qc_material_id is not None
             material = self._session.get(QcMaterial, data.qc_material_id)
@@ -358,6 +373,69 @@ class BatchService:
             # along with the IN_ASSAY status its original already caused.
             sample.status = SampleStatus.IN_ASSAY
         return crucible
+
+    def uncharge_crucible(
+        self, batch_id: int, crucible_id: int, *, removed_by: LabUser, actor_role: Role
+    ) -> None:
+        """Remove a crucible from a batch that is still in CHARGING status.
+
+        This is the error-correction path: a crucible was charged into the
+        wrong slot, or a sample was charged that should not have been.  The
+        batch must still be in CHARGING (not yet advanced to IN_FUSION), and
+        the crucible must be in CHARGED status (not yet parted or weighed).
+        The sample's lifecycle is reverted from IN_ASSAY back to its previous
+        state only if this was the sample's primary charge (no duplicate
+        insertion).
+
+        This is the only write operation that deletes a crucible row.
+        """
+        if actor_role not in BENCH_ROLES:
+            raise InsufficientRoleError(
+                f"{actor_role.value} may not uncharge a crucible; this needs one of "
+                + ", ".join(sorted(role.value for role in BENCH_ROLES))
+            )
+
+        batch = self._session.get(Batch, batch_id)
+        if batch is None:
+            raise BatchNotFoundError(f"no batch with id {batch_id}")
+
+        if batch.status is not BatchStatus.CHARGING:
+            raise TransitionNotAllowedError(
+                f"batch {batch.id} is {batch.status.value}; "
+                "a crucible can only be un-charged while the batch is open for charging"
+            )
+
+        crucible = self._session.get(Crucible, crucible_id)
+        if crucible is None or crucible.batch_id != batch_id:
+            raise CrucibleNotFoundError(f"no crucible {crucible_id} on batch {batch_id}")
+
+        if crucible.status is not CrucibleStatus.CHARGED:
+            raise TransitionNotAllowedError(
+                f"crucible {crucible_id} is {crucible.status.value}; "
+                "only a charged crucible can be un-charged"
+            )
+
+        # Revert the sample's lifecycle if this was its primary charge.
+        if crucible.sample_id is not None and crucible.insertion_type is None:
+            sample = self._session.get(Sample, crucible.sample_id)
+            if sample is not None and sample.status is SampleStatus.IN_ASSAY:
+                sample.status = SampleStatus.READY_FOR_ASSAY
+
+        record_audit_event(
+            self._session,
+            table_name="crucible",
+            record_id=crucible.id,
+            action="delete",
+            actor_id=removed_by.id,
+            before={
+                "batch_id": batch.id,
+                "sample_id": crucible.sample_id,
+                "qc_material_id": crucible.qc_material_id,
+                "position": f"{crucible.position_row}-{crucible.position_col}",
+            },
+        )
+        self._session.delete(crucible)
+        self._session.flush()
 
     def _check_batch_and_position(self, batch: Batch, row: int, col: int) -> list[str]:
         """Refusals shared by both kinds of charge: the batch must be open

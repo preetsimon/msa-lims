@@ -7,7 +7,7 @@ service call and a service result back into HTTP.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from msa_lims.submissions.service import (
     SampleInput,
@@ -15,6 +15,7 @@ from msa_lims.submissions.service import (
     SubmissionNotFoundError,
     SubmissionService,
     get_submission,
+    list_submissions,
 )
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
 from msa_lims.web.routes.error_responses import (
@@ -23,9 +24,37 @@ from msa_lims.web.routes.error_responses import (
     NOT_FOUND_404,
     merge_responses,
 )
-from msa_lims.web.schemas import SubmissionCreate, SubmissionOut
+from msa_lims.web.schemas import (
+    PaginatedResponse,
+    SubmissionCreate,
+    SubmissionListItemOut,
+    SubmissionOut,
+)
 
 router = APIRouter(prefix="/api/submissions", tags=["submissions"])
+
+
+@router.get(
+    "",
+    response_model=PaginatedResponse[SubmissionListItemOut],
+)
+def read_submissions(
+    session: SessionDep,
+    actor: InternalActorDep,
+    client_id: int | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    cursor: int | None = Query(default=None),
+) -> PaginatedResponse[SubmissionListItemOut]:
+    result = list_submissions(
+        session,
+        client_id=client_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return PaginatedResponse(
+        items=[SubmissionListItemOut.from_model(s) for s in result.items],
+        next_cursor=result.next_cursor,
+    )
 
 
 @router.get(

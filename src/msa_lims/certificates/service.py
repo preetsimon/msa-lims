@@ -103,6 +103,37 @@ def get_certificate(session: Session, certificate_id: int) -> Certificate:
     return certificate
 
 
+@dataclass(frozen=True, slots=True)
+class PaginatedCertificates:
+    items: list[Certificate]
+    next_cursor: int | None
+
+
+def list_certificates(
+    session: Session,
+    *,
+    client_id: int | None = None,
+    limit: int = 100,
+    cursor: int | None = None,
+) -> PaginatedCertificates:
+    """All certificates, newest first, optionally filtered by client.
+
+    Cursor-based pagination: pass the ``id`` of the last item from the
+    previous page as ``cursor``.
+    """
+    stmt = select(Certificate).order_by(Certificate.id.desc())
+    if client_id is not None:
+        stmt = stmt.where(Certificate.client_id == client_id)
+    if cursor is not None:
+        stmt = stmt.where(Certificate.id < cursor)
+
+    rows = list(session.execute(stmt.limit(limit + 1)).scalars().all())
+    has_next = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = items[-1].id if has_next and items else None
+    return PaginatedCertificates(items=items, next_cursor=next_cursor)
+
+
 def get_pdf(session: Session, certificate_id: int) -> tuple[Certificate, bytes]:
     """The certificate row and its PDF bytes, hash-verified on the way out."""
     certificate = get_certificate(session, certificate_id)

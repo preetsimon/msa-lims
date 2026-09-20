@@ -119,6 +119,36 @@ def charge_crucible(
     return CrucibleOut.from_model(crucible)
 
 
+@router.delete(
+    "/batches/{batch_id}/crucibles/{crucible_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=merge_responses(FORBIDDEN_403, BATCH_NOT_FOUND, CONFLICT_409),
+)
+def uncharge_crucible(
+    batch_id: int,
+    crucible_id: int,
+    session: SessionDep,
+    settings: SettingsDep,
+    actor: ActorDep,
+    removed_by: LabUserDep,
+) -> None:
+    """Remove a crucible from a batch still in CHARGING status.
+
+    This is the error-correction path: a crucible was charged into the
+    wrong slot, or a sample was charged that should not have been.  The
+    batch must still be in CHARGING (not yet advanced to IN_FUSION), and
+    the crucible must be in CHARGED status (not yet parted or weighed).
+    """
+    service = _service(session, settings)
+    service.uncharge_crucible(
+        batch_id,
+        crucible_id,
+        removed_by=removed_by,
+        actor_role=actor.role,
+    )
+    session.commit()
+
+
 @router.post(
     "/batches/{batch_id}/crucibles/{crucible_id}/parting",
     response_model=CrucibleOut,

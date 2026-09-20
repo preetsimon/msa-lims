@@ -338,10 +338,12 @@ class FireAssayResultService:
             data, sample
         )
         problems = self._check_supersession(data, sample, current) + wiring_problems
+        instrument = None
         if data.instrument_id is not None:
             from msa_lims.db.models import Instrument
 
-            if self._session.get(Instrument, data.instrument_id) is None:
+            instrument = self._session.get(Instrument, data.instrument_id)
+            if instrument is None:
                 problems.append(f"no instrument with id {data.instrument_id}")
         if problems:
             raise FireAssayResultValidationError(problems)
@@ -351,12 +353,19 @@ class FireAssayResultService:
         assert portion_weight is not None
         assert bead_weight is not None
 
+        # Auto-populate balance_sensitivity_mg from the instrument when the
+        # caller didn't supply it.  This means the first bead weighing and
+        # the balance it was weighed on always carry consistent precision.
+        balance_sensitivity = data.balance_sensitivity_mg
+        if balance_sensitivity is None and instrument is not None:
+            balance_sensitivity = instrument.balance_sensitivity_mg
+
         # Not caught here: AssayCalculationError propagates and is mapped to
         # 422 globally, same as every other domain refusal in web/app.py.
         grade = gravimetric_grade(
             gold_bead_mg=bead_weight,
             sample_weight_g=portion_weight,
-            balance_sensitivity_mg=data.balance_sensitivity_mg,
+            balance_sensitivity_mg=balance_sensitivity,
         )
 
         # Silver by difference: computed when both doré and gold bead weights
@@ -377,7 +386,7 @@ class FireAssayResultService:
             method=AssayMethod.FIRE_ASSAY_GRAVIMETRIC,
             gold_bead_mg=bead_weight,
             sample_weight_g=portion_weight,
-            balance_sensitivity_mg=data.balance_sensitivity_mg,
+            balance_sensitivity_mg=balance_sensitivity,
             au_value=grade.value,
             au_detection_limit=grade.detection_limit,
             au_censored=grade.censored,
@@ -436,14 +445,23 @@ class FireAssayResultService:
 
         crucible, portion_weight, wiring_problems = self._resolve_portion(data, sample)
         problems = self._check_supersession(data, sample, current) + wiring_problems
+        instrument = None
         if data.instrument_id is not None:
             from msa_lims.db.models import Instrument
 
-            if self._session.get(Instrument, data.instrument_id) is None:
+            instrument = self._session.get(Instrument, data.instrument_id)
+            if instrument is None:
                 problems.append(f"no instrument with id {data.instrument_id}")
         if problems:
             raise FireAssayResultValidationError(problems)
         assert portion_weight is not None  # guaranteed by a clean _resolve_portion
+
+        # Auto-populate detection_limit from the instrument when the caller
+        # didn't supply it.  This means the solution reading and the
+        # instrument it was read on always carry consistent precision.
+        detection_limit = data.detection_limit
+        if detection_limit is None and instrument is not None:
+            detection_limit = instrument.solution_detection_limit
 
         # AssayCalculationError and the unit errors propagate to 422 globally,
         # same as the gravimetric path.
@@ -452,7 +470,7 @@ class FireAssayResultService:
             concentration_unit=data.concentration_unit,
             solution_volume_ml=data.solution_volume_ml,
             sample_weight_g=portion_weight,
-            detection_limit=data.detection_limit,
+            detection_limit=detection_limit,
             upper_calibration_limit=data.upper_calibration_limit,
         )
 
@@ -464,7 +482,7 @@ class FireAssayResultService:
             solution_concentration=data.concentration,
             solution_concentration_unit=data.concentration_unit.value,
             solution_volume_ml=data.solution_volume_ml,
-            solution_detection_limit=data.detection_limit,
+            solution_detection_limit=detection_limit,
             au_value=grade.value,
             au_detection_limit=grade.detection_limit,
             au_censored=grade.censored,

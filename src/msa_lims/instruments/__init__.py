@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -47,6 +48,8 @@ class InstrumentInput:
     serial_number: str | None = None
     location: str | None = None
     calibration_due_on: date | None = None
+    balance_sensitivity_mg: Decimal | None = None
+    solution_detection_limit: Decimal | None = None
 
 
 def get_instrument(session: Session, instrument_id: int) -> Instrument:
@@ -98,6 +101,8 @@ def create_instrument(
         serial_number=inp.serial_number,
         location=inp.location,
         calibration_due_on=inp.calibration_due_on,
+        balance_sensitivity_mg=inp.balance_sensitivity_mg,
+        solution_detection_limit=inp.solution_detection_limit,
     )
     session.add(instrument)
     session.flush()
@@ -125,6 +130,8 @@ def update_instrument(
     location: str | None = None,
     calibration_due_on: date | None = None,
     status: InstrumentStatus | None = None,
+    balance_sensitivity_mg: Decimal | None = None,
+    solution_detection_limit: Decimal | None = None,
     reason: str = "updated",
     actor_id: int | None = None,
     actor_role: Role | None = None,
@@ -188,6 +195,30 @@ def update_instrument(
         )
         changed["calibration_due_on"] = str(calibration_due_on)
         instrument.calibration_due_on = calibration_due_on
+
+    if (
+        balance_sensitivity_mg is not None
+        and balance_sensitivity_mg != instrument.balance_sensitivity_mg
+    ):
+        before["balance_sensitivity_mg"] = (
+            str(instrument.balance_sensitivity_mg)
+            if instrument.balance_sensitivity_mg
+            else None
+        )
+        changed["balance_sensitivity_mg"] = str(balance_sensitivity_mg)
+        instrument.balance_sensitivity_mg = balance_sensitivity_mg
+
+    if (
+        solution_detection_limit is not None
+        and solution_detection_limit != instrument.solution_detection_limit
+    ):
+        before["solution_detection_limit"] = (
+            str(instrument.solution_detection_limit)
+            if instrument.solution_detection_limit
+            else None
+        )
+        changed["solution_detection_limit"] = str(solution_detection_limit)
+        instrument.solution_detection_limit = solution_detection_limit
 
     if status is not None and status != instrument.status:
         before["status"] = instrument.status.value

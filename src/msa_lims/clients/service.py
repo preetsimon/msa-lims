@@ -240,6 +240,14 @@ class ClientListItem:
     submission_count: int
 
 
+def get_client(session: Session, client_id: int) -> Client:
+    """A single client by id, or raise."""
+    client = session.get(Client, client_id)
+    if client is None:
+        raise ClientNotFoundError(f"no client with id {client_id}")
+    return client
+
+
 def list_clients(session: Session, *, limit: int = 100) -> list[ClientListItem]:
     """All clients, newest first, with submission count.
 

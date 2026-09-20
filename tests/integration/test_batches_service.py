@@ -66,6 +66,19 @@ def analyst(app_session: Session) -> LabUser:
 
 
 @pytest.fixture
+def supervisor(app_session: Session) -> LabUser:
+    user = LabUser(
+        subject="sub-supervisor-batch-1",
+        email="s-batch@lab.test",
+        full_name="S. Upervisor",
+        role=Role.SUPERVISOR,
+    )
+    app_session.add(user)
+    app_session.flush()
+    return user
+
+
+@pytest.fixture
 def client_role_user(app_session: Session) -> LabUser:
     user = LabUser(
         subject="sub-client-batch-1",
@@ -1362,3 +1375,238 @@ class TestQcCrucibleThroughTheFurnace:
         app_session.flush()
         assert weighed.status is CrucibleStatus.WEIGHED
         assert weighed.gold_bead_mg == Decimal("0.004")
+
+
+class TestUnchargeCrucible:
+    """Error-correction path: removing a crucible from a CHARGING batch."""
+
+    def test_uncharge_removes_crucible(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        crucible_id = crucible.id
+
+        service.uncharge_crucible(
+            charging_batch.id,
+            crucible_id,
+            removed_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert app_session.get(Crucible, crucible_id) is None
+
+    def test_uncharge_reverts_sample_lifecycle(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert a_sample.status is SampleStatus.IN_ASSAY
+
+        service.uncharge_crucible(
+            charging_batch.id,
+            crucible.id,
+            removed_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert a_sample.status is SampleStatus.READY_FOR_ASSAY
+
+    def test_uncharge_refused_on_non_charging_batch(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        # Advance the batch past CHARGING
+        service.advance_status(
+            charging_batch.id,
+            target=BatchStatus.IN_FUSION,
+            advanced_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        with pytest.raises(TransitionNotAllowedError, match="open for charging"):
+            service.uncharge_crucible(
+                charging_batch.id,
+                crucible.id,
+                removed_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_uncharge_refused_for_non_bench_role(
+        self,
+        app_session: Session,
+        client_role_user: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        # First charge with an analyst (valid role)
+        analyst = LabUser(
+            subject="sub-analyst-temp",
+            email="temp@lab.test",
+            full_name="Temp Analyst",
+            role=Role.ANALYST,
+        )
+        app_session.add(analyst)
+        app_session.flush()
+
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        # Try to uncharge with a client role (not in BENCH_ROLES)
+        with pytest.raises(InsufficientRoleError, match="may not uncharge"):
+            service.uncharge_crucible(
+                charging_batch.id,
+                crucible.id,
+                removed_by=client_role_user,
+                actor_role=Role.CLIENT,
+            )
+
+
+class TestReceiptInspection:
+    """Weight check: portion charged must not exceed weight received."""
+
+    def test_charge_refused_when_portion_exceeds_received(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        # Set a weight_received_g on the sample
+        a_sample.weight_received_g = Decimal("25")
+        app_session.flush()
+
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        with pytest.raises(CrucibleValidationError, match="exceeds weight received"):
+            service.charge_crucible(
+                charge_input(
+                    batch_id=charging_batch.id,
+                    sample_id=a_sample.id,
+                    flux_recipe_id=recipe.id,
+                    sample_weight_g=Decimal("30"),
+                    position_row=1,
+                    position_col=1,
+                ),
+                charged_by=analyst,
+                actor_role=Role.ANALYST,
+            )
+
+    def test_charge_allowed_when_portion_within_received(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        a_sample.weight_received_g = Decimal("35")
+        app_session.flush()
+
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                sample_weight_g=Decimal("30"),
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert crucible.sample_weight_g == Decimal("30")
+
+    def test_charge_allowed_when_weight_received_not_set(
+        self,
+        app_session: Session,
+        analyst: LabUser,
+        a_sample: Sample,
+        charging_batch,
+        recipe: FluxRecipe,
+    ) -> None:
+        # a_sample.weight_received_g is None by default
+        assert a_sample.weight_received_g is None
+
+        service = BatchService(app_session, furnace_rows=10, furnace_columns=10)
+        crucible = service.charge_crucible(
+            charge_input(
+                batch_id=charging_batch.id,
+                sample_id=a_sample.id,
+                flux_recipe_id=recipe.id,
+                sample_weight_g=Decimal("30"),
+                position_row=1,
+                position_col=1,
+            ),
+            charged_by=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+        assert crucible.sample_weight_g == Decimal("30")

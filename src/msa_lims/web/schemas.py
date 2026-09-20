@@ -296,6 +296,32 @@ class SampleListItemOut(BaseModel):
         )
 
 
+class SubmissionListItemOut(BaseModel):
+    """Lightweight submission for list views — no embedded samples."""
+
+    id: int
+    submission_number: str
+    client_id: int
+    client_name: str | None
+    project_id: int | None
+    received_at: datetime
+    declared_sample_count: int | None
+    sample_count: int
+
+    @classmethod
+    def from_model(cls, submission: Submission) -> SubmissionListItemOut:
+        return cls(
+            id=submission.id,
+            submission_number=submission.submission_number,
+            client_id=submission.client_id,
+            client_name=None,
+            project_id=submission.project_id,
+            received_at=submission.received_at,
+            declared_sample_count=submission.declared_sample_count,
+            sample_count=len(submission.samples),
+        )
+
+
 class SubmissionOut(BaseModel):
     id: int
     submission_number: str
@@ -576,6 +602,30 @@ class CertifiedSampleOut(BaseModel):
     au: MeasuredValueOut
     elements: list[CertifiedElementOut] = []
     digest_method: str | None = None
+
+
+class CertificateListItemOut(BaseModel):
+    """Lightweight certificate for list views — no embedded samples or PDF."""
+
+    id: int
+    certificate_number: str
+    client_id: int
+    issued_by_id: int
+    issued_at: datetime
+    supersedes_id: int | None
+    is_stale: bool
+
+    @classmethod
+    def from_model(cls, certificate: Certificate) -> CertificateListItemOut:
+        return cls(
+            id=certificate.id,
+            certificate_number=certificate.certificate_number,
+            client_id=certificate.client_id,
+            issued_by_id=certificate.issued_by_id,
+            issued_at=certificate.issued_at,
+            supersedes_id=certificate.supersedes_id,
+            is_stale=False,
+        )
 
 
 class CertificateOut(BaseModel):
@@ -1395,3 +1445,17 @@ class PrepRecordOut(BaseModel):
             notes=record.notes,
             created_at=record.created_at,
         )
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+
+class DashboardStatsOut(BaseModel):
+    total_samples: int
+    total_clients: int
+    total_submissions: int
+    total_batches: int
+    total_certificates: int
+    samples_by_status: dict[str, int]

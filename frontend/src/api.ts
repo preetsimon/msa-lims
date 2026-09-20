@@ -9,13 +9,19 @@
 import type {
   Batch,
   BatchDetail,
+  CertificateListItem,
   Crucible,
   FluxRecipe,
   Provenance,
   QcMaterial,
   SampleDetail,
   SampleListItem,
+  Submission,
+  SubmissionListItem,
 } from "./types";
+import type { components } from "./generated-types";
+
+export type Instrument = components["schemas"]["InstrumentOut"];
 
 class ApiError extends Error {
   constructor(
@@ -114,6 +120,17 @@ export interface ClientListItem {
   name: string;
   is_active: boolean;
   submission_count: number;
+}
+
+export interface Client {
+  id: number;
+  code: string;
+  name: string;
+  contact_person: string | null;
+  email: string | null;
+  phone: string | null;
+  billing_address: string | null;
+  is_active: boolean;
 }
 
 export function listClients(): Promise<ClientListItem[]> {
@@ -241,7 +258,92 @@ export function listMultiElementResults(sampleId: number): Promise<MultiElementR
 }
 
 // ---------------------------------------------------------------------------
-// QC Sentinel
+// Submissions
+// ---------------------------------------------------------------------------
+
+export function listSubmissions(params?: {
+  client_id?: number;
+  limit?: number;
+  cursor?: number;
+}): Promise<PaginatedResponse<SubmissionListItem>> {
+  const q: string[] = [];
+  if (params?.client_id !== undefined) q.push(`client_id=${params.client_id}`);
+  if (params?.limit !== undefined) q.push(`limit=${params.limit}`);
+  if (params?.cursor !== undefined) q.push(`cursor=${params.cursor}`);
+  const query = q.length > 0 ? `?${q.join("&")}` : "";
+  return getJSON<PaginatedResponse<SubmissionListItem>>(`/api/submissions${query}`);
+}
+
+export function getSubmission(id: number): Promise<Submission> {
+  return getJSON<Submission>(`/api/submissions/${id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Certificates
+// ---------------------------------------------------------------------------
+
+export function listCertificates(params?: {
+  client_id?: number;
+  limit?: number;
+  cursor?: number;
+}): Promise<PaginatedResponse<CertificateListItem>> {
+  const q: string[] = [];
+  if (params?.client_id !== undefined) q.push(`client_id=${params.client_id}`);
+  if (params?.limit !== undefined) q.push(`limit=${params.limit}`);
+  if (params?.cursor !== undefined) q.push(`cursor=${params.cursor}`);
+  const query = q.length > 0 ? `?${q.join("&")}` : "";
+  return getJSON<PaginatedResponse<CertificateListItem>>(`/api/certificates${query}`);
+}
+
+// ---------------------------------------------------------------------------
+// Instruments
+// ---------------------------------------------------------------------------
+
+export function listInstruments(params?: {
+  instrument_type?: string;
+  status?: string;
+}): Promise<Instrument[]> {
+  const q: string[] = [];
+  if (params?.instrument_type) q.push(`instrument_type=${encodeURIComponent(params.instrument_type)}`);
+  if (params?.status) q.push(`status=${encodeURIComponent(params.status)}`);
+  const query = q.length > 0 ? `?${q.join("&")}` : "";
+  return getJSON<Instrument[]>(`/api/instruments${query}`);
+}
+
+export function createInstrument(body: {
+  name: string;
+  instrument_type: string;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  location?: string;
+  calibration_due_on?: string;
+  balance_sensitivity_mg?: string;
+  solution_detection_limit?: string;
+}): Promise<Instrument> {
+  return sendJSON<Instrument>("POST", "/api/instruments", body);
+}
+
+export function updateInstrument(
+  id: number,
+  body: {
+    name?: string;
+    manufacturer?: string;
+    model?: string;
+    serial_number?: string;
+    location?: string;
+    status?: string;
+    calibration_due_on?: string;
+    balance_sensitivity_mg?: string;
+    solution_detection_limit?: string;
+    reason?: string;
+  },
+): Promise<Instrument> {
+  return sendJSON<Instrument>("PATCH", `/api/instruments/${id}`, body);
+}
+
+// ---------------------------------------------------------------------------
+// Sentinel
 // ---------------------------------------------------------------------------
 
 export interface SentinelSubmitResponse {
@@ -269,6 +371,115 @@ export function submitToSentinel(batchId: number): Promise<SentinelSubmitRespons
 
 export function getSentinelVerdict(batchId: number): Promise<SentinelVerdictResponse> {
   return getJSON<SentinelVerdictResponse>(`/api/batches/${batchId}/sentinel-verdict`);
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export interface DashboardStats {
+  total_samples: number;
+  total_clients: number;
+  total_submissions: number;
+  total_batches: number;
+  total_certificates: number;
+  samples_by_status: Record<string, number>;
+}
+
+export function getDashboardStats(): Promise<DashboardStats> {
+  return getJSON<DashboardStats>("/api/stats");
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+export function getClient(clientId: number): Promise<Client> {
+  return getJSON<Client>(`/api/clients/${clientId}`);
+}
+
+export function createClient(body: { name: string }): Promise<Client> {
+  return sendJSON<Client>("POST", "/api/clients", body);
+}
+
+export function updateClientStatus(
+  clientId: number,
+  body: { is_active: boolean; reason?: string },
+): Promise<{ status: string }> {
+  return sendJSON<{ status: string }>("PATCH", `/api/clients/${clientId}`, body);
+}
+
+// ---------------------------------------------------------------------------
+// Prep Records
+// ---------------------------------------------------------------------------
+
+export interface PrepRecord {
+  id: number;
+  sample_id: number;
+  stage: string;
+  instrument_id: number | null;
+  performed_at: string;
+  input_weight_g: string | null;
+  output_weight_g: string | null;
+  supersedes_id: number | null;
+  superseded_reason: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export function listSamplePrepRecords(sampleId: number): Promise<PrepRecord[]> {
+  return getJSON<PrepRecord[]>(`/api/samples/${sampleId}/prep-records`);
+}
+
+export function createPrepRecord(body: {
+  sample_id: number;
+  stage: string;
+  instrument_id?: number;
+  performed_at: string;
+  input_weight_g?: string;
+  output_weight_g?: string;
+  notes?: string;
+}): Promise<PrepRecord> {
+  return sendJSON<PrepRecord>("POST", "/api/prep-records", body);
+}
+
+// ---------------------------------------------------------------------------
+// Fire Assay Results
+// ---------------------------------------------------------------------------
+
+export function createFireAssayResult(body: {
+  sample_id: number;
+  gold_bead_mg: string;
+  sample_weight_g: string;
+  balance_sensitivity_mg?: string;
+  dore_bead_mg?: string;
+  analysed_at: string;
+  notes?: string;
+  crucible_id?: number;
+  instrument_id?: number;
+}): Promise<{ id: number }> {
+  return sendJSON<{ id: number }>("POST", "/api/fire-assay-results", body);
+}
+
+export function createSolutionFinish(body: {
+  sample_id: number;
+  method: string;
+  concentration: string;
+  concentration_unit: string;
+  solution_volume_ml?: string;
+  sample_weight_g?: string;
+  analysed_at: string;
+  detection_limit?: string;
+  upper_calibration_limit?: string;
+  notes?: string;
+  crucible_id?: number;
+  instrument_id?: number;
+}): Promise<{ id: number }> {
+  return sendJSON<{ id: number }>(
+    "POST",
+    "/api/fire-assay-results/solution-finish",
+    body,
+  );
 }
 
 export { ApiError };

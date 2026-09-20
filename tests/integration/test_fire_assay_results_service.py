@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
-from msa_lims.db.models import AuditEvent, Client, Crucible, LabUser, Sample, Submission
+from msa_lims.db.models import AuditEvent, Client, Crucible, Instrument, LabUser, Sample, Submission
 from msa_lims.domain.enums import AssayMethod, CrucibleStatus, Role, SampleStatus, SampleType
 from msa_lims.domain.lifecycle import InsufficientRoleError, TransitionNotAllowedError
 from msa_lims.domain.units import Unit
@@ -1200,3 +1200,109 @@ class TestResultsNeverNameQcCrucibles:
                 analyst=analyst,
                 actor_role=Role.ANALYST,
             )
+
+
+class TestInstrumentSensitivityAutoPopulation:
+    """When an instrument carries balance_sensitivity_mg or
+    solution_detection_limit and the caller doesn't supply their own,
+    result entry reads the value from the instrument."""
+
+    def test_gravimetric_uses_instrument_sensitivity(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        instrument = Instrument(
+            name="MB-01",
+            instrument_type="microbalance",
+            balance_sensitivity_mg=Decimal("0.001"),
+        )
+        app_session.add(instrument)
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        result = service.create(
+            result_input(
+                sample_id=a_sample.id,
+                instrument_id=instrument.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert result.instrument_id == instrument.id
+        assert result.balance_sensitivity_mg == Decimal("0.001")
+
+    def test_gravimetric_caller_override_wins(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        instrument = Instrument(
+            name="MB-02",
+            instrument_type="microbalance",
+            balance_sensitivity_mg=Decimal("0.001"),
+        )
+        app_session.add(instrument)
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        result = service.create(
+            result_input(
+                sample_id=a_sample.id,
+                instrument_id=instrument.id,
+                balance_sensitivity_mg=Decimal("0.010"),
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert result.balance_sensitivity_mg == Decimal("0.010")
+
+    def test_solution_finish_uses_instrument_detection_limit(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        instrument = Instrument(
+            name="ICP-01",
+            instrument_type="icp_oes",
+            solution_detection_limit=Decimal("0.05"),
+        )
+        app_session.add(instrument)
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        result = service.create_solution_finish(
+            solution_input(
+                sample_id=a_sample.id,
+                instrument_id=instrument.id,
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert result.instrument_id == instrument.id
+        assert result.solution_detection_limit == Decimal("0.05")
+
+    def test_solution_finish_caller_override_wins(
+        self, app_session: Session, analyst: LabUser, a_sample: Sample
+    ) -> None:
+        instrument = Instrument(
+            name="ICP-02",
+            instrument_type="icp_oes",
+            solution_detection_limit=Decimal("0.05"),
+        )
+        app_session.add(instrument)
+        app_session.flush()
+
+        service = FireAssayResultService(app_session)
+        result = service.create_solution_finish(
+            solution_input(
+                sample_id=a_sample.id,
+                instrument_id=instrument.id,
+                detection_limit=Decimal("0.10"),
+            ),
+            analyst=analyst,
+            actor_role=Role.ANALYST,
+        )
+        app_session.flush()
+
+        assert result.solution_detection_limit == Decimal("0.10")

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query
 from msa_lims.domain.enums import SampleStatus
 from msa_lims.provenance.service import get_sample_provenance, seal, seal_payload
 from msa_lims.samples.service import get_sample_detail, list_samples
-from msa_lims.web.deps import InternalActorDep, SessionDep
+from msa_lims.web.deps import ClientScopeDep, InternalActorDep, SessionDep
 from msa_lims.web.routes.error_responses import SAMPLE_NOT_FOUND, merge_responses
 from msa_lims.web.schemas import (
     CertificateReferenceOut,
@@ -30,14 +30,18 @@ router = APIRouter(prefix="/api/samples", tags=["samples"])
 def read_samples(
     session: SessionDep,
     actor: InternalActorDep,
+    client_scope: ClientScopeDep,
     client_id: int | None = Query(default=None),
     status: SampleStatus | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     cursor: int | None = Query(default=None),
 ) -> PaginatedResponse[SampleListItemOut]:
+    # Client-role users are scoped to their client's rows; lab staff
+    # can optionally filter by client_id via the query parameter.
+    effective_client_id = client_scope if client_scope is not None else client_id
     result = list_samples(
         session,
-        client_id=client_id,
+        client_id=effective_client_id,
         status=status,
         limit=limit,
         cursor=cursor,
@@ -60,8 +64,26 @@ def read_samples(
     response_model=SampleDetailOut,
     responses=merge_responses(SAMPLE_NOT_FOUND),
 )
-def read_sample(sample_id: int, session: SessionDep, actor: InternalActorDep) -> SampleDetailOut:
+def read_sample(
+    sample_id: int,
+    session: SessionDep,
+    actor: InternalActorDep,
+    client_scope: ClientScopeDep,
+) -> SampleDetailOut:
     detail = get_sample_detail(session, sample_id)
+    # Client-role users can only see their own client's samples.
+    if client_scope is not None:
+        from msa_lims.db.models import Submission
+
+        submission = session.get(Submission, detail.sample.submission_id)
+        if submission is None or submission.client_id != client_scope:
+            from fastapi import HTTPException
+            from starlette import status as starlette_status
+
+            raise HTTPException(
+                status_code=starlette_status.HTTP_404_NOT_FOUND,
+                detail="sample not found",
+            )
     return SampleDetailOut.from_model(
         detail.sample,
         current_result=(

@@ -83,6 +83,10 @@ class LabUser(Base, TimestampMixin):
     Identity comes from the OIDC provider; this row exists so that a result can
     reference the analyst who produced it with a foreign key rather than a
     free-text name that changes when somebody marries.
+
+    When ``client_id`` is set, the user is a client-side contact whose reads
+    are scoped to that client's samples and certificates.  Lab staff leave
+    ``client_id`` NULL and see everything via ``internal_actor``.
     """
 
     __tablename__ = "lab_user"
@@ -95,6 +99,14 @@ class LabUser(Base, TimestampMixin):
     full_name: Mapped[str] = mapped_column(String(200))
     role: Mapped[Role] = mapped_column(_enum(Role, "role"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+    #: When set, this user is a client-side contact and their reads are
+    #: scoped to samples and certificates belonging to this client.  NULL
+    #: means the user is lab staff with unrestricted read access.
+    client_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("client.id"), index=True
+    )
+    client: Mapped[Client | None] = relationship()
 
 
 class Client(Base, TimestampMixin):
@@ -294,6 +306,13 @@ class Instrument(Base, TimestampMixin):
     Crushers and pulverizers are here alongside the spectrometers because a
     contamination investigation traces material back through the equipment that
     touched it, and 'which pulverizer' is the question that gets asked.
+
+    For microbalances, ``balance_sensitivity_mg`` records the smallest weight
+    the balance can reliably resolve — the value that determines whether a
+    zero-looking bead is a non-detect or a measurement.  For ICP/AAS
+    instruments, ``solution_detection_limit`` records the method's detection
+    limit in the concentration units the instrument reads.  Both replace
+    per-request guesses in result entry.
     """
 
     __tablename__ = "instrument"
@@ -313,6 +332,19 @@ class Instrument(Base, TimestampMixin):
     )
     calibration_due_on: Mapped[date | None] = mapped_column(Date)
     """A date, not a timestamp: calibration certificates expire on a day."""
+
+    #: Microbalances only: the smallest weight the balance can reliably
+    #: resolve, in mg.  When a bead weight is at or below this value, the
+    #: result is a non-detect at the grade this sensitivity corresponds to.
+    #: Nullable — only meaningful on a microbalance row.
+    balance_sensitivity_mg: Mapped[Decimal | None] = mapped_column(Numeric)
+
+    #: ICP/AAS instruments only: the method's detection limit in the
+    #: concentration units the instrument reads (e.g. mg/L).  When a solution
+    #: reading is at or below this value, the result is a non-detect at the
+    #: grade this limit corresponds to.  Nullable — only meaningful on an
+    #: ICP/AAS row.
+    solution_detection_limit: Mapped[Decimal | None] = mapped_column(Numeric)
 
 
 class AuditEvent(Base, TimestampMixin):

@@ -211,22 +211,23 @@ def current_lab_user(
     return user
 
 
-def internal_actor(actor: ActorDep) -> Actor:
-    """Refuse the external role until per-client row scoping exists.
+def internal_actor(
+    actor: ActorDep, session: SessionDep, lab_user: LabUserDep
+) -> Actor:
+    """Allow lab staff; allow client actors only when linked to a Client.
 
-    There is no LabUser↔Client link in the schema yet, so a ``client`` actor
-    cannot be scoped to "their" rows — meaning open reads would let any client
-    account read any other client's grades and certificates by id. The honest
-    interim posture is refusal with the reason named, not open access on a
-    demo. When a client portal is built, this is the one dependency to replace
-    with a row-scoped variant; every read endpoint already depends on it.
+    When the LabUser row has a ``client_id``, the caller is a client-side
+    contact whose reads must be scoped to that client's rows.  When
+    ``client_id`` is NULL, the actor is lab staff with unrestricted access.
+    A client actor without a linked LabUser is refused — there is no
+    ``client_id`` to scope their reads to.
     """
-    if actor.role is Role.CLIENT:
+    if actor.role is Role.CLIENT and lab_user.client_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "client accounts cannot browse laboratory records; contact your "
-                "laboratory representative for certificates and results"
+                "client accounts must be linked to a client before "
+                "accessing laboratory records"
             ),
         )
     return actor
@@ -237,3 +238,17 @@ ActorDep = Annotated[Actor, Depends(current_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 LabUserDep = Annotated[LabUser, Depends(current_lab_user)]
 InternalActorDep = Annotated[Actor, Depends(internal_actor)]
+
+
+def client_scope(lab_user: LabUserDep) -> int | None:
+    """Return the client_id for row scoping, or None for lab staff.
+
+    Downstream routes use this to filter samples and certificates to
+    those belonging to the caller's client.  Lab staff (``client_id`` is
+    NULL) get unrestricted access; the route itself decides whether to
+    refuse or return empty results.
+    """
+    return lab_user.client_id
+
+
+ClientScopeDep = Annotated[int | None, Depends(client_scope)]

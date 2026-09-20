@@ -10,7 +10,7 @@ contents differently.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 from sqlalchemy.orm import Session
 
 from msa_lims.certificates.service import (
@@ -20,6 +20,7 @@ from msa_lims.certificates.service import (
     get_certified_samples,
     get_pdf,
     is_certificate_stale,
+    list_certificates,
 )
 from msa_lims.db.models import Certificate
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
@@ -32,13 +33,38 @@ from msa_lims.web.routes.error_responses import (
 )
 from msa_lims.web.schemas import (
     CertificateCreate,
+    CertificateListItemOut,
     CertificateOut,
     CertifiedElementOut,
     CertifiedSampleOut,
     MeasuredValueOut,
+    PaginatedResponse,
 )
 
 router = APIRouter(prefix="/api/certificates", tags=["certificates"])
+
+
+@router.get(
+    "",
+    response_model=PaginatedResponse[CertificateListItemOut],
+)
+def read_certificates(
+    session: SessionDep,
+    actor: InternalActorDep,
+    client_id: int | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    cursor: int | None = Query(default=None),
+) -> PaginatedResponse[CertificateListItemOut]:
+    result = list_certificates(
+        session,
+        client_id=client_id,
+        limit=limit,
+        cursor=cursor,
+    )
+    return PaginatedResponse(
+        items=[CertificateListItemOut.from_model(c) for c in result.items],
+        next_cursor=result.next_cursor,
+    )
 
 
 def _certificate_out(session: Session, certificate: Certificate) -> CertificateOut:

@@ -18,6 +18,7 @@ from msa_lims.clients.service import (
     ClientService,
     ProjectInput,
     ProjectService,
+    get_client,
     list_clients,
 )
 from msa_lims.web.deps import ActorDep, InternalActorDep, LabUserDep, SessionDep
@@ -55,6 +56,28 @@ def read_clients(
         ClientListItemOut.from_model(item.client, submission_count=item.submission_count)
         for item in items
     ]
+
+
+@router.get(
+    "/clients/{client_id}",
+    response_model=ClientOut,
+    responses=merge_responses(FORBIDDEN_403, NOT_FOUND_404),
+)
+def read_client(
+    client_id: int,
+    session: SessionDep,
+    actor: InternalActorDep,
+) -> ClientOut:
+    try:
+        client = get_client(session, client_id)
+    except ClientNotFoundError as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    return ClientOut.from_model(client)
 
 
 @router.post(

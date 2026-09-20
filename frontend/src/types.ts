@@ -99,3 +99,15 @@ export type ProvenanceAuditEntry = components["schemas"]["ProvenanceAuditEntryOu
 /** A client listing row — `GET /api/clients`. Lean: code, name, active flag,
  * and submission count for filter dropdowns. */
 export type ClientListItem = components["schemas"]["ClientListItemOut"];
+
+/** A submission listing row — `GET /api/submissions`. */
+export type SubmissionListItem = components["schemas"]["SubmissionListItemOut"];
+
+/** A submission with its samples. */
+export type Submission = components["schemas"]["SubmissionOut"];
+
+/** A certificate listing row — `GET /api/certificates`. */
+export type CertificateListItem = components["schemas"]["CertificateListItemOut"];
+
+/** An instrument row — `GET /api/instruments`. */
+export type Instrument = components["schemas"]["InstrumentOut"];

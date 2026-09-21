@@ -105,3 +105,37 @@ class TestListingRecipesThroughHttp:
         response = client.get("/api/flux-recipes", headers=ANALYST)
         assert response.status_code == 200
         assert response.json() == []
+
+
+class TestFluxRecipeDetailAndUpdate:
+    def test_get_recipe_by_id(self, client: TestClient) -> None:
+        create_resp = client.post("/api/flux-recipes", json=recipe_body(), headers=SUPERVISOR)
+        recipe_id = create_resp.json()["id"]
+        response = client.get(f"/api/flux-recipes/{recipe_id}", headers=ANALYST)
+        assert response.status_code == 200
+        assert response.json()["name"] == "Standard Silicate"
+
+    def test_get_nonexistent_recipe_returns_404(self, client: TestClient) -> None:
+        response = client.get("/api/flux-recipes/99999", headers=ANALYST)
+        assert response.status_code == 404
+
+    def test_update_recipe_name(self, client: TestClient) -> None:
+        create_resp = client.post("/api/flux-recipes", json=recipe_body(), headers=SUPERVISOR)
+        recipe_id = create_resp.json()["id"]
+        response = client.patch(
+            f"/api/flux-recipes/{recipe_id}",
+            headers=SUPERVISOR,
+            params={"name": "Updated Recipe"},
+        )
+        assert response.status_code == 200
+        assert response.json()["name"] == "Updated Recipe"
+
+    def test_deactivate_recipe(self, client: TestClient) -> None:
+        create_resp = client.post("/api/flux-recipes", json=recipe_body(), headers=SUPERVISOR)
+        recipe_id = create_resp.json()["id"]
+        response = client.delete(f"/api/flux-recipes/{recipe_id}", headers=SUPERVISOR)
+        assert response.status_code == 200
+        assert response.json()["status"] == "deactivated"
+
+        detail = client.get(f"/api/flux-recipes/{recipe_id}", headers=ANALYST)
+        assert detail.json()["is_active"] is False

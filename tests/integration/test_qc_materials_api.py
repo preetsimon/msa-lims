@@ -121,3 +121,52 @@ class TestListingMaterialsThroughHttp:
         response = client.get("/api/qc-materials", headers=ANALYST)
         assert response.status_code == 200
         assert response.json() == []
+
+
+class TestQcMaterialDetailAndUpdate:
+    def test_get_material_by_id(self, client: TestClient) -> None:
+        create_resp = client.post("/api/qc-materials", json=crm_body(), headers=SUPERVISOR)
+        material_id = create_resp.json()["id"]
+        response = client.get(f"/api/qc-materials/{material_id}", headers=ANALYST)
+        assert response.status_code == 200
+        assert response.json()["name"] == "OREAS 501d"
+
+    def test_get_nonexistent_material_returns_404(self, client: TestClient) -> None:
+        response = client.get("/api/qc-materials/99999", headers=ANALYST)
+        assert response.status_code == 404
+
+    def test_update_material_name(self, client: TestClient) -> None:
+        create_resp = client.post("/api/qc-materials", json=crm_body(), headers=SUPERVISOR)
+        material_id = create_resp.json()["id"]
+        response = client.patch(
+            f"/api/qc-materials/{material_id}",
+            headers=SUPERVISOR,
+            params={"name": "OREAS 501d Updated"},
+        )
+        assert response.status_code == 200
+        assert response.json()["name"] == "OREAS 501d Updated"
+
+    def test_deactivate_material(self, client: TestClient) -> None:
+        create_resp = client.post("/api/qc-materials", json=crm_body(), headers=SUPERVISOR)
+        material_id = create_resp.json()["id"]
+        response = client.delete(f"/api/qc-materials/{material_id}", headers=SUPERVISOR)
+        assert response.status_code == 200
+        assert response.json()["status"] == "deactivated"
+
+        detail = client.get(f"/api/qc-materials/{material_id}", headers=ANALYST)
+        assert detail.json()["is_active"] is False
+
+    def test_deactivated_material_hidden_by_default(self, client: TestClient) -> None:
+        create_resp = client.post("/api/qc-materials", json=crm_body(), headers=SUPERVISOR)
+        material_id = create_resp.json()["id"]
+        client.delete(f"/api/qc-materials/{material_id}", headers=SUPERVISOR)
+        response = client.get("/api/qc-materials", headers=ANALYST)
+        assert response.json() == []
+
+    def test_deactivated_material_shown_with_show_all(self, client: TestClient) -> None:
+        create_resp = client.post("/api/qc-materials", json=crm_body(), headers=SUPERVISOR)
+        material_id = create_resp.json()["id"]
+        client.delete(f"/api/qc-materials/{material_id}", headers=SUPERVISOR)
+        response = client.get("/api/qc-materials", headers=ANALYST, params={"active_only": False})
+        assert len(response.json()) == 1
+        assert response.json()[0]["is_active"] is False

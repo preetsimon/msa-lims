@@ -1,7 +1,7 @@
 """QC Sentinel HTTP client — bounded, non-fatal, advisory.
 
-The client sends a batch's QC export to Sentinel and polls for a verdict.
-Three design constraints are non-negotiable:
+The client sends a batch's QC export to Sentinel and polls for per-run
+evaluations.  Three design constraints are non-negotiable:
 
 1. **Non-fatal.**  Sentinel being down must never stop the lab from assaying
    samples.  Every public function catches transport errors and returns a
@@ -18,7 +18,7 @@ Three design constraints are non-negotiable:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -54,9 +54,17 @@ class SentinelClient:
         self._timeout = timeout or settings.sentinel_timeout_seconds
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "text/csv"}
+        """Build request headers.  In dev mode, send X-Actor / X-Actor-Role
+        headers (the same convention this app uses internally).  In production,
+        send a Bearer token.  Never set Content-Type — httpx needs to set the
+        multipart boundary itself."""
+        settings = get_settings()
+        headers: dict[str, str] = {}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
+        elif getattr(settings, "sentinel_auth_mode", "dev_headers") == "dev_headers":
+            headers["X-Actor"] = getattr(settings, "sentinel_actor", "msa-lims@localhost")
+            headers["X-Actor-Role"] = "analyst"
         return headers
 
     def _client(self) -> httpx.Client:
@@ -72,22 +80,32 @@ class SentinelClient:
         *,
         fmt: str = "generic_csv_v1",
         batch_id: int,
+        instrument_id: int,
+        method_id: int,
+        filename: str = "qc_export.csv",
     ) -> SubmitResult:
-        """POST a CSV export to Sentinel.
+        """POST a CSV export to Sentinel as multipart/form-data.
+
+        Sentinel's ``POST /api/imports`` expects multipart fields:
+        ``file`` (the CSV), ``instrument_id`` (required int),
+        ``method_id`` (required int), and optional ``parser_format``.
 
         Returns a ``SubmitResult`` regardless of success or failure.  The
         caller records the result in ``sentinel_submission`` — this function
         does not touch the database.
         """
         with self._client() as client:
-            # Bounded retry: up to 1 retry on 5xx or connection errors.
             last_exc: Exception | None = None
             for attempt in range(2):
                 try:
                     resp = client.post(
-                        "/api/v1/ingest",
-                        content=payload,
-                        params={"format": fmt},
+                        "/api/imports",
+                        files={"file": (filename, payload, "text/csv")},
+                        data={
+                            "instrument_id": str(instrument_id),
+                            "method_id": str(method_id),
+                            "parser_format": fmt,
+                        },
                     )
                     if resp.status_code >= 500 and attempt == 0:
                         last_exc = httpx.TransportError(
@@ -96,7 +114,8 @@ class SentinelClient:
                         continue
                     return SubmitResult(
                         http_status=resp.status_code,
-                        sentinel_import_id=_extract_import_id(resp),
+                        sentinel_import_id=_extract_export_file_id(resp),
+                        run_ids=_extract_run_ids(resp),
                         error=None,
                     )
                 except (httpx.ConnectError, httpx.TimeoutException) as exc:
@@ -106,31 +125,52 @@ class SentinelClient:
                     return SubmitResult(
                         http_status=None,
                         sentinel_import_id=None,
+                        run_ids=[],
                         error=str(exc),
                     )
-            # Should not reach here, but safety net.
             return SubmitResult(
                 http_status=None,
                 sentinel_import_id=None,
+                run_ids=[],
                 error=str(last_exc) if last_exc else "unknown error",
             )
 
-    def poll_verdict(self, sentinel_import_id: str) -> VerdictResult:
-        """GET the verdict for a previously submitted import.
+    def get_run_evaluations(self, run_ids: list[int]) -> VerdictResult:
+        """Query Sentinel for evaluations of specific runs.
 
-        Returns a ``VerdictResult`` regardless of success or failure.
+        Sentinel does not have a per-import verdict endpoint.  Verdicts are
+        per-run, surfaced through the exceptions review queue or evaluation
+        exports.  This method queries ``GET /api/exceptions`` filtered by
+        run_id to check if any exceptions were raised for the batch's runs.
+
+        Returns a ``VerdictResult`` with the combined evaluation status.
         """
+        if not run_ids:
+            return VerdictResult(verdict=None, error=None)
+
         with self._client() as client:
             try:
-                resp = client.get(f"/api/v1/imports/{sentinel_import_id}/verdict")
-                if resp.status_code == 200:
-                    return VerdictResult(
-                        verdict=resp.json(),
-                        error=None,
-                    )
+                # Query exceptions for our run IDs.  Sentinel's GET /api/exceptions
+                # supports filtering by run_id.
+                exceptions: list[dict[str, object]] = []
+                for run_id in run_ids:
+                    resp = client.get("/api/exceptions", params={"run_id": run_id})
+                    if resp.status_code == 200:
+                        body = resp.json()
+                        if isinstance(body, list):
+                            exceptions.extend(body)
+                        elif isinstance(body, dict) and "items" in body:
+                            items = body["items"]
+                            if isinstance(items, list):
+                                exceptions.extend(items)
+
                 return VerdictResult(
-                    verdict=None,
-                    error=f"Sentinel returned {resp.status_code}",
+                    verdict={
+                        "run_ids": run_ids,
+                        "exception_count": len(exceptions),
+                        "exceptions": exceptions[:10],  # cap for payload size
+                    },
+                    error=None,
                 )
             except (httpx.ConnectError, httpx.TimeoutException) as exc:
                 return VerdictResult(
@@ -141,34 +181,41 @@ class SentinelClient:
 
 @dataclass(frozen=True, slots=True)
 class SubmitResult:
-    """The outcome of a POST to Sentinel's ingest endpoint."""
+    """The outcome of a POST to Sentinel's import endpoint."""
 
     http_status: int | None
     sentinel_import_id: str | None
-    error: str | None
+    run_ids: list[int] = field(default_factory=list)
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class VerdictResult:
-    """The outcome of a GET to Sentinel's verdict endpoint."""
+    """The outcome of a GET to Sentinel's exceptions/evaluations."""
 
     verdict: dict[str, object] | None
-    error: str | None
+    error: str | None = None
 
 
-def _extract_import_id(resp: httpx.Response) -> str | None:
-    """Extract the import ID from Sentinel's response body or Location header."""
-    # Sentinel may return the import ID in the JSON body or as a Location header.
+def _extract_export_file_id(resp: httpx.Response) -> str | None:
+    """Extract the export_file_id from Sentinel's ImportResponse."""
     try:
         body: dict[str, object] = resp.json()
-        if isinstance(body, dict) and "import_id" in body:
-            return str(body["import_id"])
+        if isinstance(body, dict) and "export_file_id" in body:
+            return str(body["export_file_id"])
     except Exception:
         pass
-    location = resp.headers.get("Location", "")
-    if location:
-        # Extract the last path segment as the import ID.
-        parts = location.rstrip("/").split("/")
-        if parts:
-            return str(parts[-1])
     return None
+
+
+def _extract_run_ids(resp: httpx.Response) -> list[int]:
+    """Extract run_ids from Sentinel's ImportResponse."""
+    try:
+        body: dict[str, object] = resp.json()
+        if isinstance(body, dict) and "run_ids" in body:
+            raw = body["run_ids"]
+            if isinstance(raw, list):
+                return [int(r) for r in raw if isinstance(r, (int, str))]
+    except Exception:
+        pass
+    return []

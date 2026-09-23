@@ -1,4 +1,4 @@
-"""QC Sentinel integration — submit batches and poll verdicts.
+"""QC Sentinel integration — submit batches and poll per-run evaluations.
 
 POST /api/batches/{id}/submit-to-sentinel
 GET  /api/batches/{id}/sentinel-verdict
@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from msa_lims.config import get_settings
 from msa_lims.db.audit import record_audit_event
-from msa_lims.db.models import Batch, SentinelSubmission
+from msa_lims.db.models import Batch, Instrument, SentinelSubmission
 from msa_lims.domain.enums import MAY_SIGN_CERTIFICATE
 from msa_lims.qc_dossiers.service import build_qc_dossier, dossier_payload
 from msa_lims.sentinel.client import SentinelClient
@@ -41,6 +41,35 @@ def _batch_or_404(session: SessionDep, batch_id: int) -> Batch:
             detail=f"batch {batch_id!r} not found",
         )
     return batch
+
+
+def _resolve_batch_instrument(session: SessionDep, batch: Batch) -> tuple[int, int]:
+    """Resolve the instrument and method for a batch.
+
+    Returns (instrument_id, method_id).  Raises 409 if instrument is missing.
+    """
+    if batch.instrument_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"batch {batch.batch_number!r} has no instrument assigned; "
+                "assign an instrument before submitting to Sentinel"
+            ),
+        )
+
+    instrument = session.get(Instrument, batch.instrument_id)
+    if instrument is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"instrument {batch.instrument_id!r} not found",
+        )
+
+    # For method_id, we use a default of 1 (generic fire assay) since the
+    # LIMS doesn't yet track analytical methods as a first-class entity.
+    # TODO: wire real method registry when Sentinel method IDs are mapped.
+    method_id = 1
+
+    return batch.instrument_id, method_id
 
 
 def _qc_rows_from_dossier(payload_dict: dict[str, object]) -> list[QcRow]:
@@ -87,8 +116,8 @@ def submit_to_sentinel(
     """Submit a batch's QC dossier to Sentinel.
 
     The batch must have a sealed dossier (``batch.qc_dossier_sha256 IS NOT
-    NULL``).  If Sentinel is disabled or unreachable, the attempt is still
-    recorded.
+    NULL``) and at least one crucible with an assigned instrument.  If
+    Sentinel is disabled or unreachable, the attempt is still recorded.
     """
     if actor.role not in MAY_SIGN_CERTIFICATE:
         raise HTTPException(
@@ -110,6 +139,9 @@ def submit_to_sentinel(
             detail="Sentinel integration is disabled (MSA_SENTINEL_ENABLED=false)",
         )
 
+    # Resolve instrument and method from the batch.
+    instrument_id, method_id = _resolve_batch_instrument(session, batch)
+
     # Build the export from the sealed dossier.
     dossier = build_qc_dossier(
         session,
@@ -122,9 +154,16 @@ def submit_to_sentinel(
     csv_bytes = to_generic_csv_v1(rows).encode("utf-8")
     payload_sha256 = hashlib.sha256(csv_bytes).hexdigest()
 
-    # Send to Sentinel.
+    # Send to Sentinel as multipart.
     client = SentinelClient()
-    result = client.submit_batch(csv_bytes, fmt="generic_csv_v1", batch_id=batch_id)
+    result = client.submit_batch(
+        csv_bytes,
+        fmt="generic_csv_v1",
+        batch_id=batch_id,
+        instrument_id=instrument_id,
+        method_id=method_id,
+        filename=f"batch_{batch_id}_qc.csv",
+    )
 
     # Record the attempt (append-only).
     submission = SentinelSubmission(
@@ -150,6 +189,8 @@ def submit_to_sentinel(
             "format": "generic_csv_v1",
             "payload_sha256": payload_sha256,
             "http_status": result.http_status,
+            "instrument_id": instrument_id,
+            "method_id": method_id,
             "error": result.error,
         },
     )
@@ -159,6 +200,7 @@ def submit_to_sentinel(
         "submission_id": submission.id,
         "http_status": result.http_status,
         "sentinel_import_id": result.sentinel_import_id,
+        "run_ids": result.run_ids,
         "error": result.error,
     }
 
@@ -174,40 +216,33 @@ def get_sentinel_verdict(
 ) -> dict[str, object]:
     """Get the latest Sentinel verdict for a batch.
 
-    Returns the verdict from the most recent submission that has one,
-    or an empty verdict if none has been returned yet.
+    Queries Sentinel for per-run evaluations of the batch's submitted runs.
+    Returns the verdict from the most recent submission, or an empty verdict
+    if none has been returned yet.
     """
     _batch_or_404(session, batch_id)
 
-    # Find the most recent submission with a verdict.
+    # Find the most recent submission.
     stmt = (
         select(SentinelSubmission)
         .where(SentinelSubmission.batch_id == batch_id)
-        .where(SentinelSubmission.verdict.isnot(None))
         .order_by(SentinelSubmission.submitted_at.desc())
         .limit(1)
     )
-    submission = session.execute(stmt).scalar_one_or_none()
+    latest = session.execute(stmt).scalar_one_or_none()
 
-    if submission is None:
-        # Check if there's any submission at all.
-        any_stmt = (
-            select(SentinelSubmission)
-            .where(SentinelSubmission.batch_id == batch_id)
-            .order_by(SentinelSubmission.submitted_at.desc())
-            .limit(1)
-        )
-        latest = session.execute(any_stmt).scalar_one_or_none()
-        if latest is None:
-            return {
-                "status": "never_submitted",
-                "verdict": None,
-                "submitted_at": None,
-                "last_polled_at": None,
-            }
+    if latest is None:
         return {
-            "status": "pending",
+            "status": "never_submitted",
             "verdict": None,
+            "submitted_at": None,
+            "last_polled_at": None,
+        }
+
+    if latest.verdict is not None:
+        return {
+            "status": "verdicted",
+            "verdict": latest.verdict,
             "submitted_at": latest.submitted_at.isoformat() if latest.submitted_at else None,
             "last_polled_at": (
                 latest.last_polled_at.isoformat() if latest.last_polled_at else None
@@ -216,11 +251,11 @@ def get_sentinel_verdict(
         }
 
     return {
-        "status": "verdicted",
-        "verdict": submission.verdict,
-        "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+        "status": "pending",
+        "verdict": None,
+        "submitted_at": latest.submitted_at.isoformat() if latest.submitted_at else None,
         "last_polled_at": (
-            submission.last_polled_at.isoformat() if submission.last_polled_at else None
+            latest.last_polled_at.isoformat() if latest.last_polled_at else None
         ),
-        "http_status": submission.http_status,
+        "http_status": latest.http_status,
     }

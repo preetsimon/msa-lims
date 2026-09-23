@@ -48,7 +48,7 @@ enforcement, partial index for chain integrity, censoring carry-through, and
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
 | 3 · Lifecycle & prep | wk 8–9 | **Done** — the real prep walk, re-assay, and rejection moves; charging requires genuine `READY_FOR_ASSAY`; fire assay result entry requires genuine `IN_ASSAY`. Every sample-status move in the spine now goes through `check_transition` for real |
 | 4 · ICP & bulk import | wk 10–11 | **Done** — multi-element ICP results (one row per element, append-only, bulk import endpoint), silver by difference on fire assay, `element_grade` domain function, certificate integration with element tables, client listing endpoint with sample filter UI; Phase 4 audit (2026-08-28) found five critical defects — all fixed: import status gating, supersede analysed_at, Unit enum enforcement, partial index for chain integrity, censoring carry-through |
-| 5 · The Sentinel seam | wk 12–13 | **Done** — CSV export (generic + wide-ICP formats, golden-file tested against fireAssay parsers), append-only sentinel_submission table, bounded HTTP client with retry, submit/verdict endpoints (advisory, never writes back), verdict panel on BatchDetail.tsx |
+| 5 · The Sentinel seam | wk 12–13 | **CSV export done; HTTP client wrong contract** — CSV export (generic + wide-ICP formats, golden-file tested against fireAssay parsers) and the append-only sentinel_submission table are real and tested. The HTTP client and submit/verdict endpoints were built against an imagined Sentinel API and have never run against real Sentinel code (`MSA_SENTINEL_ENABLED=false` by default) — a 2026-09-22 audit against the actual `fireAssay` repo found the ingest endpoint, payload shape, and verdict-polling endpoint all wrong. See "Next actions (Sentinel integration repair — 2026-09-22 audit)" below. |
 | 6 · Ship the story | wk 14–16 | **Done** — C1 (Instrument registry), C2 (Certificate staleness), C3 (Chain-tip concurrency), C4 (Typed error responses), C5 (Frontend auth), C6 (OpenTimestamps anchoring), C7 (Cursor pagination) |
 
 **Health:** 705 unit/integration tests passing (plus 41 Schemathesis
@@ -2293,6 +2293,80 @@ very next call. Demo data was truncated from the dev database afterward.
     page (`MultiElementImport.tsx`), and sample detail element display.
     Migrations `a1b2c3d4e5f6` through `e5f6a7b8c9d0`. 15 new unit tests +
     schemathesis contract validation; 630 total tests, all checks passing.
+
+## Next actions (Sentinel integration repair — 2026-09-22 audit)
+
+An audit read the real QC Sentinel source at `/Users/simonchauke/IdeaProjects/fireAssay`
+(a sibling repo, not this one) and compared it against `src/msa_lims/sentinel/`
+and `web/routes/sentinel.py`. Phase 5's CSV export and the sealed QC dossier
+are real and tested — see "The sealed QC dossier" above. The HTTP client that
+sends that export to Sentinel and reads back a verdict is not: it targets an
+endpoint contract that does not exist on Sentinel, and because
+`MSA_SENTINEL_ENABLED` defaults to `false`, nothing has ever exercised it
+against live Sentinel code. The steps below are what closing that gap for
+real requires, in order.
+
+1. **Fix the ingest call.** `SentinelClient.submit_batch`
+   (`src/msa_lims/sentinel/client.py`) POSTs raw CSV bytes to
+   `{base_url}/api/v1/ingest?format=generic_csv_v1` with
+   `Content-Type: text/csv`. Sentinel's real endpoint
+   (`qc_sentinel/web/routes/imports.py` in the fireAssay repo) is
+   `POST /api/imports`, `multipart/form-data`, with fields `file` (the CSV),
+   `instrument_id` (required `int`), `method_id` (required `int`), and
+   optional `parser_format`. Rewrite `submit_batch` to build that multipart
+   request instead of a raw-body POST, and update `_headers()` — it must stop
+   forcing `Content-Type: text/csv`, since `httpx` needs to set the multipart
+   boundary itself.
+2. **Give it real instrument/method ids.** `submit_to_sentinel`
+   (`web/routes/sentinel.py`) has no instrument or method id to send — step 1's
+   two new required fields don't exist anywhere in the call chain yet.
+   `fire_assay_result.instrument_id` is not wired despite the `instrument`
+   registry existing (C1; see the furnace-tray geometry open question below).
+   Resolve a batch's instrument (and the method it ran under) before
+   submission; if either is missing, refuse the submission with a named
+   reason (`409`, matching this app's existing refusal style) rather than
+   sending a fabricated id.
+3. **Match Sentinel's auth mode.** Sentinel's dev deployment reads
+   `X-Actor`/`X-Actor-Role` headers — the same convention this app's own
+   `ActorDep` already uses internally — and its production deployment expects
+   an OIDC bearer token. `SentinelClient._headers()` only ever sends a static
+   bearer token from `settings.sentinel_token`. Add the header-pair mode for
+   local/dev use, selected the same way this app already picks its own auth
+   mode.
+4. **Fix response parsing.** `_extract_import_id` looks for `import_id` in
+   the JSON body or a `Location` header. Sentinel's actual response
+   (`ImportResponse`, `qc_sentinel/web/schemas.py`) carries `export_file_id`.
+   No schema change is needed on this side — `SentinelSubmission.sentinel_import_id`
+   can keep its column name and just store the `export_file_id` value — but
+   `_extract_import_id` must read the right key.
+5. **Replace verdict polling.** `poll_verdict` GETs
+   `{base}/api/v1/imports/{id}/verdict`, which does not exist on Sentinel —
+   there is no "verdict for an import" endpoint on the other side at all.
+   `POST /api/imports` returns `run_ids` for the sample runs it created;
+   Sentinel surfaces verdicts per run, through its exceptions review queue
+   (`GET /exceptions`) or `GET /exports/evaluations.csv`, not per import.
+   Rewrite this as: after submit, hold the `run_ids`; polling means querying
+   Sentinel for the evaluation of each of those runs. What "the batch's
+   verdict" means when Sentinel produced N independent per-run evaluations —
+   worst-of, all-of, or something else — is a genuine design decision to make
+   here, not just a rewrite of the HTTP call.
+6. **Prove it end to end against a real Sentinel.** Nothing above has ever
+   run against live Sentinel code — only against this app's own mocked/local
+   test doubles. Bring up fireAssay's own `docker compose` stack (Postgres
+   `:5434`, Redis `:6380`, MinIO `:9000`), run its app
+   (`uvicorn qc_sentinel.web.app:app --port 8001`), point
+   `MSA_SENTINEL_BASE_URL` at it, set `MSA_SENTINEL_ENABLED=true`, and submit
+   one real sealed batch through `POST /api/batches/{id}/submit-to-sentinel`.
+   Whatever that run proves or breaks becomes a new integration test —
+   `tests/integration/test_sentinel_api.py` currently exercises only this
+   app's own HTTP surface, not the real shape of Sentinel's API, so it would
+   not have caught any of the five items above.
+7. **Update this document and `docs/ARCHITECTURE.md`** once the client is
+   fixed and proven live. `docs/ARCHITECTURE.md`'s topology diagram already
+   describes the correct target contract (`POST /api/imports`, advisory
+   read-only polling) — it was the implementation that drifted from the
+   design, not the other way around, so the architecture doc needs no
+   correction, only a note that the implementation now matches it.
 
 ## Open questions
 

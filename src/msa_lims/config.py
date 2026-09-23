@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     sentinel_base_url: str = "http://localhost:8001"
     sentinel_token: str = ""
     sentinel_timeout_seconds: float = 10.0
+    sentinel_auth_mode: str = "dev_headers"
+    sentinel_actor: str = "msa-lims@localhost"
 
     # --- Laboratory defaults ------------------------------------------------
     # Nominal fire assay portion in grams. 30 g is the modern convention; the

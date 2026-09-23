@@ -74,19 +74,6 @@ That is the whole interface. The critical property: **this requires no changes
 to QC Sentinel at all.** If the integration needs a new Sentinel endpoint, the
 seam has been drawn in the wrong place.
 
-> **Implementation status (2026-09-22):** this diagram describes the intended
-> contract, not yet what the code does. `src/msa_lims/sentinel/client.py`
-> targets a `/api/v1/ingest` + `/api/v1/imports/{id}/verdict` shape that does
-> not exist on Sentinel, was never exercised against real Sentinel code
-> (`MSA_SENTINEL_ENABLED` defaults `false`), and needs to be rewritten against
-> Sentinel's actual `POST /api/imports` (multipart, `instrument_id`/
-> `method_id` required) and its per-run exceptions/evaluations endpoints —
-> there is no per-import verdict endpoint on Sentinel to poll. See
-> [PROGRESS.md](../PROGRESS.md)'s "Next actions (Sentinel integration repair —
-> 2026-09-22 audit)" for the step-by-step fix plan. Remove this note once the
-> client matches the diagram and has been proven against a live Sentinel
-> instance.
-
 ---
 
 ## What each system owns

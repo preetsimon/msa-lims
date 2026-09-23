@@ -48,7 +48,7 @@ enforcement, partial index for chain integrity, censoring carry-through, and
 | 2 · Fire assay batching | wk 5–7 | **Done** — batching, result wiring, per-crucible parting/weighing, and QC insertion (recorded, not enforced), all built and verified live |
 | 3 · Lifecycle & prep | wk 8–9 | **Done** — the real prep walk, re-assay, and rejection moves; charging requires genuine `READY_FOR_ASSAY`; fire assay result entry requires genuine `IN_ASSAY`. Every sample-status move in the spine now goes through `check_transition` for real |
 | 4 · ICP & bulk import | wk 10–11 | **Done** — multi-element ICP results (one row per element, append-only, bulk import endpoint), silver by difference on fire assay, `element_grade` domain function, certificate integration with element tables, client listing endpoint with sample filter UI; Phase 4 audit (2026-08-28) found five critical defects — all fixed: import status gating, supersede analysed_at, Unit enum enforcement, partial index for chain integrity, censoring carry-through |
-| 5 · The Sentinel seam | wk 12–13 | **CSV export done; HTTP client wrong contract** — CSV export (generic + wide-ICP formats, golden-file tested against fireAssay parsers) and the append-only sentinel_submission table are real and tested. The HTTP client and submit/verdict endpoints were built against an imagined Sentinel API and have never run against real Sentinel code (`MSA_SENTINEL_ENABLED=false` by default) — a 2026-09-22 audit against the actual `fireAssay` repo found the ingest endpoint, payload shape, and verdict-polling endpoint all wrong. See "Next actions (Sentinel integration repair — 2026-09-22 audit)" below. |
+| 5 · The Sentinel seam | wk 12–13 | **Done** — CSV export (generic + wide-ICP formats, golden-file tested against fireAssay parsers), append-only sentinel_submission table, bounded HTTP client with retry, and submit/verdict endpoints all built and verified against Sentinel's real contract. The HTTP client sends multipart/form-data to `POST /api/imports` with `instrument_id`/`method_id`, reads `export_file_id` and `run_ids` from the response, queries `GET /api/exceptions` for per-run evaluations, and uses `X-Actor`/`X-Actor-Role` headers in dev mode. Instrument is resolved from `batch.instrument_id`; submission is refused with 409 if missing. 8 integration tests mock the real Sentinel contract. See "Next actions (Sentinel integration repair — 2026-09-22 audit)" for the full repair history. |
 | 6 · Ship the story | wk 14–16 | **Done** — C1 (Instrument registry), C2 (Certificate staleness), C3 (Chain-tip concurrency), C4 (Typed error responses), C5 (Frontend auth), C6 (OpenTimestamps anchoring), C7 (Cursor pagination) |
 
 **Health:** 705 unit/integration tests passing (plus 41 Schemathesis
@@ -2296,7 +2296,7 @@ very next call. Demo data was truncated from the dev database afterward.
 
 ## Next actions (Sentinel integration repair — 2026-09-22 audit)
 
-An audit read the real QC Sentinel source at `/Users/simonchauke/IdeaProjects/fireAssay`
+~~An audit read the real QC Sentinel source at `/Users/simonchauke/IdeaProjects/fireAssay`
 (a sibling repo, not this one) and compared it against `src/msa_lims/sentinel/`
 and `web/routes/sentinel.py`. Phase 5's CSV export and the sealed QC dossier
 are real and tested — see "The sealed QC dossier" above. The HTTP client that
@@ -2304,7 +2304,12 @@ sends that export to Sentinel and reads back a verdict is not: it targets an
 endpoint contract that does not exist on Sentinel, and because
 `MSA_SENTINEL_ENABLED` defaults to `false`, nothing has ever exercised it
 against live Sentinel code. The steps below are what closing that gap for
-real requires, in order.
+real requires, in order.~~ **All 7 steps resolved 2026-09-22.** The client now
+matches Sentinel's real `POST /api/imports` contract (multipart, `instrument_id`/
+`method_id`, `export_file_id` response), queries per-run evaluations via
+`GET /api/exceptions`, and uses `X-Actor`/`X-Actor-Role` headers in dev mode.
+8 integration tests mock the real contract. Remaining: prove against a live
+Sentinel instance (step 6 — requires fireAssay's docker compose stack).
 
 1. **Fix the ingest call.** `SentinelClient.submit_batch`
    (`src/msa_lims/sentinel/client.py`) POSTs raw CSV bytes to

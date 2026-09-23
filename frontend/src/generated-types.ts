@@ -71,6 +71,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/audit/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Audit Events */
+        get: operations["read_audit_events_api_audit_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/audit/verify": {
         parameters: {
             query?: never;
@@ -373,7 +390,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Read Client */
+        get: operations["read_client_api_clients__client_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -397,7 +415,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Read Drill Holes */
+        get: operations["read_drill_holes_api_drill_holes_get"];
         put?: never;
         /** Create Drill Hole */
         post: operations["create_drill_hole_api_drill_holes_post"];
@@ -479,6 +498,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/flux-recipes/{recipe_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Flux Recipe */
+        get: operations["read_flux_recipe_api_flux_recipes__recipe_id__get"];
+        put?: never;
+        post?: never;
+        /** Deactivate Flux Recipe Endpoint */
+        delete: operations["deactivate_flux_recipe_endpoint_api_flux_recipes__recipe_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Flux Recipe Endpoint */
+        patch: operations["update_flux_recipe_endpoint_api_flux_recipes__recipe_id__patch"];
+        trace?: never;
+    };
     "/api/instruments": {
         parameters: {
             query?: never;
@@ -556,7 +594,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Read Projects */
+        get: operations["read_projects_api_projects_get"];
         put?: never;
         /** Create Project */
         post: operations["create_project_api_projects_post"];
@@ -582,6 +621,25 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/qc-materials/{material_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Qc Material */
+        get: operations["read_qc_material_api_qc_materials__material_id__get"];
+        put?: never;
+        post?: never;
+        /** Deactivate Qc Material Endpoint */
+        delete: operations["deactivate_qc_material_endpoint_api_qc_materials__material_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Qc Material Endpoint */
+        patch: operations["update_qc_material_endpoint_api_qc_materials__material_id__patch"];
         trace?: never;
     };
     "/api/samples": {
@@ -666,6 +724,26 @@ export interface paths {
         patch: operations["supersede_multi_element_result_api_samples__sample_id__multi_element_results__element__patch"];
         trace?: never;
     };
+    "/api/samples/{sample_id}/prep-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Sample Prep Records
+         * @description All prep records for a sample, newest first.
+         */
+        get: operations["read_sample_prep_records_api_samples__sample_id__prep_records_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/samples/{sample_id}/provenance": {
         parameters: {
             query?: never;
@@ -707,6 +785,26 @@ export interface paths {
         head?: never;
         /** Advance Sample Status */
         patch: operations["advance_sample_status_api_samples__sample_id__status_patch"];
+        trace?: never;
+    };
+    "/api/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Stats
+         * @description Lab-wide counts for the dashboard home page.
+         */
+        get: operations["read_stats_api_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/submissions": {
@@ -805,6 +903,31 @@ export interface components {
             valid: boolean;
             /** Verified Count */
             verified_count: number;
+        };
+        /** AuditEventOut */
+        AuditEventOut: {
+            /** Action */
+            action: string;
+            /** Actor Id */
+            actor_id: number | null;
+            /** After */
+            after: {
+                [key: string]: unknown;
+            } | null;
+            /** Before */
+            before: {
+                [key: string]: unknown;
+            } | null;
+            /** Created At */
+            created_at: string | null;
+            /** Id */
+            id: number;
+            /** Reason */
+            reason: string | null;
+            /** Record Id */
+            record_id: number;
+            /** Table Name */
+            table_name: string;
         };
         /** BatchCreate */
         BatchCreate: {
@@ -1254,6 +1377,23 @@ export interface components {
              * @description When the weighing happened, not when entered.
              */
             weighed_at: string;
+        };
+        /** DashboardStatsOut */
+        DashboardStatsOut: {
+            /** Samples By Status */
+            samples_by_status: {
+                [key: string]: number;
+            };
+            /** Total Batches */
+            total_batches: number;
+            /** Total Certificates */
+            total_certificates: number;
+            /** Total Clients */
+            total_clients: number;
+            /** Total Samples */
+            total_samples: number;
+            /** Total Submissions */
+            total_submissions: number;
         };
         /** DrillHoleCreate */
         DrillHoleCreate: {
@@ -2676,6 +2816,43 @@ export interface operations {
             };
         };
     };
+    read_audit_events_api_audit_events_get: {
+        parameters: {
+            query?: {
+                table_name?: string | null;
+                record_id?: number | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEventOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_audit_chain_verification_api_audit_verify_get: {
         parameters: {
             query?: {
@@ -3648,6 +3825,59 @@ export interface operations {
             };
         };
     };
+    read_client_api_clients__client_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientOut"];
+                };
+            };
+            /** @description Insufficient role */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_client_status_api_clients__client_id__patch: {
         parameters: {
             query?: never;
@@ -3692,6 +3922,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_drill_holes_api_drill_holes_get: {
+        parameters: {
+            query?: {
+                project_id?: number | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrillHoleOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3943,7 +4209,9 @@ export interface operations {
     };
     read_flux_recipes_api_flux_recipes_get: {
         parameters: {
-            query?: never;
+            query?: {
+                active_only?: boolean;
+            };
             header?: {
                 authorization?: string | null;
                 "x-actor"?: string | null;
@@ -4007,6 +4275,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_flux_recipe_api_flux_recipes__recipe_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                recipe_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FluxRecipeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deactivate_flux_recipe_endpoint_api_flux_recipes__recipe_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                recipe_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_flux_recipe_endpoint_api_flux_recipes__recipe_id__patch: {
+        parameters: {
+            query?: {
+                name?: string | null;
+                nominal_portion_g?: number | string | null;
+                litharge_g?: number | string | null;
+                soda_ash_g?: number | string | null;
+                borax_g?: number | string | null;
+                silica_g?: number | string | null;
+                flour_g?: number | string | null;
+                nitre_g?: number | string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                recipe_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FluxRecipeOut"];
                 };
             };
             /** @description Validation Error */
@@ -4273,6 +4657,42 @@ export interface operations {
             };
         };
     };
+    read_projects_api_projects_get: {
+        parameters: {
+            query?: {
+                client_id?: number | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_project_api_projects_post: {
         parameters: {
             query?: never;
@@ -4321,7 +4741,9 @@ export interface operations {
     };
     read_qc_materials_api_qc_materials_get: {
         parameters: {
-            query?: never;
+            query?: {
+                active_only?: boolean;
+            };
             header?: {
                 authorization?: string | null;
                 "x-actor"?: string | null;
@@ -4385,6 +4807,119 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_qc_material_api_qc_materials__material_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                material_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QcMaterialOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deactivate_qc_material_endpoint_api_qc_materials__material_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                material_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_qc_material_endpoint_api_qc_materials__material_id__patch: {
+        parameters: {
+            query?: {
+                name?: string | null;
+                lot_number?: string | null;
+                certified_au_value_g_t?: number | string | null;
+                certified_au_uncertainty_g_t?: number | string | null;
+                notes?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                material_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QcMaterialOut"];
                 };
             };
             /** @description Validation Error */
@@ -4648,6 +5183,50 @@ export interface operations {
             };
         };
     };
+    read_sample_prep_records_api_samples__sample_id__prep_records_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path: {
+                sample_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrepRecordOut"][];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     read_sample_provenance_api_samples__sample_id__provenance_get: {
         parameters: {
             query?: never;
@@ -4745,6 +5324,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_stats_api_stats_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+                "x-actor"?: string | null;
+                "x-actor-role"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardStatsOut"];
                 };
             };
             /** @description Validation Error */

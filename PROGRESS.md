@@ -2418,16 +2418,13 @@ Sentinel instance (step 6 — requires fireAssay's docker compose stack).
   2026-08-31** — C2 added `is_certificate_stale()` anti-join check and
   `is_stale: bool` on `CertificateOut` schema, wired into all certificate
   endpoints.
-- **No per-client row scoping on reads — the `client` role is refused
-  outright meanwhile.** The audit's interim hardening: since there is no
-  LabUser↔Client link to scope rows by, `GET /api/samples`,
-  `/api/samples/{id}`, `/api/certificates/{id}` and `/api/certificates/{id}/pdf`
-  now require an internal role and answer the external role with **403** and a
-  message naming why (see `web/deps.py`'s `internal_actor`). That closes the
-  "any authenticated actor can read any grade by id" hole without pretending
-  scoping exists. A real client portal still needs the schema work: a durable
-  LabUser↔Client association, then replacing `internal_actor` with a
-  row-scoped dependency on exactly these endpoints.
+- ~~**No per-client row scoping on reads — the `client` role is refused
+  outright meanwhile.**~~ **Resolved 2026-09-22** — `LabUser.client_id` FK added
+  (migration `d5e6f7a8b9c0`), `ClientScopeDep` returns the client_id for row
+  scoping, `internal_actor()` allows CLIENT role when linked to a Client.
+  `GET /api/samples` auto-filters by client_id for client-role callers;
+  `GET /api/samples/{id}` rejects cross-client access with 404. Client portal
+  tests in `test_client_portal.py` verify the scoping.
 - ~~**No listing endpoint anywhere.**~~ **Partly resolved 2026-08-25** —
   `GET /api/samples` exists now, with `client_id`/`status` filters.
   ~~**No client-listing endpoint**~~ **Resolved 2026-08-27** — `GET

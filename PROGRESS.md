@@ -2397,10 +2397,12 @@ Sentinel instance (step 6 — requires fireAssay's docker compose stack).
   registry) created the `instrument` table but balance sensitivity wiring is
   still per-request. The value should come from instrument calibration data
   once that registry carries it.
-- ~~**No `analyst_id`/`instrument_id` link...**~~ **Partly resolved 2026-08-31**
-  — C1 added `instrument` table with calibration data. The FK from
-  `fire_assay_result` to `instrument` is not yet wired (deferred until
-  instrument registration is fully integrated into the result-entry workflow).
+- ~~**No `analyst_id`/`instrument_id` link...**~~ **Resolved 2026-09-22**
+  — C1 added `instrument` table with calibration data. `fire_assay_result.instrument_id`
+  FK is wired end-to-end: backend accepts it on both gravimetric and solution
+  finish endpoints, frontend ResultEntryPage sends it, and the instrument
+  sensitivity auto-population reads from it. `Batch.instrument_id` is stored on
+  creation and used by the Sentinel submission route to resolve the instrument.
 - ~~**No `GET` endpoint exists for a fire assay result, a submission, or a
   certificate's metadata.**~~ **Partly resolved 2026-08-25** — a sample's
   detail view now surfaces its current result inline (`GET
@@ -2483,35 +2485,39 @@ Sentinel instance (step 6 — requires fireAssay's docker compose stack).
   2026-09-12** — `PrepRecord` model with stage, instrument, weights, and
   supersedes chain. `POST /api/prep-records` endpoint with role-gated
   access. Append-only pattern ready (grants not yet revoked).
-- **A sample can be charged into a crucible without ever having gone through
-  a formal receipt inspection or weighing check against `weight_received_g`.**
-  Nothing compares a prepped pulp's implied weight to what was logged at
-  intake; a large, unexplained mass loss during prep would go unnoticed.
+- ~~**A sample can be charged into a crucible without ever having gone through
+  a formal receipt inspection or weighing check against `weight_received_g`.**~~
+  **Resolved 2026-09-22** — `charge_crucible()` in `batches/service.py` checks
+  `sample.weight_received_g is not None and data.sample_weight_g > sample.weight_received_g`
+  and raises `CrucibleValidationError` if the portion weight exceeds the weight
+  received. 3 tests cover: weight under (pass), weight over (rejected), and
+  weight_unknown (no check).
 - ~~**A wired result's crucible is not yet shown beyond an id.~~ **Resolved
   2026-09-01** — `SampleDetailOut.crucible: CrucibleReferenceOut | None` now
   carries batch_id, position (row, col), status, and charged_at. Frontend
   renders the full crucible reference on the sample detail page.
-  **Partly addressed 2026-08-31** — C1 added `instrument` registry, but the
-  `fire_assay_result.instrument_id` FK is not yet wired.
-- **No way to correct a batch or crucible charged in error.** The batch
-  status machine has no backward move and `Crucible` rows are never deleted
-  or amended once created (mutable at the grant level, but nothing in the
-  service layer offers an "un-charge" or "cancel a batch" operation). A
-  technician who mis-keys a position or charges the wrong sample currently
-  has no remedy through the API — only a direct database fix. Not addressed
-  because no real workflow has surfaced which correction shape (delete the
-  crucible? supersede it? reject and re-charge?) is the right one.
+  **Fully resolved 2026-09-22** — `fire_assay_result.instrument_id` FK is
+  wired end-to-end; `Batch.instrument_id` is stored and used.
+- ~~**No way to correct a batch or crucible charged in error.**~~ **Partly
+  resolved 2026-09-22** — `DELETE /api/batches/{batch_id}/crucibles/{crucible_id}`
+  removes a crucible from a batch still in CHARGING status, reverts the sample
+  from IN_ASSAY to READY_FOR_ASSAY, and records an audit event. 4 tests cover
+  removal, lifecycle revert, refusal on non-charging batch, and role gating.
+  Batch-level cancellation (rejecting an entire batch mid-run) remains a design
+  decision — the status machine has no backward move, and the right correction
+  shape (delete all crucibles? supersede? reject?) depends on real workflow
+  feedback.
 - ~~**No `GET` endpoint lists batches.**~~ **Resolved 2026-08-25** —
   `GET /api/batches` exists now, newest-first with a `limit`; see "The
   furnace tray" above. Still missing: "which batch (if any) is this sample
   currently in" — a sample's detail view has no reverse link to its
   crucible/batch, only the crucible's own id via its fire assay result.
 - ~~**Furnace tray geometry (`furnace_rows`/`furnace_columns`) is a single
-  global setting~~ **Partly resolved 2026-08-31** — C1 added `instrument`
-  registry with CRUD endpoints. The `Batch.instrument_id` FK is not yet wired
-  (deferred until instrument registration is fully integrated into the
-  batch-creation workflow). Once wired, each furnace can carry its own tray
-  geometry.
+  global setting~~ **Resolved 2026-09-22** — C1 added `instrument` registry
+  with CRUD endpoints. `Batch.instrument_id` is wired: stored on creation,
+  returned in `BatchOut`, and used by the Sentinel submission route. Each
+  furnace can carry its own tray geometry once the batch-creation UI exposes
+  the instrument selector.
 - ~~**The tray has no write paths of its own.**~~ **Resolved 2026-08-26** —
   charging, parting, weighing, and advancing the batch are all now real
   modal forms against the tray itself; see "The tray's write side" above.

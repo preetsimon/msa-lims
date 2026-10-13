@@ -9,6 +9,7 @@
 import type {
   Batch,
   BatchDetail,
+  CertificateDetail,
   CertificateListItem,
   Crucible,
   FluxRecipe,
@@ -378,6 +379,10 @@ export function listCertificates(params?: {
   if (params?.cursor !== undefined) q.push(`cursor=${params.cursor}`);
   const query = q.length > 0 ? `?${q.join("&")}` : "";
   return getJSON<PaginatedResponse<CertificateListItem>>(`/api/certificates${query}`);
+}
+
+export function getCertificate(certificateId: number): Promise<CertificateDetail> {
+  return getJSON<CertificateDetail>(`/api/certificates/${certificateId}`);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,23 +6,25 @@ import { PageHeader } from "../components/PageHeader";
 
 const STATUS_LABELS: Record<string, string> = {
   received: "Received",
+  in_prep: "In Prep",
   ready_for_assay: "Ready for Assay",
   in_assay: "In Assay",
-  result_entered: "Result Entered",
-  approved: "Approved",
+  assayed: "Assayed",
   reported: "Reported",
+  rejected: "Rejected",
 };
 
 /** The status ladder reads left-to-right through the workflow, so the
  * tone climbs with it: neutral at intake, amber while a sample is moving,
- * blue once a result exists, green once it is signed off. */
+ * blue once a result exists, green once it is reported, red if rejected. */
 const STATUS_TONE: Record<string, string> = {
   received: "tone-neutral",
+  in_prep: "tone-warn",
   ready_for_assay: "tone-warn",
   in_assay: "tone-info",
-  result_entered: "tone-info",
-  approved: "tone-ok",
+  assayed: "tone-info",
   reported: "tone-ok",
+  rejected: "tone-bad",
 };
 
 export function DashboardPage() {

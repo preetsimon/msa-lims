@@ -53,7 +53,8 @@ export function SampleDetail() {
             <h1>{sample.sample_id}</h1>
             <p className="lede">
               <StatusPill status={sample.status} /> · {sample.sample_type} ·{" "}
-              <Link to={`/samples/${sample.id}/provenance`}>Evidence dossier</Link>
+              <Link to={`/samples/${sample.id}/provenance`}>Evidence dossier</Link> ·{" "}
+              <Link to={`/samples/${sample.id}/prep-records`}>Prep records</Link>
             </p>
           </header>
 
@@ -193,7 +194,9 @@ export function SampleDetail() {
               <ul className="certificate-list">
                 {sample.certificates.map((certificate) => (
                   <li key={certificate.id}>
-                    {certificate.certificate_number}
+                    <Link to={`/certificates/${certificate.id}`}>
+                      {certificate.certificate_number}
+                    </Link>
                     {" — "}
                     <a href={`/api/certificates/${certificate.id}/pdf`}>Download PDF</a>
                   </li>

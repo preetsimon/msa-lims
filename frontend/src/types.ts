@@ -109,5 +109,10 @@ export type Submission = components["schemas"]["SubmissionOut"];
 /** A certificate listing row — `GET /api/certificates`. */
 export type CertificateListItem = components["schemas"]["CertificateListItemOut"];
 
+/** One certificate with the samples it certifies — `GET /api/certificates/{id}`. */
+export type CertificateDetail = components["schemas"]["CertificateOut"];
+export type CertifiedSample = components["schemas"]["CertifiedSampleOut"];
+export type CertifiedElement = components["schemas"]["CertifiedElementOut"];
+
 /** An instrument row — `GET /api/instruments`. */
 export type Instrument = components["schemas"]["InstrumentOut"];

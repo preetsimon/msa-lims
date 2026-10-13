@@ -222,8 +222,12 @@ export function SampleProvenance() {
               <ul className="certificate-list">
                 {dossier.certificates.map((certificate) => (
                   <li key={certificate.id}>
-                    <strong>{certificate.certificate_number}</strong> · issued{" "}
-                    {certificate.issued_at} by {certificate.issued_by ?? "—"}
+                    <strong>
+                      <Link to={`/certificates/${certificate.id}`}>
+                        {certificate.certificate_number}
+                      </Link>
+                    </strong>{" "}
+                    · issued {certificate.issued_at} by {certificate.issued_by ?? "—"}
                     <div className="muted">
                       reported result #{certificate.certified_result_id} · pdf sha256{" "}
                       {certificate.pdf_sha256.slice(0, 16)}…

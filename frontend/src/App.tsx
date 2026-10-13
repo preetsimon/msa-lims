@@ -5,6 +5,7 @@ import { setAuthHeaders } from "./api";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { BatchDetail } from "./pages/BatchDetail";
 import { BatchList } from "./pages/BatchList";
+import { CertificateDetail } from "./pages/CertificateDetail";
 import { CertificatesPage } from "./pages/CertificatesPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -20,6 +21,7 @@ import { ResultEntryPage } from "./pages/ResultEntryPage";
 import { SampleDetail } from "./pages/SampleDetail";
 import { SampleList } from "./pages/SampleList";
 import { SampleProvenance } from "./pages/SampleProvenance";
+import { SubmissionDetail } from "./pages/SubmissionDetail";
 import { SubmissionsPage } from "./pages/SubmissionsPage";
 import { SystemStatus } from "./pages/SystemStatus";
 
@@ -102,8 +104,16 @@ function AppInner() {
           element={user ? <SubmissionsPage /> : <LoginPage />}
         />
         <Route
+          path="/submissions/:id"
+          element={user ? <SubmissionDetail /> : <LoginPage />}
+        />
+        <Route
           path="/certificates"
           element={user ? <CertificatesPage /> : <LoginPage />}
+        />
+        <Route
+          path="/certificates/:id"
+          element={user ? <CertificateDetail /> : <LoginPage />}
         />
         <Route
           path="/instruments"

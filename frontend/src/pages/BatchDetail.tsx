@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { ApiError, advanceBatchStatus, getBatch, getSentinelVerdict, submitToSentinel } from "../api";
+import {
+  ApiError,
+  advanceBatchStatus,
+  getBatch,
+  getSentinelVerdict,
+  listInstruments,
+  submitToSentinel,
+  type Instrument,
+} from "../api";
 import type { SentinelVerdictResponse } from "../api";
 import { ChargeCrucibleModal } from "../components/ChargeCrucibleModal";
 import { FurnaceTray } from "../components/FurnaceTray";
@@ -53,6 +61,7 @@ export function BatchDetail() {
   const [verdict, setVerdict] = useState<SentinelVerdictResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
 
   const refetch = useCallback(() => {
     if (!id) return;
@@ -88,6 +97,22 @@ export function BatchDetail() {
       cancelled = true;
     };
   }, [id]);
+
+  // Fetch instruments once so the batch's furnace can be named, not just
+  // numbered. Best-effort: a batch with no instrument still renders.
+  useEffect(() => {
+    let cancelled = false;
+    listInstruments()
+      .then((data) => {
+        if (!cancelled) setInstruments(data);
+      })
+      .catch(() => {
+        // Naming the furnace is best-effort — don't block the page.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Fetch Sentinel verdict when batch is loaded.
   useEffect(() => {
@@ -138,6 +163,11 @@ export function BatchDetail() {
   }
 
   const target = batch ? nextStatus(batch.status) : null;
+  const instrumentName =
+    batch?.instrument_id != null
+      ? (instruments.find((i) => i.id === batch.instrument_id)?.name ??
+        `#${batch.instrument_id}`)
+      : null;
 
   return (
     <main>
@@ -154,6 +184,7 @@ export function BatchDetail() {
             <h1>{batch.batch_number}</h1>
             <p className="lede">
               <StatusPill status={batch.status} /> · opened {batch.opened_at}
+              {instrumentName && <> · furnace {instrumentName}</>}
             </p>
             {target && (
               <p>

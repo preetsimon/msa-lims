@@ -254,8 +254,9 @@ export interface paths {
          * Get Sentinel Verdict
          * @description Get the latest Sentinel verdict for a batch.
          *
-         *     Returns the verdict from the most recent submission that has one,
-         *     or an empty verdict if none has been returned yet.
+         *     Queries Sentinel for per-run evaluations of the batch's submitted runs.
+         *     Returns the verdict from the most recent submission, or an empty verdict
+         *     if none has been returned yet.
          */
         get: operations["get_sentinel_verdict_api_batches__batch_id__sentinel_verdict_get"];
         put?: never;
@@ -297,8 +298,8 @@ export interface paths {
          * @description Submit a batch's QC dossier to Sentinel.
          *
          *     The batch must have a sealed dossier (``batch.qc_dossier_sha256 IS NOT
-         *     NULL``).  If Sentinel is disabled or unreachable, the attempt is still
-         *     recorded.
+         *     NULL``) and at least one crucible with an assigned instrument.  If
+         *     Sentinel is disabled or unreachable, the attempt is still recorded.
          */
         post: operations["submit_to_sentinel_api_batches__batch_id__submit_to_sentinel_post"];
         delete?: never;
@@ -956,6 +957,8 @@ export interface components {
             furnace_rows: number;
             /** Id */
             id: number;
+            /** Instrument Id */
+            instrument_id: number | null;
             /** Notes */
             notes: string | null;
             /**

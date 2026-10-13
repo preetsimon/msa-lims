@@ -286,6 +286,22 @@ class TestFiringABatchThroughHttp:
         assert body["furnace_rows"] == 6
         assert body["furnace_columns"] == 6
 
+    def test_the_batch_detail_names_its_instrument(self, client: TestClient) -> None:
+        instrument_id = client.post(
+            "/api/instruments",
+            json={"name": "Furnace-7", "instrument_type": "furnace"},
+            headers=SUPERVISOR,
+        ).json()["id"]
+        batch_id = client.post(
+            "/api/batches",
+            json={"opened_at": "2026-08-25T08:00:00Z", "instrument_id": instrument_id},
+            headers=ANALYST,
+        ).json()["id"]
+
+        response = client.get(f"/api/batches/{batch_id}")
+        assert response.status_code == 200
+        assert response.json()["instrument_id"] == instrument_id
+
     def test_an_unknown_batch_is_404(self, client: TestClient) -> None:
         response = client.get("/api/batches/999999")
         assert response.status_code == 404

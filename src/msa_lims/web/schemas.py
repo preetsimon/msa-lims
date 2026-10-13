@@ -989,6 +989,7 @@ class BatchDetailOut(BaseModel):
     opened_by_id: int
     opened_at: datetime
     notes: str | None
+    instrument_id: int | None
     #: The furnace tray a caller needs to draw the grid this batch's
     #: crucibles sit in. A single lab-wide setting today, not per-batch or
     #: per-instrument — see PROGRESS.md's open questions — carried here
@@ -1014,6 +1015,7 @@ class BatchDetailOut(BaseModel):
             opened_by_id=batch.opened_by_id,
             opened_at=batch.opened_at,
             notes=batch.notes,
+            instrument_id=batch.instrument_id,
             furnace_rows=furnace_rows,
             furnace_columns=furnace_columns,
             crucibles=crucibles,

@@ -107,6 +107,14 @@ export function getBatch(id: number): Promise<BatchDetail> {
   return getJSON<BatchDetail>(`/api/batches/${id}`);
 }
 
+export function createBatch(body: {
+  opened_at: string;
+  notes?: string;
+  instrument_id?: number;
+}): Promise<Batch> {
+  return sendJSON<Batch>("POST", "/api/batches", body);
+}
+
 export function listFluxRecipes(params?: { active_only?: boolean }): Promise<FluxRecipe[]> {
   const query = params?.active_only === false ? "?active_only=false" : "";
   return getJSON<FluxRecipe[]>(`/api/flux-recipes${query}`);
@@ -364,6 +372,31 @@ export function getSubmission(id: number): Promise<Submission> {
   return getJSON<Submission>(`/api/submissions/${id}`);
 }
 
+export function createSubmission(body: {
+  client_id: number;
+  project_id?: number;
+  client_reference?: string;
+  purchase_order?: string;
+  received_at: string;
+  declared_sample_count?: number;
+  rush?: boolean;
+  requested_tat_days?: number;
+  comments?: string;
+  samples: {
+    sample_id: string;
+    sample_type: string;
+    lithology_code?: string;
+    alteration_code?: string;
+    weight_received_g?: string;
+    easting?: string;
+    northing?: string;
+    elevation_m?: string;
+    comments?: string;
+  }[];
+}): Promise<Submission> {
+  return sendJSON<Submission>("POST", "/api/submissions", body);
+}
+
 // ---------------------------------------------------------------------------
 // Certificates
 // ---------------------------------------------------------------------------
@@ -383,6 +416,17 @@ export function listCertificates(params?: {
 
 export function getCertificate(certificateId: number): Promise<CertificateDetail> {
   return getJSON<CertificateDetail>(`/api/certificates/${certificateId}`);
+}
+
+export function createCertificate(body: {
+  client_id: number;
+  sample_ids: number[];
+  issued_at: string;
+  notes?: string;
+  supersedes_id?: number;
+  superseded_reason?: string;
+}): Promise<CertificateDetail> {
+  return sendJSON<CertificateDetail>("POST", "/api/certificates", body);
 }
 
 // ---------------------------------------------------------------------------

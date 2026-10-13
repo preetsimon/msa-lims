@@ -1,11 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
-import { listCertificates, listClients, type ClientListItem } from "../api";
+import {
+  createCertificate,
+  listCertificates,
+  listClients,
+  listSamples,
+  type ClientListItem,
+} from "../api";
 import { PageHeader } from "../components/PageHeader";
-import type { CertificateListItem } from "../types";
+import { datetimeLocalValueToIso, nowAsDatetimeLocalValue } from "../datetimeInput";
+import type { CertificateListItem, SampleListItem } from "../types";
 
 export function CertificatesPage() {
+  const navigate = useNavigate();
   const [certificates, setCertificates] = useState<CertificateListItem[] | null>(null);
   const [clients, setClients] = useState<ClientListItem[]>([]);
   const [clientId, setClientId] = useState<number | "">("");
@@ -13,11 +21,66 @@ export function CertificatesPage() {
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Issue-certificate form ──────────────────────────────────────────
+  const [issueClientId, setIssueClientId] = useState<number | "">("");
+  const [clientSamples, setClientSamples] = useState<SampleListItem[] | null>(null);
+  const [selectedSampleIds, setSelectedSampleIds] = useState<number[]>([]);
+  const [issuedAt, setIssuedAt] = useState(nowAsDatetimeLocalValue());
+  const [notes, setNotes] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
   useEffect(() => {
     listClients()
       .then(setClients)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (issueClientId === "") {
+      setClientSamples(null);
+      setSelectedSampleIds([]);
+      return;
+    }
+    let cancelled = false;
+    setClientSamples(null);
+    listSamples({ client_id: issueClientId })
+      .then((data) => {
+        if (!cancelled) setClientSamples(data.items);
+      })
+      .catch(() => {
+        if (!cancelled) setClientSamples([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [issueClientId]);
+
+  const toggleSample = (id: number) => {
+    setSelectedSampleIds((ids) =>
+      ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id],
+    );
+  };
+
+  const handleIssue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (issueClientId === "" || selectedSampleIds.length === 0) return;
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const created = await createCertificate({
+        client_id: issueClientId,
+        sample_ids: selectedSampleIds,
+        issued_at: datetimeLocalValueToIso(issuedAt),
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+      });
+      navigate(`/certificates/${created.id}`);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Could not issue the certificate.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +117,79 @@ export function CertificatesPage() {
   return (
     <main>
       <PageHeader title="Certificates" lede="Issued Certificates of Analysis." />
+
+      <form className="card form-grid" onSubmit={handleIssue}>
+        <h2>Issue a certificate</h2>
+        <div className="form-row">
+          <label>
+            Client
+            <select
+              value={issueClientId}
+              onChange={(e) =>
+                setIssueClientId(e.target.value === "" ? "" : Number(e.target.value))
+              }
+              required
+            >
+              <option value="">Select a client…</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Issued
+            <input
+              type="datetime-local"
+              value={issuedAt}
+              onChange={(e) => setIssuedAt(e.target.value)}
+              required
+            />
+          </label>
+        </div>
+
+        {issueClientId !== "" && (
+          <fieldset className="sample-rows">
+            <legend>Samples to certify</legend>
+            {clientSamples === null && <p className="muted">Loading samples…</p>}
+            {clientSamples && clientSamples.length === 0 && (
+              <p className="muted">This client has no samples to certify.</p>
+            )}
+            {clientSamples &&
+              clientSamples.map((s) => (
+                <label key={s.id} className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={selectedSampleIds.includes(s.id)}
+                    onChange={() => toggleSample(s.id)}
+                  />
+                  {s.sample_id}
+                  <span className="field-hint">
+                    {s.status} · {s.submission_number}
+                  </span>
+                </label>
+              ))}
+          </fieldset>
+        )}
+
+        <label>
+          Notes (optional)
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+        </label>
+        {formError && <p className="page-error">{formError}</p>}
+        <div className="form-actions">
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={submitting || issueClientId === "" || selectedSampleIds.length === 0}
+          >
+            {submitting
+              ? "Issuing…"
+              : `Issue certificate (${selectedSampleIds.length})`}
+          </button>
+        </div>
+      </form>
 
       {clients.length > 0 && (
         <div className="filter-bar">

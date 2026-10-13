@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 
 import { getSample, listSamplePrepRecords, type PrepRecord } from "../api";
+import { PageHeader } from "../components/PageHeader";
 
 export function PrepRecordsPage() {
   const { id } = useParams<{ id: string }>();
@@ -21,48 +22,58 @@ export function PrepRecordsPage() {
       .finally(() => setLoading(false));
   }, [sampleId]);
 
-  if (loading) return <div style={{ padding: 24 }}>Loading...</div>;
-  if (error) return <div style={{ padding: 24 }} className="page-error">{error}</div>;
-
   return (
-    <div style={{ padding: 24 }}>
-      <h1>Prep Records for {sampleInfo}</h1>
+    <main>
+      <p>
+        <Link to={`/samples/${sampleId}`}>&larr; Back to sample</Link>
+      </p>
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ borderBottom: "2px solid #ddd" }}>
-            <th style={{ textAlign: "left", padding: 8 }}>ID</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Stage</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Performed At</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Input (g)</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Output (g)</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Supersedes</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Notes</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          {records.map((r) => (
-            <tr key={r.id} style={{ borderBottom: "1px solid #eee" }}>
-              <td style={{ padding: 8 }}>{r.id}</td>
-              <td style={{ padding: 8 }}>{r.stage}</td>
-              <td style={{ padding: 8 }}>{r.performed_at}</td>
-              <td style={{ padding: 8 }}>{r.input_weight_g ?? "—"}</td>
-              <td style={{ padding: 8 }}>{r.output_weight_g ?? "—"}</td>
-              <td style={{ padding: 8 }}>{r.supersedes_id ?? "—"}</td>
-              <td style={{ padding: 8 }}>{r.notes ?? "—"}</td>
-              <td style={{ padding: 8 }}>{new Date(r.created_at).toLocaleString()}</td>
-            </tr>
-          ))}
-          {records.length === 0 && (
-            <tr>
-              <td colSpan={8} style={{ padding: 16, textAlign: "center", color: "#888" }}>
-                No prep records
-              </td>
-            </tr>
+      {loading && <p className="muted">Loading…</p>}
+      {error && <p className="page-error">{error}</p>}
+
+      {!loading && !error && (
+        <>
+          <PageHeader
+            title={`Prep Records — ${sampleInfo}`}
+            lede="What physically happened to this sample before it was charged."
+          />
+
+          {records.length === 0 && <p className="empty-state">No prep records yet.</p>}
+
+          {records.length > 0 && (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Stage</th>
+                    <th>Performed At</th>
+                    <th>Input (g)</th>
+                    <th>Output (g)</th>
+                    <th>Supersedes</th>
+                    <th>Notes</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((r) => (
+                    <tr key={r.id}>
+                      <td className="muted">{r.id}</td>
+                      <td>{r.stage}</td>
+                      <td>{r.performed_at}</td>
+                      <td>{r.input_weight_g ?? "—"}</td>
+                      <td>{r.output_weight_g ?? "—"}</td>
+                      <td className="muted">{r.supersedes_id ?? "—"}</td>
+                      <td className="muted">{r.notes ?? "—"}</td>
+                      <td className="muted">{new Date(r.created_at).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-        </tbody>
-      </table>
-    </div>
+        </>
+      )}
+    </main>
   );
 }

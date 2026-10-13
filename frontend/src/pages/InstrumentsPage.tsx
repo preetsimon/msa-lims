@@ -2,18 +2,21 @@ import { useEffect, useState } from "react";
 
 import { createInstrument, listInstruments, updateInstrument } from "../api";
 import type { Instrument } from "../api";
+import { PageHeader } from "../components/PageHeader";
 
 const INSTRUMENT_TYPES = [
   { value: "icp_oes", label: "ICP-OES" },
   { value: "icp_ms", label: "ICP-MS" },
-  { value: "atomic_absorption", label: "AAS" },
+  { value: "aas", label: "AAS (atomic absorption)" },
   { value: "xrf", label: "XRF" },
   { value: "microbalance", label: "Microbalance" },
   { value: "crusher", label: "Crusher" },
   { value: "pulverizer", label: "Pulverizer" },
   { value: "furnace", label: "Furnace" },
-  { value: "other", label: "Other" },
 ];
+
+/** Instruments whose calibration data carries a method detection limit. */
+const DETECTION_LIMIT_TYPES = ["icp_oes", "icp_ms", "aas"];
 
 export function InstrumentsPage() {
   const [instruments, setInstruments] = useState<Instrument[] | null>(null);
@@ -105,10 +108,10 @@ export function InstrumentsPage() {
 
   return (
     <main>
-      <header>
-        <h1>Instruments</h1>
-        <p className="lede">Lab instruments and their calibration status.</p>
-      </header>
+      <PageHeader
+        title="Instruments"
+        lede="Lab instruments and the calibration data that feeds every result."
+      />
 
       {!showForm && (
         <button className="btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
@@ -167,15 +170,16 @@ export function InstrumentsPage() {
                 value={sensitivity}
                 onChange={(e) => setSensitivity(e.target.value)}
               />
+              <span className="field-hint">
+                Smallest resolvable weight. Feeds the non-detect limit on gravimetric results.
+              </span>
             </label>
           )}
 
-          {(type === "icp_oes" || type === "icp_ms" || type === "atomic_absorption" ||
-            editing?.instrument_type === "icp_oes" ||
-            editing?.instrument_type === "icp_ms" ||
-            editing?.instrument_type === "atomic_absorption") && (
+          {(DETECTION_LIMIT_TYPES.includes(type) ||
+            (editing != null && DETECTION_LIMIT_TYPES.includes(editing.instrument_type))) && (
             <label>
-              Detection limit
+              Method detection limit
               <input
                 type="number"
                 step="0.01"
@@ -183,6 +187,9 @@ export function InstrumentsPage() {
                 value={detectionLimit}
                 onChange={(e) => setDetectionLimit(e.target.value)}
               />
+              <span className="field-hint">
+                Feeds the non-detect limit on solution results from this instrument.
+              </span>
             </label>
           )}
 
@@ -190,7 +197,7 @@ export function InstrumentsPage() {
             <button type="submit" className="btn-primary">
               {editing ? "Save changes" : "Register"}
             </button>
-            <button type="button" onClick={resetForm}>
+            <button type="button" className="btn-secondary" onClick={resetForm}>
               Cancel
             </button>
           </div>

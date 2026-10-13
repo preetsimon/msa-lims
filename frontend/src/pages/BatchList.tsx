@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { listBatches } from "../api";
+import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import type { Batch } from "../types";
 
@@ -25,14 +26,11 @@ export function BatchList() {
 
   return (
     <main>
-      <header>
-        <h1>Batches</h1>
-        <p className="lede">Every furnace run, most recent first.</p>
-      </header>
+      <PageHeader title="Batches" lede="Every furnace run, most recent first." />
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="page-error">{error}</p>}
       {!batches && !error && <p className="muted">Loading…</p>}
-      {batches && batches.length === 0 && <p className="muted">No batches opened yet.</p>}
+      {batches && batches.length === 0 && <p className="empty-state">No batches opened yet.</p>}
 
       {batches && batches.length > 0 && (
         <div className="table-wrap">

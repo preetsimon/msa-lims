@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { getDashboardStats, type DashboardStats } from "../api";
+import { PageHeader } from "../components/PageHeader";
 
 const STATUS_LABELS: Record<string, string> = {
   received: "Received",
@@ -10,6 +11,18 @@ const STATUS_LABELS: Record<string, string> = {
   result_entered: "Result Entered",
   approved: "Approved",
   reported: "Reported",
+};
+
+/** The status ladder reads left-to-right through the workflow, so the
+ * tone climbs with it: neutral at intake, amber while a sample is moving,
+ * blue once a result exists, green once it is signed off. */
+const STATUS_TONE: Record<string, string> = {
+  received: "tone-neutral",
+  ready_for_assay: "tone-warn",
+  in_assay: "tone-info",
+  result_entered: "tone-info",
+  approved: "tone-ok",
+  reported: "tone-ok",
 };
 
 export function DashboardPage() {
@@ -22,80 +35,72 @@ export function DashboardPage() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  if (error) return <div className="page-error">{error}</div>;
-  if (!stats) return <div>Loading...</div>;
+  if (error) {
+    return (
+      <main>
+        <p className="page-error">{error}</p>
+      </main>
+    );
+  }
 
-  const statusColors: Record<string, string> = {
-    received: "#6b7280",
-    ready_for_assay: "#f59e0b",
-    in_assay: "#3b82f6",
-    result_entered: "#8b5cf6",
-    approved: "#10b981",
-    reported: "#059669",
-  };
+  if (!stats) {
+    return (
+      <main>
+        <p className="muted">Loading…</p>
+      </main>
+    );
+  }
 
   return (
-    <div style={{ padding: 24 }}>
-      <h1>Dashboard</h1>
+    <main>
+      <PageHeader title="Dashboard" lede="The lab at a glance." />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16, marginBottom: 32 }}>
-        <StatCard label="Samples" value={stats.total_samples} />
+      <div className="stat-grid">
+        <StatCard label="Samples" value={stats.total_samples} tone="tone-info" />
         <StatCard label="Clients" value={stats.total_clients} />
         <StatCard label="Submissions" value={stats.total_submissions} />
         <StatCard label="Batches" value={stats.total_batches} />
-        <StatCard label="Certificates" value={stats.total_certificates} />
+        <StatCard label="Certificates" value={stats.total_certificates} tone="tone-ok" />
       </div>
 
       <h2>Samples by Status</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 32 }}>
+      <div className="stat-grid">
         {Object.entries(STATUS_LABELS).map(([key, label]) => (
-          <div
+          <StatCard
             key={key}
-            style={{
-              border: `2px solid ${statusColors[key] || "#999"}`,
-              borderRadius: 8,
-              padding: 16,
-              textAlign: "center",
-            }}
-          >
-            <div style={{ fontSize: 28, fontWeight: 700, color: statusColors[key] || "#999" }}>
-              {stats.samples_by_status[key] ?? 0}
-            </div>
-            <div style={{ fontSize: 13, color: "#555" }}>{label}</div>
-          </div>
+            label={label}
+            value={stats.samples_by_status[key] ?? 0}
+            tone={STATUS_TONE[key]}
+          />
         ))}
       </div>
 
       <h2>Quick Links</h2>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <Link to="/samples" style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: 6 }}>
-          View Samples
-        </Link>
-        <Link to="/submissions" style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: 6 }}>
-          View Submissions
-        </Link>
-        <Link to="/batches" style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: 6 }}>
-          View Batches
-        </Link>
-        <Link to="/certificates" style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: 6 }}>
-          View Certificates
-        </Link>
-        <Link to="/instruments" style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: 6 }}>
-          Manage Instruments
-        </Link>
-        <Link to="/clients" style={{ padding: "8px 16px", border: "1px solid #ccc", borderRadius: 6 }}>
-          Manage Clients
-        </Link>
+      <div className="quick-links">
+        <Link to="/samples">View Samples</Link>
+        <Link to="/submissions">View Submissions</Link>
+        <Link to="/batches">View Batches</Link>
+        <Link to="/certificates">View Certificates</Link>
+        <Link to="/instruments">Manage Instruments</Link>
+        <Link to="/clients">Manage Clients</Link>
       </div>
-    </div>
+    </main>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number }) {
+function StatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: string | undefined;
+}) {
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 20, textAlign: "center" }}>
-      <div style={{ fontSize: 32, fontWeight: 700 }}>{value}</div>
-      <div style={{ fontSize: 14, color: "#555" }}>{label}</div>
+    <div className={`stat-card ${tone ?? "tone-neutral"}`}>
+      <div className="value">{value}</div>
+      <div className="label">{label}</div>
     </div>
   );
 }

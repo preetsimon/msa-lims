@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { listQcMaterials } from "../api";
+import { PageHeader } from "../components/PageHeader";
 import type { QcMaterial } from "../types";
 
 export function QcMaterialsPage() {
@@ -8,18 +9,25 @@ export function QcMaterialsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
+  const load = () =>
+    listQcMaterials({ active_only: !showAll })
+      .then(setMaterials)
+      .catch((e) => setError(String(e)));
+
   useEffect(() => {
-    listQcMaterials().then(setMaterials).catch((e) => setError(String(e)));
+    load();
   }, [showAll]);
 
-  const load = () => listQcMaterials().then(setMaterials).catch((e) => setError(String(e)));
-
   return (
-    <div style={{ padding: 24 }}>
-      <h1>QC Materials</h1>
-      {error && <div className="page-error">{error}</div>}
+    <main>
+      <PageHeader
+        title="QC Materials"
+        lede="Certified reference materials and blanks used to bracket every batch."
+      />
 
-      <div style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center" }}>
+      {error && <p className="page-error">{error}</p>}
+
+      <div className="toolbar">
         <label>
           <input
             type="checkbox"
@@ -28,42 +36,49 @@ export function QcMaterialsPage() {
           />{" "}
           Show inactive
         </label>
-        <button onClick={load}>Refresh</button>
+        <button type="button" className="btn-sm" onClick={load}>
+          Refresh
+        </button>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ borderBottom: "2px solid #ddd" }}>
-            <th style={{ textAlign: "left", padding: 8 }}>ID</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Name</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Type</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Lot #</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Au Certified (g/t)</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Uncertainty (g/t)</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Active</th>
-          </tr>
-        </thead>
-        <tbody>
-          {materials.map((m) => (
-            <tr key={m.id} style={{ borderBottom: "1px solid #eee", opacity: m.is_active ? 1 : 0.6 }}>
-              <td style={{ padding: 8 }}>{m.id}</td>
-              <td style={{ padding: 8 }}>{m.name}</td>
-              <td style={{ padding: 8 }}>{m.qc_type}</td>
-              <td style={{ padding: 8 }}>{m.lot_number ?? "—"}</td>
-              <td style={{ padding: 8 }}>{m.certified_au_value_g_t ?? "—"}</td>
-              <td style={{ padding: 8 }}>{m.certified_au_uncertainty_g_t ?? "—"}</td>
-              <td style={{ padding: 8 }}>{m.is_active ? "Yes" : "No"}</td>
-            </tr>
-          ))}
-          {materials.length === 0 && (
-            <tr>
-              <td colSpan={7} style={{ padding: 16, textAlign: "center", color: "#888" }}>
-                No QC materials
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+      {materials.length === 0 && !error && (
+        <p className="empty-state">No QC materials registered.</p>
+      )}
+
+      {materials.length > 0 && (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Lot #</th>
+                <th>Au Certified (g/t)</th>
+                <th>Uncertainty (g/t)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {materials.map((m) => (
+                <tr key={m.id} className={m.is_active ? undefined : "row-inactive"}>
+                  <td className="muted">{m.id}</td>
+                  <td>{m.name}</td>
+                  <td className="muted">{m.qc_type}</td>
+                  <td className="muted">{m.lot_number ?? "—"}</td>
+                  <td>{m.certified_au_value_g_t ?? "—"}</td>
+                  <td className="muted">{m.certified_au_uncertainty_g_t ?? "—"}</td>
+                  <td>
+                    <span className={`pill pill-${m.is_active ? "ok" : "neutral"}`}>
+                      {m.is_active ? "active" : "retired"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </main>
   );
 }

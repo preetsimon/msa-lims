@@ -132,7 +132,7 @@ export function MultiElementImport() {
 
       {error && <p className="error">{error}</p>}
       {success !== null && (
-        <p className="ok">
+        <p className="success">
           Imported {success} element{success !== 1 ? "s" : ""}.
         </p>
       )}

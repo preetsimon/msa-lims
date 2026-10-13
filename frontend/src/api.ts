@@ -106,12 +106,14 @@ export function getBatch(id: number): Promise<BatchDetail> {
   return getJSON<BatchDetail>(`/api/batches/${id}`);
 }
 
-export function listFluxRecipes(): Promise<FluxRecipe[]> {
-  return getJSON<FluxRecipe[]>("/api/flux-recipes");
+export function listFluxRecipes(params?: { active_only?: boolean }): Promise<FluxRecipe[]> {
+  const query = params?.active_only === false ? "?active_only=false" : "";
+  return getJSON<FluxRecipe[]>(`/api/flux-recipes${query}`);
 }
 
-export function listQcMaterials(): Promise<QcMaterial[]> {
-  return getJSON<QcMaterial[]>("/api/qc-materials");
+export function listQcMaterials(params?: { active_only?: boolean }): Promise<QcMaterial[]> {
+  const query = params?.active_only === false ? "?active_only=false" : "";
+  return getJSON<QcMaterial[]>(`/api/qc-materials${query}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,15 +483,22 @@ export function getClient(clientId: number): Promise<Client> {
   return getJSON<Client>(`/api/clients/${clientId}`);
 }
 
-export function createClient(body: { name: string }): Promise<Client> {
+export function createClient(body: {
+  code: string;
+  name: string;
+  contact_person?: string;
+  email?: string;
+  phone?: string;
+  billing_address?: string;
+}): Promise<Client> {
   return sendJSON<Client>("POST", "/api/clients", body);
 }
 
 export function updateClientStatus(
   clientId: number,
-  body: { is_active: boolean; reason?: string },
-): Promise<{ status: string }> {
-  return sendJSON<{ status: string }>("PATCH", `/api/clients/${clientId}`, body);
+  body: { is_active: boolean },
+): Promise<Client> {
+  return sendJSON<Client>("PATCH", `/api/clients/${clientId}`, body);
 }
 
 // ---------------------------------------------------------------------------
@@ -546,10 +555,10 @@ export function createFireAssayResult(body: {
 
 export function createSolutionFinish(body: {
   sample_id: number;
-  method: string;
+  method: "fire_assay_aas" | "fire_assay_icp_ms";
   concentration: string;
-  concentration_unit: string;
-  solution_volume_ml?: string;
+  concentration_unit: "mg/L" | "ug/L";
+  solution_volume_ml: string;
   sample_weight_g?: string;
   analysed_at: string;
   detection_limit?: string;

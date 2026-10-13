@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { listCertificates, listClients, type ClientListItem } from "../api";
+import { PageHeader } from "../components/PageHeader";
 import type { CertificateListItem } from "../types";
 
 export function CertificatesPage() {
@@ -52,10 +53,7 @@ export function CertificatesPage() {
 
   return (
     <main>
-      <header>
-        <h1>Certificates</h1>
-        <p className="lede">Issued Certificates of Analysis.</p>
-      </header>
+      <PageHeader title="Certificates" lede="Issued Certificates of Analysis." />
 
       {clients.length > 0 && (
         <div className="filter-bar">
@@ -78,10 +76,10 @@ export function CertificatesPage() {
         </div>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="page-error">{error}</p>}
       {!certificates && !error && <p className="muted">Loading…</p>}
       {certificates && certificates.length === 0 && (
-        <p className="muted">No certificates issued yet.</p>
+        <p className="empty-state">No certificates issued yet.</p>
       )}
 
       {certificates && certificates.length > 0 && (

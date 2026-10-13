@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { listClients, listSamples, type ClientListItem } from "../api";
+import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import type { SampleListItem } from "../types";
 
@@ -53,10 +54,7 @@ export function SampleList() {
 
   return (
     <main>
-      <header>
-        <h1>Samples</h1>
-        <p className="lede">Every sample received, most recent first.</p>
-      </header>
+      <PageHeader title="Samples" lede="Every sample received, most recent first." />
 
       {clients.length > 0 && (
         <div className="filter-bar">
@@ -79,9 +77,11 @@ export function SampleList() {
         </div>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="page-error">{error}</p>}
       {!samples && !error && <p className="muted">Loading…</p>}
-      {samples && samples.length === 0 && <p className="muted">No samples received yet.</p>}
+      {samples && samples.length === 0 && (
+        <p className="empty-state">No samples received yet.</p>
+      )}
 
       {samples && samples.length > 0 && (
         <div className="table-wrap">

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { listFluxRecipes } from "../api";
+import { PageHeader } from "../components/PageHeader";
 import type { FluxRecipe } from "../types";
 
 export function FluxRecipesPage() {
@@ -8,18 +9,25 @@ export function FluxRecipesPage() {
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  const load = () => listFluxRecipes().then(setRecipes).catch((e) => setError(String(e)));
+  const load = () =>
+    listFluxRecipes({ active_only: !showAll })
+      .then(setRecipes)
+      .catch((e) => setError(String(e)));
 
   useEffect(() => {
     load();
   }, [showAll]);
 
   return (
-    <div style={{ padding: 24 }}>
-      <h1>Flux Recipes</h1>
-      {error && <div className="page-error">{error}</div>}
+    <main>
+      <PageHeader
+        title="Flux Recipes"
+        lede="Charge compositions used when fusing a sample in the furnace."
+      />
 
-      <div style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center" }}>
+      {error && <p className="page-error">{error}</p>}
+
+      <div className="toolbar">
         <label>
           <input
             type="checkbox"
@@ -28,50 +36,57 @@ export function FluxRecipesPage() {
           />{" "}
           Show inactive
         </label>
-        <button onClick={load}>Refresh</button>
+        <button type="button" className="btn-sm" onClick={load}>
+          Refresh
+        </button>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ borderBottom: "2px solid #ddd" }}>
-            <th style={{ textAlign: "left", padding: 8 }}>ID</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Name</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Matrix</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Portion (g)</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Litharge</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Soda Ash</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Borax</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Silica</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Flour</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Nitre</th>
-            <th style={{ textAlign: "left", padding: 8 }}>Active</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recipes.map((r) => (
-            <tr key={r.id} style={{ borderBottom: "1px solid #eee", opacity: r.is_active ? 1 : 0.6 }}>
-              <td style={{ padding: 8 }}>{r.id}</td>
-              <td style={{ padding: 8 }}>{r.name}</td>
-              <td style={{ padding: 8 }}>{r.matrix_type}</td>
-              <td style={{ padding: 8 }}>{r.nominal_portion_g}</td>
-              <td style={{ padding: 8 }}>{r.litharge_g}</td>
-              <td style={{ padding: 8 }}>{r.soda_ash_g}</td>
-              <td style={{ padding: 8 }}>{r.borax_g}</td>
-              <td style={{ padding: 8 }}>{r.silica_g}</td>
-              <td style={{ padding: 8 }}>{r.flour_g}</td>
-              <td style={{ padding: 8 }}>{r.nitre_g}</td>
-              <td style={{ padding: 8 }}>{r.is_active ? "Yes" : "No"}</td>
-            </tr>
-          ))}
-          {recipes.length === 0 && (
-            <tr>
-              <td colSpan={11} style={{ padding: 16, textAlign: "center", color: "#888" }}>
-                No flux recipes
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+      {recipes.length === 0 && !error && (
+        <p className="empty-state">No flux recipes registered.</p>
+      )}
+
+      {recipes.length > 0 && (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Matrix</th>
+                <th>Portion (g)</th>
+                <th>Litharge</th>
+                <th>Soda Ash</th>
+                <th>Borax</th>
+                <th>Silica</th>
+                <th>Flour</th>
+                <th>Nitre</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recipes.map((r) => (
+                <tr key={r.id} className={r.is_active ? undefined : "row-inactive"}>
+                  <td className="muted">{r.id}</td>
+                  <td>{r.name}</td>
+                  <td className="muted">{r.matrix_type}</td>
+                  <td>{r.nominal_portion_g}</td>
+                  <td>{r.litharge_g}</td>
+                  <td>{r.soda_ash_g}</td>
+                  <td>{r.borax_g}</td>
+                  <td>{r.silica_g}</td>
+                  <td>{r.flour_g}</td>
+                  <td>{r.nitre_g}</td>
+                  <td>
+                    <span className={`pill pill-${r.is_active ? "ok" : "neutral"}`}>
+                      {r.is_active ? "active" : "retired"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </main>
   );
 }

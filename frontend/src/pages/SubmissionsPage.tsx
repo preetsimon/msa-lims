@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { listClients, listSubmissions, type ClientListItem } from "../api";
+import { PageHeader } from "../components/PageHeader";
 import type { SubmissionListItem } from "../types";
 
 export function SubmissionsPage() {
@@ -52,10 +53,7 @@ export function SubmissionsPage() {
 
   return (
     <main>
-      <header>
-        <h1>Submissions</h1>
-        <p className="lede">Work orders received from clients.</p>
-      </header>
+      <PageHeader title="Submissions" lede="Work orders received from clients." />
 
       {clients.length > 0 && (
         <div className="filter-bar">
@@ -78,10 +76,10 @@ export function SubmissionsPage() {
         </div>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {error && <p className="page-error">{error}</p>}
       {!submissions && !error && <p className="muted">Loading…</p>}
       {submissions && submissions.length === 0 && (
-        <p className="muted">No submissions yet.</p>
+        <p className="empty-state">No submissions yet.</p>
       )}
 
       {submissions && submissions.length > 0 && (

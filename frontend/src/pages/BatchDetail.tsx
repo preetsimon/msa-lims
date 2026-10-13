@@ -247,9 +247,9 @@ export function BatchDetail() {
                 <p>
                   <strong>Sentinel's verdict:</strong>{" "}
                   {verdict.verdict?.verdict === "pass" ? (
-                    <span style={{ color: "green" }}>No problems reported</span>
+                    <span className="success">No problems reported</span>
                   ) : (
-                    <span style={{ color: "red" }}>
+                    <span className="error">
                       {String(verdict.verdict?.verdict ?? "unknown")}
                     </span>
                   )}

@@ -6,14 +6,13 @@ client's samples, and that lab staff retain unrestricted access.
 
 from __future__ import annotations
 
-from typing import Iterator
+from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
-
-from datetime import UTC, datetime
 
 from msa_lims.db.models import Client, LabUser, Project, Sample, Submission
 from msa_lims.domain.enums import Role, SampleStatus, SampleType

@@ -49,7 +49,9 @@ def test_create_instrument(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
 
     assert instrument.id is not None
     assert instrument.name == "ICP-OES-01"
@@ -66,7 +68,9 @@ def test_create_instrument_audit_event(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
 
     event = app_session.scalar(
         select(AuditEvent).where(
@@ -86,10 +90,14 @@ def test_create_instrument_duplicate_name_raises(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
+    create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
 
     with pytest.raises(InstrumentNameConflictError):
-        create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
+        create_instrument(
+            app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+        )
 
 
 def test_get_instrument(
@@ -97,7 +105,9 @@ def test_get_instrument(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    created = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
+    created = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
     fetched = get_instrument(app_session, created.id)
     assert fetched.id == created.id
     assert fetched.name == "ICP-OES-01"
@@ -138,8 +148,12 @@ def test_update_instrument_location(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
-    updated = update_instrument(app_session, instrument.id, location="Lab C", actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
+    updated = update_instrument(
+        app_session, instrument.id, location="Lab C", actor_id=actor.id, actor_role=actor.role
+    )
 
     assert updated.location == "Lab C"
     assert updated.name == "ICP-OES-01"  # unchanged
@@ -150,9 +164,15 @@ def test_update_instrument_status(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
     updated = update_instrument(
-        app_session, instrument.id, status=InstrumentStatus.MAINTENANCE, actor_id=actor.id, actor_role=actor.role
+        app_session,
+        instrument.id,
+        status=InstrumentStatus.MAINTENANCE,
+        actor_id=actor.id,
+        actor_role=actor.role,
     )
 
     assert updated.status == InstrumentStatus.MAINTENANCE
@@ -172,7 +192,9 @@ def test_update_instrument_name_conflict(
     )
 
     with pytest.raises(InstrumentNameConflictError):
-        update_instrument(app_session, other.id, name="ICP-OES-01", actor_id=actor.id, actor_role=actor.role)
+        update_instrument(
+            app_session, other.id, name="ICP-OES-01", actor_id=actor.id, actor_role=actor.role
+        )
 
 
 def test_update_instrument_audit_event(
@@ -180,8 +202,12 @@ def test_update_instrument_audit_event(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
-    update_instrument(app_session, instrument.id, location="Lab C", actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
+    update_instrument(
+        app_session, instrument.id, location="Lab C", actor_id=actor.id, actor_role=actor.role
+    )
 
     events = list(
         app_session.scalars(
@@ -204,8 +230,12 @@ def test_update_instrument_no_changes(
     sample_instrument_data: InstrumentInput,
     actor: LabUser,
 ) -> None:
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
-    updated = update_instrument(app_session, instrument.id, name="ICP-OES-01", actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
+    updated = update_instrument(
+        app_session, instrument.id, name="ICP-OES-01", actor_id=actor.id, actor_role=actor.role
+    )
     assert updated.name == "ICP-OES-01"
 
     events = list(
@@ -226,6 +256,10 @@ def test_append_only_constraint(
     actor: LabUser,
 ) -> None:
     """Instrument is NOT append-only — it should allow UPDATE."""
-    instrument = create_instrument(app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role)
-    updated = update_instrument(app_session, instrument.id, location="Lab D", actor_id=actor.id, actor_role=actor.role)
+    instrument = create_instrument(
+        app_session, sample_instrument_data, actor_id=actor.id, actor_role=actor.role
+    )
+    updated = update_instrument(
+        app_session, instrument.id, location="Lab D", actor_id=actor.id, actor_role=actor.role
+    )
     assert updated.location == "Lab D"

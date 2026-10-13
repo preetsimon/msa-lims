@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from msa_lims.sentinel.client import SentinelClient, SubmitResult, VerdictResult
+from msa_lims.sentinel.client import SentinelClient
 
 pytestmark = pytest.mark.integration
 

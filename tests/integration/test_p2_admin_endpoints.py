@@ -112,8 +112,12 @@ class TestProjectsList:
         assert len(response.json()) >= 1
 
     def test_filter_projects_by_client(self, client: TestClient) -> None:
-        c1 = client.post("/api/clients", json={"code": "C1", "name": "C1"}, headers=SUPERVISOR).json()
-        c2 = client.post("/api/clients", json={"code": "C2", "name": "C2"}, headers=SUPERVISOR).json()
+        c1 = client.post(
+            "/api/clients", json={"code": "C1", "name": "C1"}, headers=SUPERVISOR
+        ).json()
+        c2 = client.post(
+            "/api/clients", json={"code": "C2", "name": "C2"}, headers=SUPERVISOR
+        ).json()
         client.post(
             "/api/projects",
             json={"client_id": c1["id"], "name": "P1"},
@@ -136,7 +140,9 @@ class TestProjectsList:
 
 class TestDrillHolesList:
     def test_list_drill_holes(self, client: TestClient) -> None:
-        c = client.post("/api/clients", json={"code": "DH01", "name": "DH Client"}, headers=SUPERVISOR).json()
+        c = client.post(
+            "/api/clients", json={"code": "DH01", "name": "DH Client"}, headers=SUPERVISOR
+        ).json()
         p = client.post(
             "/api/projects",
             json={"client_id": c["id"], "name": "DH Project"},
@@ -160,13 +166,17 @@ class TestDrillHolesList:
 
 class TestAuditEvents:
     def test_list_audit_events(self, client: TestClient) -> None:
-        client.post("/api/clients", json={"code": "AUD01", "name": "Audit Client"}, headers=SUPERVISOR)
+        client.post(
+            "/api/clients", json={"code": "AUD01", "name": "Audit Client"}, headers=SUPERVISOR
+        )
         response = client.get("/api/audit/events", headers=SUPERVISOR)
         assert response.status_code == 200
         assert len(response.json()) >= 1
 
     def test_filter_by_table_name(self, client: TestClient) -> None:
-        client.post("/api/clients", json={"code": "AUF01", "name": "Audit Filter"}, headers=SUPERVISOR)
+        client.post(
+            "/api/clients", json={"code": "AUF01", "name": "Audit Filter"}, headers=SUPERVISOR
+        )
         response = client.get(
             "/api/audit/events", headers=SUPERVISOR, params={"table_name": "client"}
         )
@@ -181,7 +191,9 @@ class TestAuditEvents:
 
 class TestPrepRecordsList:
     def test_list_prep_records_for_sample(self, client: TestClient) -> None:
-        c = client.post("/api/clients", json={"code": "PRC01", "name": "PR Client"}, headers=SUPERVISOR).json()
+        c = client.post(
+            "/api/clients", json={"code": "PRC01", "name": "PR Client"}, headers=SUPERVISOR
+        ).json()
         p = client.post(
             "/api/projects",
             json={"client_id": c["id"], "name": "PR Project"},
